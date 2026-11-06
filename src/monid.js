@@ -224,7 +224,7 @@ export function normalizePosts(platform, output) {
     return (output?.timeline ?? []).filter(row => /^\d+$/.test(row?.tweet_id ?? '')).map((row) => {
       const body = text(row.text, 2000)
       const at = Date.parse(row.created_at)
-      const photo = (row.media ?? []).map(m => m?.media_url_https ?? m?.url).find(Boolean)
+      const photo = (Array.isArray(row.media) ? row.media : []).map(m => m?.media_url_https ?? m?.url).find(Boolean)
       return {
         id: row.tweet_id, title: firstLine(body, tr('无标题')), body, publishedAt: Number.isFinite(at) ? new Date(at).toISOString() : new Date().toISOString(),
         url: `https://x.com/${screen}/status/${row.tweet_id}`, cover: httpsUrl(photo),
