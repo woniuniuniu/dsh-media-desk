@@ -7,6 +7,7 @@ import { captureFiles, captureUrl, dispatchOps, loadDesk, setDesk, undo, useDesk
 import { InsightsView } from './insights.jsx'
 import { StyleView } from './style.jsx'
 import { ScheduleView } from './schedule.jsx'
+import { ModelButton, ModelPicker } from './modelpick.jsx'
 import { SettingsDialog } from './settings.jsx'
 import { Studio } from './studio.jsx'
 import css from './styles.css'
@@ -163,6 +164,7 @@ function Desk() {
           <span style={{ flex: 1 }} />
           {ready ? <SampleBadge /> : null}
           {canUndo ? <IconButton icon="undo" label={t('撤销上一步')} onClick={undo} /> : null}
+          {ready ? <ModelButton /> : null}
           <IconButton icon="gear" label={t('设置')} onClick={() => setDesk({ settingsOpen: true })} />
           {showDock ? null : <button type="button" className="md-open-dock" onClick={() => setDesk({ dockOpen: true })}><Icon name="chat" size={15} />{t('助手')}</button>}
         </header>
@@ -177,6 +179,7 @@ function Desk() {
       {ready ? <CaptureDialog /> : null}
       <FormDialog />
       {ready ? <SettingsDialog /> : null}
+      {ready ? <ModelPicker /> : null}
       <Toast />
     </div>
   )

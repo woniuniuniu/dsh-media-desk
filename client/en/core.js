@@ -48,4 +48,15 @@ export const CORE = {
   '删除': 'Delete',
   '关闭': 'Close',
   '撤销': 'Undo',
+
+  // 助手模型选择
+  '助手模型': 'Assistant model',
+  '跟随默认': 'Follow default',
+  '不指定时，助手跟随 DeepSeek Harness 的默认模型。': 'When unset, the assistant follows the DeepSeek Harness default model.',
+  '正在读取可用模型…': 'Loading available models…',
+  '还没有已接入的模型提供方。': 'No model providers are connected yet.',
+  '助手模型已切换': 'Assistant model switched',
+  '抓取后台数据': 'Fetch creator-center data',
+  '正在抓取后台数据…': 'Fetching creator-center data…',
+  '抓取完成：新写入 {n} 条': 'Fetch complete: {n} new rows',
 }

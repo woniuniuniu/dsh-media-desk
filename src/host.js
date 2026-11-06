@@ -1,10 +1,11 @@
 // dsh-media-desk host 半片：/media-desk/* 接口、文件服务和模型调用。
 import { createReadStream } from 'node:fs'
-import { execFile } from 'node:child_process'
-import { stat, writeFile } from 'node:fs/promises'
+import { execFile, spawn } from 'node:child_process'
+import { access, open, stat, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { dirname, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { callModel, chatPrompts, extractJson, modelInfo, modelStatus } from './ai.js'
+import { assistantModelOverride, callModel, chatPrompts, defaultSelection, extractJson, modelInfo, modelStatus, setAssistantModel } from './ai.js'
 import { defaultExportDir, resolveExportDir, saveProduction } from './export.js'
 import { harvest, harvestText } from './harvest.js'
 import { generateImage } from './images.js'
@@ -90,6 +91,44 @@ async function sendFile(req, res, file) {
 function engineLabel(ctx) {
   const info = modelInfo(ctx)
   return info ? info.label : null
+}
+
+const SCRAPE_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'scrape-creator-centers.mjs')
+
+/**
+ * 拉起 ego-browser 跑创作中心抓取脚本，返回 SCRAPE_RESULT 摘要。
+ * ego-browser 的命令行通常在 ~/.local/bin，桌面端 PATH 短，找不到就试绝对路径。
+ */
+async function runScrape(desk) {
+  if (desk.scraping) throw Object.assign(new Error(tr('上一次抓取还没结束，等它跑完再试')), { status: 409 })
+  desk.scraping = true
+  try {
+    const candidates = ['ego-browser', join(homedir(), '.local', 'bin', 'ego-browser')]
+    let bin = null
+    for (const c of candidates) {
+      try { await access(c); bin = c; break } catch { /* 下一个 */ }
+    }
+    if (!bin) bin = candidates[0] // 交给 spawn 报错
+    const input = await open(SCRAPE_SCRIPT, 'r')
+    try {
+      const output = await new Promise((resolve, reject) => {
+        const child = spawn(bin, ['nodejs'], { stdio: [input.fd, 'pipe', 'pipe'], env: { ...process.env, MEDIA_DESK_HOME: desk.storeRoot } })
+        let text = ''
+        const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(tr('抓取超时（5 分钟），ego 浏览器可能没开'))) }, 300_000)
+        child.stdout.on('data', d => { text += d })
+        child.stderr.on('data', d => { text += d })
+        child.on('error', err => { clearTimeout(timer); reject(err) })
+        child.on('close', () => { clearTimeout(timer); resolve(text) })
+      })
+      const match = /^SCRAPE_RESULT (\{[\s\S]+\})$/m.exec(output)
+      if (!match) throw new Error(tr('抓取脚本没有给出结果：{tail}', { tail: output.trim().slice(-300) }))
+      return JSON.parse(match[1])
+    } finally {
+      await input.close().catch(() => {})
+    }
+  } finally {
+    desk.scraping = false
+  }
 }
 
 /** 同一次故障只提醒一次，用人话说。原始错误放在模型状态的提示里。 */
@@ -310,6 +349,20 @@ async function route(ctx, store, desk, req, res) {
       return json(res, 200, { production: item?.production ?? null, status: item?.status, live: desk.producer.status(id) })
     }
     if (path === 'settings') return json(res, 200, { ...publicSettings(await desk.settings.read()), defaultExportDir: defaultExportDir() })
+    if (path === 'models') {
+      // 列出 Harness 里已接的提供方和它们公布的模型，给工作台的助手模型选择器用
+      const llm = ctx.get('llm')
+      const providers = llm ? await llm.listProviders() : []
+      const settled = await Promise.allSettled(providers.map(async p => ({
+        provider: p.id, name: p.name,
+        models: (await llm.listModels(p.id)).map(m => ({ id: m.id, name: m.name || m.id })),
+      })))
+      return json(res, 200, {
+        providers: settled.filter(r => r.status === 'fulfilled').map(r => r.value).filter(p => p.models.length),
+        default: defaultSelection(ctx),
+        current: assistantModelOverride(),
+      })
+    }
     if (path === 'insights') return json(res, 200, computeInsights(await store.read()))
     if (path === 'monid/status') return json(res, 200, await monidStatus(desk.monid))
     return json(res, 404, { error: tr('接口不存在') })
@@ -381,9 +434,16 @@ async function route(ctx, store, desk, req, res) {
       return json(res, 200, { path })
     }
     case 'style/extract': return json(res, 200, await extractStyle(ctx, store, body))
+    case 'scrape': {
+      const result = await runScrape(desk)
+      return json(res, 200, { ...result, state: await store.read() })
+    }
     case 'monid/import': return json(res, 200, await importAccountRoute(ctx, store, desk, body))
-    case 'settings':
-      return json(res, 200, { ...publicSettings(await desk.settings.update(body)), defaultExportDir: defaultExportDir() })
+    case 'settings': {
+      const updated = await desk.settings.update(body)
+      setAssistantModel(updated.assistant)
+      return json(res, 200, { ...publicSettings(updated), defaultExportDir: defaultExportDir(), assistantEffective: modelInfo(ctx)?.label ?? null })
+    }
     case 'settings/test': {
       const settings = await desk.settings.read()
       if (!imageReady(settings)) return json(res, 400, { error: tr('先填好接口地址、模型和密钥') })
@@ -442,7 +502,9 @@ export default {
     const settings = new Settings(store.root)
     const producer = new Producer({ store, settings, callText: options => callModel(ctx, options), generate: generateImage })
     const monid = createMonidRunner()
-    const desk = { settings, producer, monid }
+    const desk = { settings, producer, monid, storeRoot: store.root }
+    // 启动时恢复用户在工作台里选过的助手模型
+    settings.read().then(saved => setAssistantModel(saved.assistant)).catch(() => {})
     ctx.effect(() => ctx.webServer.register({
       kind: 'prefix',
       path: '/media-desk',

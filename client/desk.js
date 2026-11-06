@@ -8,7 +8,7 @@ const BASE = 'media-desk/'
 let snapshot = {
   state: null, model: null, modelOk: null, modelError: null, canUndo: false, error: null,
   view: 'home', mode: 'scatter', focusId: null, sheetOrigin: null, dockOpen: true, studioDock: false, chatQuote: null, query: '', kindFilter: 'all', related: null,
-  live: {}, settings: null, settingsOpen: false, thinking: false, toast: null, capture: null, dialog: null,
+  live: {}, settings: null, settingsOpen: false, modelPickOpen: false, thinking: false, toast: null, capture: null, dialog: null,
 }
 const listeners = new Set()
 
@@ -150,6 +150,23 @@ export async function saveSettings(payload) {
     setLanguagePreference(settings.language)
     setDesk({ settings })
     toast(t('设置已保存'))
+    return true
+  } catch (err) {
+    report(err)
+    return false
+  }
+}
+
+export async function fetchModels() {
+  return request('models')
+}
+
+/** 切换助手模型；两个字段都空表示跟随默认。 */
+export async function saveAssistant(assistant) {
+  try {
+    const settings = await request('settings', { assistant })
+    setDesk({ settings, model: settings.assistantEffective ?? snapshot.model })
+    toast(t('助手模型已切换'))
     return true
   } catch (err) {
     report(err)
@@ -332,6 +349,20 @@ export async function exportSkills() {
   }
 }
 
-export function fetchInsights() {
+export async function fetchInsights() {
   return request('insights')
+}
+
+/** 拉起 ego-browser 抓三个创作中心的后台数据并回填。 */
+export async function runScrape() {
+  try {
+    const data = await request('scrape', {})
+    setDesk({ state: data.state })
+    if (data.errors?.length) toast(data.errors[0], { error: true })
+    else toast(t('抓取完成：新写入 {n} 条', { n: data.written }))
+    return data
+  } catch (err) {
+    report(err)
+    return null
+  }
 }

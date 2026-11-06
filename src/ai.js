@@ -7,14 +7,31 @@ import { byLang, currentLang, ENGLISH_DIRECTIVE, tr } from './i18n.js'
 /** 最近一次模型调用的结果。选了模型不等于能用，比如还没配密钥。 */
 export const modelStatus = { ok: null, error: null }
 
-export function modelInfo(ctx) {
+// 工作台里用户自己指定的助手模型；null 表示跟随 DeepSeek Harness 默认模型
+let assistantOverride = null
+
+export function setAssistantModel(sel) {
+  assistantOverride = sel?.provider && sel?.model ? { provider: sel.provider, model: sel.model } : null
+}
+
+export function assistantModelOverride() {
+  return assistantOverride
+}
+
+export function defaultSelection(ctx) {
   try {
     const selection = ctx.get('agentDefaultModel')?.currentSelection()
-    if (!ctx.get('llm') || !selection?.provider || !selection?.model) return null
-    return { provider: selection.provider, model: selection.model, label: selection.model }
+    return selection?.provider && selection?.model ? { provider: selection.provider, model: selection.model } : null
   } catch {
     return null
   }
+}
+
+export function modelInfo(ctx) {
+  if (!ctx.get('llm')) return null
+  const route = assistantOverride ?? defaultSelection(ctx)
+  if (!route) return null
+  return { provider: route.provider, model: route.model, label: route.model }
 }
 
 /**
