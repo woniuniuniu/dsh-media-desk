@@ -13,6 +13,14 @@ function extensionOf(buffer) {
   return null
 }
 
+/** 两种后端共用相同的图片校验，工作台只保存真实且有界的图片内容。 */
+export function imageBuffer(buffer) {
+  if (buffer.length > MAX_IMAGE_BYTES) throw new Error(tr('图片太大'))
+  const ext = extensionOf(buffer)
+  if (!ext) throw new Error(tr('返回的内容不是图片'))
+  return { buffer, ext }
+}
+
 function redact(text, key) {
   const clean = String(text ?? '').slice(0, 300)
   return key ? clean.split(key).join('***') : clean
@@ -163,10 +171,7 @@ export async function generateImage(image, prompt, { fetchImpl = fetch, signal }
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
     try {
       const { buffer } = await requestOnce(image, prompt, fetchImpl, combined)
-      if (buffer.length > MAX_IMAGE_BYTES) throw new Error(tr('图片太大'))
-      const ext = extensionOf(buffer)
-      if (!ext) throw new Error(tr('返回的内容不是图片'))
-      return { buffer, ext }
+      return imageBuffer(buffer)
     } catch (err) {
       if (signal?.aborted) throw err
       lastError = err

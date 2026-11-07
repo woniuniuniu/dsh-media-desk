@@ -32,7 +32,7 @@ export function SettingsDialog() {
   React.useEffect(() => {
     if (!open || !settings) return
     const { image } = settings
-    setForm({ language: settings.language ?? 'auto', baseUrl: image.baseUrl, model: image.model, apiKey: '', size: image.size, quality: image.quality, extra: image.extra, exportDir: settings.exportDir ?? '', imageCount: settings.imageCount, shotCount: settings.shotCount })
+    setForm({ source: image.source ?? 'http', language: settings.language ?? 'auto', baseUrl: image.baseUrl, model: image.model, apiKey: '', size: image.size, quality: image.quality, toolSize: image.toolSize ?? '1536x1024', toolQuality: image.toolQuality ?? '', extra: image.extra, exportDir: settings.exportDir ?? '', imageCount: settings.imageCount, shotCount: settings.shotCount })
     setSample(null)
   }, [open, settings])
   if (!open || !form) return null
@@ -40,7 +40,7 @@ export function SettingsDialog() {
   const set = (key, value) => setForm(f => ({ ...f, [key]: value }))
   const payload = () => ({
     language: form.language,
-    image: { baseUrl: form.baseUrl, model: form.model, apiKey: form.apiKey, size: form.size, quality: form.quality, extra: form.extra },
+    image: { source: form.source, baseUrl: form.baseUrl, model: form.model, apiKey: form.apiKey, size: form.size, quality: form.quality, toolSize: form.toolSize, toolQuality: form.toolQuality, extra: form.extra },
     exportDir: form.exportDir, imageCount: Number(form.imageCount), shotCount: Number(form.shotCount),
   })
   const activePreset = PRESETS.find(p => p.baseUrl && p.baseUrl === form.baseUrl)?.id ?? (form.baseUrl ? 'custom' : null)
@@ -64,6 +64,19 @@ export function SettingsDialog() {
         </label>
 
         <div className="md-field">
+          <span>{t('生图来源')}</span>
+          <div className="md-presets" role="radiogroup" aria-label={t('生图来源')}>
+            {[['http', '图片 API'], ['tool', 'DSH 生成工具']].map(([value, label]) => <button type="button" key={value} role="radio" aria-checked={form.source === value} className={form.source === value ? 'is-on' : ''} onClick={() => set('source', value)}>{t(label)}</button>)}
+          </div>
+          {form.source === 'tool' ? <>
+            <small>{t(settings.imageToolAvailable ? '已检测到生图工具；账号登录和额度以试画结果为准。' : '未找到订阅生图工具，或默认执行器不支持直接调用；请检查插件和执行器后刷新工作台。')}</small>
+            <small>{t('复用插件接入 DSH 的订阅生图能力。例如，插件已让你通过 ChatGPT（GPT）订阅在 DSH 中生成图片，工作台就可复用，无需另填图片 API Key。其他国内外服务的订阅也需由插件接入生图功能，并在工作台适配范围内；仅登录订阅或接入聊天模型并不代表支持生图。')}</small>
+            <small>{t('当前适配 dsh-plugin-subscriptions。使用的服务、账号及回退规则由该插件决定，工作台不会自动切换到图片 API。')}</small>
+            <small>{t('试画和生成图片会消耗订阅账号的生图额度。')}</small>
+          </> : null}
+        </div>
+        {form.source === 'http' ? <>
+        <div className="md-field">
           <span>{t('生图模型')}</span>
           <div className="md-presets">
             {PRESETS.map(preset => (
@@ -85,6 +98,7 @@ export function SettingsDialog() {
           <input type="password" autoComplete="off" value={form.apiKey} onChange={e => set('apiKey', e.target.value)} placeholder={settings.image.hasKey ? t('留空表示不修改') : 'sk-…'} />
           <small>{t('只保存在这台电脑上，不会写进内容数据，也不会被打包或发给模型。')}</small>
         </label>
+        </> : null}
         <div className="md-field-row">
           <label className="md-field"><span>{t('配图数量')}</span><input type="number" min="0" max="4" value={form.imageCount} onChange={e => set('imageCount', e.target.value)} /></label>
           <label className="md-field"><span>{t('分镜格数')}</span><input type="number" min="0" max="12" value={form.shotCount} onChange={e => set('shotCount', e.target.value)} /></label>
@@ -92,14 +106,17 @@ export function SettingsDialog() {
         <button type="button" className="md-advanced" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}><Icon name={advanced ? 'chevD' : 'chevR'} size={12} />{t('高级')}</button>
         {advanced ? (
           <>
-            <div className="md-field-row">
+            {form.source === 'http' ? <div className="md-field-row">
               <label className="md-field"><span>{t('尺寸')}</span><input value={form.size} onChange={e => set('size', e.target.value)} placeholder="1536x1024" /></label>
               <label className="md-field"><span>{t('质量')}</span><input value={form.quality} onChange={e => set('quality', e.target.value)} placeholder="low / medium / high" /></label>
-            </div>
-            <label className="md-field">
+            </div> : <div className="md-field-row">
+              <label className="md-field"><span>{t('尺寸')}</span><select value={form.toolSize} onChange={e => set('toolSize', e.target.value)}><option value="">{t('工具默认')}</option>{['1024x1024', '1024x1536', '1536x1024', 'auto'].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+              <label className="md-field"><span>{t('质量')}</span><select value={form.toolQuality} onChange={e => set('toolQuality', e.target.value)}><option value="">{t('工具默认')}</option>{['low', 'medium', 'high', 'auto'].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+            </div>}
+            {form.source === 'http' ? <label className="md-field">
               <span>{t('附加参数（JSON）')}</span>
               <input value={form.extra} onChange={e => set('extra', e.target.value)} placeholder='{"output_format":"jpeg"}' />
-            </label>
+            </label> : null}
           </>
         ) : null}
         {sample ? <img className="md-test-sample" src={sample} alt={t('测试图')} /> : null}

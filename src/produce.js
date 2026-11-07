@@ -136,13 +136,14 @@ export function applyRevision(production, revise, { canDraw = true } = {}) {
 
 export class Producer {
   /**
-   * @param {{store: object, settings: object, callText: Function, generate: Function}} deps - 存储、设置、文本模型和生图函数。
+   * @param {{store: object, settings: object, callText: Function, generate: Function, ready?: Function}} deps - 存储、设置、文本模型和生图函数。
    */
-  constructor({ store, settings, callText, generate }) {
+  constructor({ store, settings, callText, generate, ready = imageReady }) {
     this.store = store
     this.settings = settings
     this.callText = callText
     this.generate = generate
+    this.ready = ready
     this.jobs = new Map()
     this.assets = new Set()
   }
@@ -218,7 +219,7 @@ export class Producer {
       if (plan.images.length < settings.imageCount) plan.images = [...plan.images, ...backup.images.slice(plan.images.length)]
       if (plan.shots.length < settings.shotCount) plan.shots = [...plan.shots, ...backup.shots.slice(plan.shots.length).map((row, i) => ({ ...row, no: plan.shots.length + i + 1 }))]
 
-      const ready = imageReady(settings)
+      const ready = this.ready(settings)
       const initial = ready ? 'pending' : 'skipped'
       job.stage = 'making'
       await this.patch(id, (production) => {
@@ -305,7 +306,7 @@ export class Producer {
         return await this.generate(image, prompt, { signal })
       } catch (err) {
         const limited = err?.status === 429 || /429/.test(String(err?.message))
-        if (!limited || attempt >= RETRY_WAIT_MS.length || signal?.aborted) throw err
+        if (err.permanent || !limited || attempt >= RETRY_WAIT_MS.length || signal?.aborted) throw err
         await new Promise((resolve, reject) => {
           const timer = setTimeout(resolve, RETRY_WAIT_MS[attempt] * (this.retryScale ?? 1))
           signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new Error('cancelled')) }, { once: true })
@@ -348,7 +349,7 @@ export class Producer {
   /** 单独重画一张。 */
   async regenerate(id, target) {
     const settings = await this.settings.read()
-    if (!imageReady(settings)) throw Object.assign(new Error(tr('还没有接入生图模型')), { status: 400 })
+    if (!this.ready(settings)) throw Object.assign(new Error(tr('还没有接入生图模型')), { status: 400 })
     if (!parseTarget(target)) throw Object.assign(new Error(tr('目标无效')), { status: 400 })
     const key = `${id}:${target}`
     if (this.assets.has(key)) return

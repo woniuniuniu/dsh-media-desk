@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tr } from './i18n.js'
 
 const DEFAULTS = {
-  image: { baseUrl: '', model: '', apiKey: '', size: '1536x1024', quality: '', extra: '' },
+  image: { source: 'http', baseUrl: '', model: '', apiKey: '', size: '1536x1024', quality: '', toolSize: '1536x1024', toolQuality: '', extra: '' },
   // 助手文字模型：空对象表示跟随 DeepSeek Harness 默认模型
   assistant: { provider: '', model: '' },
   voice: '',
@@ -42,8 +42,21 @@ export class Settings {
     const current = await this.read()
     const next = structuredClone(current)
     const image = patch.image ?? {}
+    if (image.source !== undefined) {
+      if (!['http', 'tool'].includes(image.source)) throw Object.assign(new Error(tr('生图来源无效')), { status: 400 })
+      next.image.source = image.source
+    }
     for (const key of ['model', 'size', 'quality']) {
       if (typeof image[key] === 'string') next.image[key] = image[key].trim().slice(0, 200)
+    }
+    for (const [key, values, message] of [
+      ['toolSize', ['', '1024x1024', '1024x1536', '1536x1024', 'auto'], '订阅生图工具不支持这个尺寸'],
+      ['toolQuality', ['', 'low', 'medium', 'high', 'auto'], '订阅生图工具不支持这个质量'],
+    ]) {
+      if (image[key] !== undefined) {
+        if (typeof image[key] !== 'string' || !values.includes(image[key].trim())) throw Object.assign(new Error(tr(message)), { status: 400 })
+        next.image[key] = image[key].trim()
+      }
     }
     if (typeof image.baseUrl === 'string') {
       const url = image.baseUrl.trim().replace(/\/+$/, '').replace(/\/images\/generations$/, '')
@@ -86,12 +99,13 @@ export class Settings {
   }
 }
 
-export function imageReady(settings) {
+export function imageReady(settings, toolAvailable = false) {
+  if (settings.image.source === 'tool') return toolAvailable
   return Boolean(settings.image.baseUrl && settings.image.model && settings.image.apiKey)
 }
 
 /** 发给浏览器的版本：只告诉它有没有密钥和末四位。 */
-export function publicSettings(settings) {
+export function publicSettings(settings, toolAvailable = false) {
   const { apiKey, ...image } = settings.image
-  return { ...settings, image: { ...image, hasKey: Boolean(apiKey), keyHint: apiKey ? apiKey.slice(-4) : '' }, imageReady: imageReady(settings) }
+  return { ...settings, image: { ...image, hasKey: Boolean(apiKey), keyHint: apiKey ? apiKey.slice(-4) : '' }, imageToolAvailable: toolAvailable, imageReady: imageReady(settings, toolAvailable) }
 }

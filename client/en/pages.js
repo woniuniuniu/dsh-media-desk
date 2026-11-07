@@ -1,5 +1,16 @@
 // 英文词典（pages）。key 是中文原文，value 是英文。
 export const PAGES = {
+  // 订阅生图设置
+  生图来源: 'Image source',
+  '图片 API': 'Image API',
+  'DSH 生成工具': 'DSH generation tools',
+  工具默认: 'Tool default',
+  '试画和生成图片会消耗订阅账号的生图额度。': 'Test images and image generation consume your subscription account’s image quota.',
+  '已检测到生图工具；账号登录和额度以试画结果为准。': 'Image tool detected. Use the test image to check sign-in and quota.',
+  '未找到订阅生图工具，或默认执行器不支持直接调用；请检查插件和执行器后刷新工作台。': 'No subscription image tool found, or the default executor does not support direct calls. Check the plugin and executor, then refresh Media Desk.',
+  '复用插件接入 DSH 的订阅生图能力。例如，插件已让你通过 ChatGPT（GPT）订阅在 DSH 中生成图片，工作台就可复用，无需另填图片 API Key。其他国内外服务的订阅也需由插件接入生图功能，并在工作台适配范围内；仅登录订阅或接入聊天模型并不代表支持生图。': 'Reuse subscription image generation made available to DSH by a plugin. For example, if a plugin lets you generate images in DSH with a ChatGPT (GPT) subscription, Media Desk can reuse that capability without a separate image API key. Subscriptions from other services also require plugin-provided image generation supported by Media Desk; signing in or connecting a chat model alone does not enable it.',
+  '当前适配 dsh-plugin-subscriptions。使用的服务、账号及回退规则由该插件决定，工作台不会自动切换到图片 API。': 'Currently supports dsh-plugin-subscriptions. That plugin controls service and account selection and fallback; Media Desk never switches to the image API automatically.',
+
   // 共用的表：状态、类型、平台、风格分类（util.js）
   灵感: 'Idea',
   大纲: 'Outline',

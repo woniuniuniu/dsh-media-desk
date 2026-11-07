@@ -178,12 +178,24 @@ The plugin is free and ships with no API keys. Anything that uses a model runs o
 | | What it uses | Without it |
 | --- | --- | --- |
 | **Script** | The model you've set up in DeepSeek Harness | A structural outline only |
-| **Cover, images, storyboard** | Your own image API key, added in the plugin settings | Script and storyboard text still work, and the cover is made from text |
+| **Cover, images, storyboard** | Your image API key, or a registered DSH subscription image tool, selected in settings | Script and storyboard text still work, and the cover is made from text |
 | **Account import** (optional) | Monid, a third-party data service billed per request. Under a cent per TikTok, Instagram or X account; about $0.02 for RedNote | Enter numbers by hand, or paste posts to learn a style |
 
 Images work with any service compatible with the OpenAI Images API (`POST {endpoint}/images/generations`). OpenAI, xAI, Volcengine Ark, Zhipu and SiliconFlow come pre-filled, or you can add a custom endpoint. Click **Generate test image** to check that it works. Each draft makes 9 images by default, and you can change that. Your key is stored only in the local `settings.json` (file mode 600). It never goes into your content data and is never sent to the text model.
 
 <br>
+
+### Use DSH generation tools
+
+Reuse subscription image generation made available to DSH by a plugin. For example, if a plugin lets you generate images in DSH with a ChatGPT (GPT) subscription, Media Desk can reuse that capability without a separate image API key. Subscriptions from other services also require plugin-provided image generation supported by Media Desk; signing in or connecting a chat model alone does not enable it. Currently supports `dsh-plugin-subscriptions`, which controls service and account selection and fallback.
+
+In Settings, choose **DSH generation tools** as the image source to reuse `image_generate` registered by `dsh-plugin-subscriptions` (including its collision alias). No additional API key is needed. Existing HTTP settings (including size and quality) are preserved; tool size and quality are configured separately, and Image API remains the default. Detection only confirms a compatible registration and a direct-call schema from the default executor, not sign-in or quota; **Generate test image** makes a real request and consumes subscription quota. Name/schema checks do not authenticate plugin identity; enable only trusted tool plugins.
+
+The host must support `tools.executable()`, `tools.selectExecutor().describe()` and standalone `tools.execute()` batches (public contracts verified against DSH 0.2.2-rc.1). Calls go through the host execution pipeline without reading credentials or importing subscription-plugin internals. Only images inside the DSH home `plugins/subscriptions/images/` directory are imported into the existing Media Desk asset workflow. Discovery currently checks only `dsh_subscriptions_image_generate` and `image_generate`, not arbitrary tool names. Other plugins must also match the parameters, output structure and output directory even when the name matches. Tools registered only in an Agent-private scope are unavailable.
+
+This is an independent background service operation, not a call on behalf of the visible chat session: it does not inherit that session's restrictions, historical toggles or account affinity. Global host tool policies and current subscription-tool preferences still apply. Approval-required calls without a suitable session fail closed. The tool owns provider/account selection and fallback (for example, Grok may be used when ChatGPT is logged out); Media Desk never falls back to HTTP or adds retries to tool requests.
+
+A pure Code Mode / PTC executor currently rejects direct root image-tool calls and is detected as unavailable. Use a native executor supporting direct calls or HTTP images. Missing tools or unsupported host APIs do not affect existing HTTP functionality.
 
 ## Import your own account
 

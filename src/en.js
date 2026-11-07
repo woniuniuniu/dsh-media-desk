@@ -14,6 +14,16 @@ export const EN = {
   拒绝跨站请求: 'Cross-site request refused',
   操作: 'Action',
 
+  // 订阅生图工具
+  生图来源无效: 'Invalid image source',
+  '未找到订阅生图工具，或默认执行器不支持直接调用；请检查插件和执行器后刷新工作台': 'No subscription image tool found, or the default executor does not support direct calls. Check the plugin and executor, then refresh Media Desk',
+  '订阅生图工具不支持这个尺寸': 'This size is not supported by the subscription image tool',
+  '订阅生图工具不支持这个质量': 'This quality is not supported by the subscription image tool',
+  '当前工具执行器不支持直接生图调用，请使用原生工具执行器或 HTTP 生图': 'The current tool executor does not support direct image calls. Use a native tool executor or HTTP images',
+  '生图工具失败：{reason}': 'Image tool failed: {reason}',
+  生图工具没有返回图片: 'The image tool returned no image',
+  生图工具返回的图片路径无效: 'The image tool returned an invalid image path',
+
   // 模型与对话
   当前没有可用模型: 'No model is available',
   模型调用失败: 'The model call failed',
