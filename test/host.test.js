@@ -657,6 +657,48 @@ test('Monid：短链只跟平台自己的域名，打开后不是主页就报错
   assert.equal(hops.length, 1)
 })
 
+test('Monid：从 .cmd shim 找到真正的 CLI 入口（含转发壳）', async () => {
+  const { resolveMonidEntry } = await import('../src/monid.js')
+  const dir = await mkdtemp(join(tmpdir(), 'monid-shim-'))
+  try {
+    const entry = join(dir, 'node_modules', '@monid-ai', 'cli', 'dist', 'index.js')
+    await mkdir(join(dir, 'node_modules', '@monid-ai', 'cli', 'dist'), { recursive: true })
+    await writeFile(entry, '')
+    const shim = join(dir, 'monid.cmd')
+    await writeFile(shim, '@ECHO off\r\n"%dp0%\\node_modules\\@monid-ai\\cli\\dist\\index.js" %*')
+    assert.equal(await resolveMonidEntry(shim), entry)
+    const forwarder = join(dir, 'forwarder.cmd')
+    await writeFile(forwarder, '@echo off\r\ncall "' + shim + '" %*')
+    assert.equal(await resolveMonidEntry(forwarder), entry)
+    assert.equal(await resolveMonidEntry(join(dir, 'no-such-dir', 'missing.cmd')), null)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('Monid：有 JS 入口时用 node 执行，参数原样传、不经过 shell', async () => {
+  const { createMonidRunner } = await import('../src/monid.js')
+  const calls = []
+  const exec = (file, argv, options, callback) => { calls.push({ file, argv, options }); callback(null, '{"balance":{"value":0,"currency":"USD"}}', '') }
+  const run = createMonidRunner(exec, async () => ({ bin: 'C:\\npm\\monid.cmd', entry: 'C:\\npm\\node_modules\\@monid-ai\\cli\\dist\\index.js', path: 'C:\\npm' }))
+  assert.deepEqual(await run(['--query', '{"limit":1}', '-j']), { balance: { value: 0, currency: 'USD' } })
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].file, process.execPath)
+  assert.deepEqual(calls[0].argv, ['C:\\npm\\node_modules\\@monid-ai\\cli\\dist\\index.js', '--query', '{"limit":1}', '-j'])
+  assert.equal(calls[0].options.env.NO_COLOR, '1')
+  assert.equal(calls[0].options.env.PATH, 'C:\\npm')
+})
+
+test('Monid：没有 JS 入口时照旧直接调用命令本身', async () => {
+  const { createMonidRunner } = await import('../src/monid.js')
+  const calls = []
+  const exec = (file, argv, options, callback) => { calls.push({ file, argv }); callback(null, '{"ok":true}', '') }
+  const run = createMonidRunner(exec, async () => ({ bin: '/usr/local/bin/monid', entry: null, path: '/usr/local/bin' }))
+  assert.deepEqual(await run(['balance', '-j']), { ok: true })
+  assert.equal(calls[0].file, '/usr/local/bin/monid')
+  assert.deepEqual(calls[0].argv, ['balance', '-j'])
+})
+
 const xhsOutput = { code: 0, success: true, data: { notes: [
   { id: 'a'.repeat(24), title: '第一条', desc: '正文', create_time: 1790000000, likes: 10, comments_count: 2, collected_count: 3, share_count: 1, view_count: 0, images_list: [{ url: 'http://ci.example/1.jpg' }] },
   { id: 'not-valid', title: '坏数据' },
