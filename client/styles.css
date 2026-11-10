@@ -305,6 +305,11 @@ button.md-stamp:not(:disabled):hover { transform: scale(1.08) rotate(-2deg); }
 .md-root .md-go { display: flex; align-items: center; justify-content: center; width: 100%; height: 40px; margin-top: 12px; border-radius: 999px; corner-shape: round; background: var(--primary); color: var(--on-primary); font-size: 14px; transition: transform .35s cubic-bezier(.2, 1.4, .4, 1), background .15s; }
 .md-root .md-go:hover { background: var(--primary-hover); transform: translateY(-1px); }
 .md-root .md-go:active { transform: scale(.98); }
+.md-go-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.md-root .md-go-row .md-go { flex: 1; margin-top: 0; }
+.md-go-option { display: flex; align-items: center; gap: 5px; flex: none; color: var(--ink3); font-size: 12px; line-height: 18px; cursor: pointer; }
+.md-go-option input, .md-check input { margin: 0; accent-color: var(--primary); }
+.md-check { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 13px; cursor: pointer; }
 .md-idea-hint { margin-top: 10px; color: var(--ink3); font-size: 12px; line-height: 18px; }
 .md-idea-hint button { margin-left: 4px; color: var(--accent); }
 .md-root .md-idea-hint.is-error { color: #d13c35; }

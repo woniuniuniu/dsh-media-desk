@@ -54,7 +54,7 @@ function Plate({ asset, paper = false, mark = null, alt = '', onOpen, onRetry })
 /** 进度：放在对话栏里，像助手在汇报。 */
 function ProgressCard({ production, live, settings }) {
   const running = production.status === 'running'
-  const ready = settings?.imageReady
+  const ready = settings?.imageReady && production.withImages !== false
   const words = textLength(production.article || live?.text || '')
   const visuals = [production.cover, ...(production.images ?? [])].filter(Boolean)
   const shots = production.shots ?? []
@@ -87,6 +87,11 @@ function IdeaCard({ item, live, settings }) {
   const running = production?.status === 'running'
   const styles = useDesk(s => s.state.styles ?? [])
   const activeId = useDesk(s => s.state.activeStyleId)
+  const [draw, setDraw] = React.useState(null)
+  React.useEffect(() => setDraw(null), [item.id])
+  // 单次选择优先，其次沿用这条成稿上次的选择，最后取设置里的默认值
+  const withImages = draw ?? (production?.withImages !== undefined ? production.withImages : settings?.generateImages !== false)
+  const canStart = !production || !['running', 'done'].includes(production.status)
   return (
     <div className="md-idea-card">
       <span className="md-idea-label">{t('灵感')} · {fmtDate(item.createdAt)}</span>
@@ -101,10 +106,19 @@ function IdeaCard({ item, live, settings }) {
           </select>
         </label>
       ) : null}
-      {!production || !['running', 'done'].includes(production.status) ? <button type="button" className="md-go" onClick={() => runProduce(item.id)}>{t('一键成稿')}</button> : null}
+      {canStart ? (
+        <div className="md-go-row">
+          <button type="button" className="md-go" onClick={() => runProduce(item.id, { withImages })}>{t('一键成稿')}</button>
+          <label className="md-go-option">
+            <input type="checkbox" checked={withImages} onChange={e => setDraw(e.target.checked)} />
+            {t('生成图片')}
+          </label>
+        </div>
+      ) : null}
       {running ? <ProgressCard production={{ ...production, id: item.id }} live={live} settings={settings} /> : null}
       {production?.status === 'failed' ? <p className="md-idea-hint is-error">{production.error}</p> : null}
-      {!running && !settings?.imageReady ? <p className="md-idea-hint">{t('接入生图模型后，封面和分镜也会画好。')}<button type="button" onClick={() => setDesk({ settingsOpen: true })}>{t('去接入')}</button></p> : null}
+      {canStart && !withImages ? <p className="md-idea-hint">{t('这次只出文字版，之后仍可以单张补画。')}</p> : null}
+      {canStart && withImages && !settings?.imageReady ? <p className="md-idea-hint">{t('接入生图模型后，封面和分镜也会画好。')}<button type="button" onClick={() => setDesk({ settingsOpen: true })}>{t('去接入')}</button></p> : null}
       {production?.notice ? <p className="md-idea-hint">{production.notice}</p> : null}
     </div>
   )
@@ -141,7 +155,7 @@ function HeroTile({ item, live, onView }) {
   const images = production?.images ?? []
   const done = production?.status === 'done'
   const pictures = [production?.cover, ...images].filter(a => a?.src).length
-  const showFigures = settings?.imageReady || images.some(a => a?.src)
+  const showFigures = (settings?.imageReady && production?.withImages !== false) || images.some(a => a?.src)
   const [saving, setSaving] = React.useState(false)
   const copy = async () => {
     await navigator.clipboard.writeText(`# ${production.title}\n\n${production.article}`)
@@ -156,8 +170,12 @@ function HeroTile({ item, live, onView }) {
     dialog: {
       title: t('重新成稿'),
       submitLabel: t('重新生成'),
-      fields: [{ name: 'note', label: t('现在的文章、封面和分镜会被替换，也会再消耗一次模型额度。'), type: 'hidden' }],
-      onSubmit: () => runProduce(item.id),
+      initial: { withImages: production?.withImages !== false },
+      fields: [
+        { name: 'note', label: t('现在的文章、封面和分镜会被替换，也会再消耗一次模型额度。'), type: 'hidden' },
+        { name: 'withImages', label: t('同时生成封面、配图和分镜图'), type: 'checkbox' },
+      ],
+      onSubmit: values => runProduce(item.id, { withImages: values.withImages !== false }),
     },
   })
   const figures = images.length ? images : [null, null].slice(0, settings?.imageCount ?? 2)

@@ -288,7 +288,7 @@ async function producerFixture({ callText, generate, ready = true }) {
   await store.read()
   const settings = new Settings(dir)
   await settings.update({ imageCount: 1, shotCount: 2, voice: '短句，爱用比喻', ...(ready ? { image: { baseUrl: 'https://i.example/v1', model: 'm', apiKey: 'k' } } : {}) })
-  return { dir, store, producer: new Producer({ store, settings, callText, generate }) }
+  return { dir, store, settings, producer: new Producer({ store, settings, callText, generate }) }
 }
 
 async function waitDone(producer, id) {
@@ -332,6 +332,67 @@ test('Producer 跑完整条线：文章、规划、全部图片，语气进入�
     assert.ok(systems.every(x => x.includes('短句，爱用比喻')))
     assert.ok(isPlan(systems[0]))
     assert.equal((await stat(join(dir, 'files', p.cover.src.split('/').pop()))).size, PNG.length)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('Producer 关闭生图时只写文字，资产全部 skipped，之后可以单张补画', async () => {
+  let generated = 0
+  const callText = async ({ system }) => (isPlan(system) ? { text: PLAN, model: 'd' } : { text: '# T\n\n正文', model: 'd' })
+  const generate = async () => {
+    generated += 1
+    return { buffer: PNG, ext: '.png' }
+  }
+  const { dir, store, producer } = await producerFixture({ callText, generate })
+  try {
+    await producer.start('seed_2', { withImages: false })
+    await waitDone(producer, 'seed_2')
+    let p = (await store.read()).items.find(i => i.id === 'seed_2').production
+    assert.equal(p.withImages, false)
+    assert.equal(p.status, 'done')
+    assert.match(p.article, /正文/)
+    assert.equal(p.cover.status, 'skipped')
+    assert.equal(p.images.length, 1)
+    assert.equal(p.images[0].status, 'skipped')
+    assert.equal(p.shots.length, 2)
+    assert.ok(p.shots.every(s => s.status === 'skipped' && s.voice && s.prompt))
+    assert.equal(p.needsProvider, undefined)
+    assert.equal(generated, 0)
+
+    // 之后想补画某一张，仍然可以单独发起
+    await producer.regenerate('seed_2', 'cover')
+    await new Promise(r => setTimeout(r, 40))
+    p = (await store.read()).items.find(i => i.id === 'seed_2').production
+    assert.equal(p.cover.status, 'done')
+    assert.equal(generated, 1)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('设置里的默认生图开关生效，单次选择可以覆盖', async () => {
+  let generated = 0
+  const callText = async ({ system }) => (isPlan(system) ? { text: PLAN, model: 'd' } : { text: '# T\n正文', model: 'd' })
+  const generate = async () => {
+    generated += 1
+    return { buffer: PNG, ext: '.png' }
+  }
+  const { dir, store, settings, producer } = await producerFixture({ callText, generate })
+  try {
+    assert.equal((await settings.read()).generateImages, true)
+    await settings.update({ generateImages: false })
+    await producer.start('seed_2')
+    await waitDone(producer, 'seed_2')
+    let p = (await store.read()).items.find(i => i.id === 'seed_2').production
+    assert.equal(p.withImages, false)
+    assert.equal(generated, 0)
+
+    await producer.start('seed_3', { withImages: true })
+    await waitDone(producer, 'seed_3')
+    p = (await store.read()).items.find(i => i.id === 'seed_3').production
+    assert.equal(p.withImages, true)
+    assert.ok(generated > 0)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

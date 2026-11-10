@@ -181,7 +181,7 @@ The plugin is free and ships with no API keys. Anything that uses a model runs o
 | **Cover, images, storyboard** | Your image API key, or a registered DSH subscription image tool, selected in settings | Script and storyboard text still work, and the cover is made from text |
 | **Account import** (optional) | Monid, a third-party data service billed per request. Under a cent per TikTok, Instagram or X account; about $0.02 for RedNote | Enter numbers by hand, or paste posts to learn a style |
 
-Images work with any service compatible with the OpenAI Images API (`POST {endpoint}/images/generations`). OpenAI, xAI, Volcengine Ark, Zhipu and SiliconFlow come pre-filled, or you can add a custom endpoint. Click **Generate test image** to check that it works. Each draft makes 9 images by default, and you can change that. Your key is stored only in the local `settings.json` (file mode 600). It never goes into your content data and is never sent to the text model.
+Images work with any service compatible with the OpenAI Images API (`POST {endpoint}/images/generations`), and with Alibaba Bailian: Qwen-Image uses the sync endpoint, while Wan 2.5 and earlier use the async task API. OpenAI, xAI, Volcengine Ark, Zhipu, SiliconFlow, Alibaba Bailian, Bailian Token Plan and Bailian Wan (async) come pre-filled, or you can add a custom endpoint. Click **Generate test image** to check that it works. Each draft makes 9 images by default, and you can change that; you can also uncheck **Draw images** before **Draft it** to get text only this time, and draw individual images later. Your key is stored only in the local `settings.json` (file mode 600). It never goes into your content data and is never sent to the text model.
 
 <br>
 
@@ -243,6 +243,14 @@ Everything stays on your computer in `~/.dsh/media-desk/`, shared by the desktop
 <br>
 
 Yes. The script, title and storyboard text are written as usual, and the cover is made from the cover text. Connect an image model to draw the cover, images and frames too.
+
+</details>
+
+<details>
+<summary><b>Do I have to generate images every time?</b></summary>
+<br>
+
+No. Uncheck **Draw images** next to **Draft it** and that draft gets only the title, cover text, script and storyboard text; you can also change the default in settings. Add images later with **Draw cover** or **Draw this** on any single frame. Without an image model, drawing is skipped anyway and the saved cover is composed from text.
 
 </details>
 

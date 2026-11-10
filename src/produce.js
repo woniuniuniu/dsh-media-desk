@@ -174,16 +174,19 @@ export class Producer {
     }, { undoable: false })
   }
 
-  async start(id) {
+  async start(id, { withImages } = {}) {
     if (this.jobs.has(id)) return false
     const state = await this.store.read()
     const item = state.items.find(row => row.id === id)
     if (!item) throw Object.assign(new Error(tr('找不到这条灵感')), { status: 404 })
-    const job = { stage: 'brief', text: '', planText: '', controller: new AbortController() }
+    // 单次选择优先；没传就按设置里的默认值
+    const settings = await this.settings.read()
+    const draw = typeof withImages === 'boolean' ? withImages : settings.generateImages !== false
+    const job = { stage: 'brief', text: '', planText: '', controller: new AbortController(), withImages: draw }
     this.jobs.set(id, job)
     await this.store.mutate('开始成稿', (draft) => {
       const target = draft.items.find(row => row.id === id)
-      target.production = { status: 'running', stage: 'brief', startedAt: new Date().toISOString(), title: target.title, article: '', cover: null, images: [], shots: [] }
+      target.production = { status: 'running', stage: 'brief', withImages: draw, startedAt: new Date().toISOString(), title: target.title, article: '', cover: null, images: [], shots: [] }
       return draft
     }, { undoable: false })
     // 不等待：浏览器靠轮询拿进度
@@ -219,11 +222,14 @@ export class Producer {
       if (plan.images.length < settings.imageCount) plan.images = [...plan.images, ...backup.images.slice(plan.images.length)]
       if (plan.shots.length < settings.shotCount) plan.shots = [...plan.shots, ...backup.shots.slice(plan.shots.length).map((row, i) => ({ ...row, no: plan.shots.length + i + 1 }))]
 
-      const ready = this.ready(settings)
+      const configured = this.ready(settings)
+      const draw = job.withImages !== false
+      const ready = configured && draw
       const initial = ready ? 'pending' : 'skipped'
       job.stage = 'making'
       await this.patch(id, (production) => {
         production.stage = 'making'
+        production.withImages = draw
         production.title = plan.title
         production.coverText = plan.coverText
         production.facts = plan.facts
@@ -232,7 +238,7 @@ export class Producer {
         production.cover = { prompt: plan.cover, status: initial }
         production.images = plan.images.map(row => ({ ...row, status: initial }))
         production.shots = plan.shots.map(row => ({ ...row, status: initial }))
-        if (!ready) production.needsProvider = true
+        if (!configured && draw) production.needsProvider = true
       })
 
       // 策划案定了之后，文章和所有画面同时开工

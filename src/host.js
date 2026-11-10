@@ -356,7 +356,7 @@ async function route(ctx, store, desk, req, res) {
       return json(res, 200, { state })
     }
     case 'produce': {
-      const started = await desk.producer.start(String(body.id))
+      const started = await desk.producer.start(String(body.id), { withImages: body.withImages })
       return json(res, 200, { started, state: await store.read() })
     }
     case 'produce/cancel':
