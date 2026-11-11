@@ -116,7 +116,7 @@ export function applyOps(state, ops) {
   const errors = []
   if (!Array.isArray(ops)) return { applied, errors: [tr('操作列表无效')] }
   for (const op of ops) {
-    const handler = op && typeof op === 'object' ? HANDLERS[op.op] : null
+    const handler = op && typeof op === 'object' && Object.hasOwn(HANDLERS, op.op) ? HANDLERS[op.op] : null
     if (!handler) {
       errors.push(tr('不认识的操作：{op}', { op: String(op?.op) }))
       continue
