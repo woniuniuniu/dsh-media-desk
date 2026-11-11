@@ -1,64 +1,14 @@
-import { EN } from './en/index.js'
-import { lang, t } from './i18n.js'
+// 界面小工具：界面只有中文，t() 只做占位符替换。
 
-// 这些表只放中文原文，显示时再用 t() 翻译
-export const STATUSES = ['idea', 'outline', 'draft', 'ready', 'published']
-export const STATUS_LABEL = { idea: '灵感', outline: '大纲', draft: '草稿', ready: '待发布', published: '已发布' }
-export const KIND_LABEL = { image: '图片', video: '视频', web: '网页', quote: '金句', note: '笔记' }
-export const PLATFORMS = ['公众号', '小红书', '抖音', 'B站', '视频号', 'TikTok', 'Instagram', 'YouTube', 'X']
-const OVERSEAS = new Set(['TikTok', 'Instagram', 'YouTube', 'X'])
-/** 下拉框里的平台顺序：英文界面把海外平台放前面。 */
-export function platformChoices() {
-  return lang() === 'en' ? [...PLATFORMS.filter(p => OVERSEAS.has(p)), ...PLATFORMS.filter(p => !OVERSEAS.has(p))] : PLATFORMS
+/**
+ * 界面文字。key 就是中文原文，{name} 是占位符。
+ * @param {string} zh - 中文原文。
+ * @param {Record<string, unknown>} [vars] - 占位符的值。
+ * @returns {string} 中文文字。
+ */
+export function t(zh, vars) {
+  return vars ? zh.replace(/\{(\w+)\}/g, (match, key) => (vars[key] === undefined ? match : String(vars[key]))) : zh
 }
-export const STYLE_CATEGORIES = ['科技数码', '旅行探店', 'Vlog 生活', '观点认知', '干货教程', '种草测评', '情感故事', '热点资讯']
-
-export function styleIcon(style) {
-  return style?.icon || '✍️'
-}
-export const PLATFORM_URL = {
-  公众号: 'https://mp.weixin.qq.com/', 小红书: 'https://creator.xiaohongshu.com/publish/publish', 抖音: 'https://creator.douyin.com/creator-micro/content/upload',
-  B站: 'https://member.bilibili.com/platform/upload/video/frame', 视频号: 'https://channels.weixin.qq.com/platform/post/create', TikTok: 'https://www.tiktok.com/tiktokstudio/upload', Instagram: 'https://www.instagram.com/', YouTube: 'https://studio.youtube.com/', X: 'https://x.com/compose/post',
-}
-
-export function hash(text) {
-  let h = 2166136261
-  for (let i = 0; i < text.length; i += 1) {
-    h ^= text.charCodeAt(i)
-    h = Math.imul(h, 16777619)
-  }
-  return h >>> 0
-}
-
-export function seeded(seed) {
-  let s = seed || 1
-  return () => {
-    s = Math.imul(s ^ (s >>> 15), 2246822507)
-    s = Math.imul(s ^ (s >>> 13), 3266489909)
-    s ^= s >>> 16
-    return (s >>> 0) / 4294967296
-  }
-}
-
-export const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
-
-/** 把弹簧响应采样成 CSS linear() 缓动，WAAPI 和 CSS 都能用。 */
-export function springEasing(stiffness = 170, damping = 20, mass = 1) {
-  const w0 = Math.sqrt(stiffness / mass)
-  const zeta = damping / (2 * Math.sqrt(stiffness * mass))
-  const wd = w0 * Math.sqrt(Math.max(1 - zeta * zeta, 1e-4))
-  const at = t => 1 - Math.exp(-zeta * w0 * t) * (Math.cos(wd * t) + ((zeta * w0) / wd) * Math.sin(wd * t))
-  let duration = 0.1
-  while (duration < 4 && (Math.abs(at(duration) - 1) > 0.002 || Math.abs(at(duration + 0.05) - 1) > 0.002)) duration += 0.05
-  const points = []
-  const N = 36
-  for (let i = 0; i <= N; i += 1) points.push(Number(at((i / N) * duration).toFixed(4)))
-  points[N] = 1
-  return { easing: `linear(${points.join(',')})`, duration: Math.round(duration * 1000) }
-}
-
-export const SPRING_SOFT = springEasing(120, 16)
-export const SPRING_SNAP = springEasing(260, 24)
 
 export function dayKey(date) {
   const d = new Date(date)
@@ -74,11 +24,8 @@ export function fmtTime(iso) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
 export function fmtDate(iso) {
   const d = new Date(iso)
-  if (lang() === 'en') return `${MONTHS_SHORT[d.getMonth()]} ${d.getDate()}`
   return `${d.getMonth() + 1}月${d.getDate()}日`
 }
 
@@ -105,52 +52,8 @@ export function toLocalInput(iso) {
 
 export function compact(n) {
   if (n === null || n === undefined) return '—'
-  if (lang() === 'en') {
-    // 英文用 K / M，去掉多余的 .0
-    const short = (value, suffix) => `${value.toFixed(value >= 100 ? 0 : 1).replace(/\.0$/, '')}${suffix}`
-    if (n >= 999500) return short(n / 1000000, 'M')
-    if (n >= 10000) return short(n / 1000, 'K')
-    return n.toLocaleString('en-US')
-  }
   if (n >= 10000) return `${(n / 10000).toFixed(n >= 100000 ? 0 : 1)}万`
   return n.toLocaleString()
-}
-
-/** 数量后面的单位。英文在 n 为 1 时用单数，词典里 key 写成「单位|1」。 */
-export function unit(n, zh) {
-  if (lang() === 'en' && n === 1 && EN[`${zh}|1`] !== undefined) return EN[`${zh}|1`]
-  return t(zh)
-}
-
-/** 连续记录天数：今天还没记时，从昨天往回算，不会让今天一早就断掉。 */
-/** 灵感墙和邮票只放自己记下的灵感，从账号导入的已发内容不算。 */
-export function isIdea(item) {
-  return !item.parentId && !item.imported
-}
-
-export function computeStreak(items, now = new Date()) {
-  const days = new Set(items.filter(isIdea).map(i => dayKey(i.createdAt)))
-  const cursor = new Date(now)
-  if (!days.has(dayKey(cursor))) cursor.setDate(cursor.getDate() - 1)
-  let streak = 0
-  while (days.has(dayKey(cursor))) {
-    streak += 1
-    cursor.setDate(cursor.getDate() - 1)
-  }
-  return streak
-}
-
-/** 成稿之后，卡片显示封面和最终标题。 */
-export function displayItem(item) {
-  const production = item.production
-  if (!production?.title || production.status === 'running') return item
-  const src = production.cover?.src
-  return { ...item, title: production.title, ...(src ? { kind: 'image', media: { src, w: 3, h: 2 } } : {}) }
-}
-
-export function posterOf(item) {
-  if (!item.media) return null
-  return item.media.poster || (item.kind === 'video' ? null : item.media.src)
 }
 
 function escapeHtml(text) {
@@ -204,9 +107,7 @@ export function renderMarkdown(source) {
   return out.join('')
 }
 
-/** 正文长度：中文按字数（不算空白），英文按词数，中文字在英文里各算一个。 */
+/** 正文长度：按字数，不算空白。 */
 export function textLength(text) {
-  if (lang() !== 'en') return text.replace(/\s/g, '').length
-  return (text.match(/[\u4e00-\u9fff]|[A-Za-z0-9][A-Za-z0-9'’-]*/g) || []).length
+  return text.replace(/\s/g, '').length
 }
-

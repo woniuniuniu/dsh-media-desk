@@ -1,7 +1,7 @@
 // 助手模型选择：顶栏按钮 + 弹窗。不指定时跟随 DeepSeek Harness 默认模型。
 import React from 'react'
 import { fetchModels, saveAssistant, setDesk, useDesk } from './desk.js'
-import { t } from './i18n.js'
+import { t } from './util.js'
 import { Dialog, Icon } from './ui.jsx'
 
 export function ModelButton() {

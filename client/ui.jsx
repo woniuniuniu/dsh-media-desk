@@ -1,7 +1,7 @@
 // 通用小组件：图标、按钮、对话框、提示。
 import React from 'react'
 import { setDesk, undo, useDesk } from './desk.js'
-import { t } from './i18n.js'
+import { t } from './util.js'
 
 const PATHS = {
   plus: 'M12 5v14M5 12h14',

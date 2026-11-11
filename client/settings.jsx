@@ -1,8 +1,8 @@
 // 设置：开放接入的生图模型和保存位置。
 import React from 'react'
 import { saveSettings, setDesk, testImage, useDesk } from './desk.js'
-import { t, useLang } from './i18n.js'
 import { Dialog, Icon } from './ui.jsx'
+import { t } from './util.js'
 
 // 常见服务的 OpenAI 兼容地址，模型名以各家文档为准。label 是中文原文，显示时再翻译
 const PRESETS = [
@@ -14,15 +14,7 @@ const PRESETS = [
   { id: 'custom', label: '其他自定义', baseUrl: '', model: '', size: '1024x1024', quality: '', extra: '' },
 ]
 
-// 中文和 English 各用自己的语言写，切错了也认得出来
-const LANGUAGES = [
-  { value: 'auto', label: () => t('跟随 DeepSeek Harness') },
-  { value: 'zh', label: () => '中文' },
-  { value: 'en', label: () => 'English' },
-]
-
 export function SettingsDialog() {
-  useLang()
   const open = useDesk(s => s.settingsOpen)
   const settings = useDesk(s => s.settings)
   const [form, setForm] = React.useState(null)
@@ -32,16 +24,14 @@ export function SettingsDialog() {
   React.useEffect(() => {
     if (!open || !settings) return
     const { image } = settings
-    setForm({ source: image.source ?? 'http', language: settings.language ?? 'auto', baseUrl: image.baseUrl, model: image.model, apiKey: '', size: image.size, quality: image.quality, toolSize: image.toolSize ?? '1536x1024', toolQuality: image.toolQuality ?? '', extra: image.extra, exportDir: settings.exportDir ?? '', imageCount: settings.imageCount, shotCount: settings.shotCount })
+    setForm({ source: image.source ?? 'http', baseUrl: image.baseUrl, model: image.model, apiKey: '', size: image.size, quality: image.quality, toolSize: image.toolSize ?? '1536x1024', toolQuality: image.toolQuality ?? '', extra: image.extra })
     setSample(null)
   }, [open, settings])
   if (!open || !form) return null
   const close = () => setDesk({ settingsOpen: false })
   const set = (key, value) => setForm(f => ({ ...f, [key]: value }))
   const payload = () => ({
-    language: form.language,
     image: { source: form.source, baseUrl: form.baseUrl, model: form.model, apiKey: form.apiKey, size: form.size, quality: form.quality, toolSize: form.toolSize, toolQuality: form.toolQuality, extra: form.extra },
-    exportDir: form.exportDir, imageCount: Number(form.imageCount), shotCount: Number(form.shotCount),
   })
   const activePreset = PRESETS.find(p => p.baseUrl && p.baseUrl === form.baseUrl)?.id ?? (form.baseUrl ? 'custom' : null)
   return (
@@ -50,19 +40,6 @@ export function SettingsDialog() {
         event.preventDefault()
         if (await saveSettings(payload())) close()
       }}>
-        <div className="md-field">
-          <span>{t('语言')}</span>
-          <div className="md-presets" role="radiogroup" aria-label={t('语言')}>
-            {LANGUAGES.map(option => (
-              <button type="button" key={option.value} role="radio" aria-checked={form.language === option.value} className={form.language === option.value ? 'is-on' : ''} onClick={() => set('language', option.value)}>{option.label()}</button>
-            ))}
-          </div>
-        </div>
-        <label className="md-field">
-          <span>{t('成稿保存到')}</span>
-          <input value={form.exportDir} onChange={e => set('exportDir', e.target.value)} placeholder={settings.defaultExportDir} />
-        </label>
-
         <div className="md-field">
           <span>{t('生图来源')}</span>
           <div className="md-presets" role="radiogroup" aria-label={t('生图来源')}>
@@ -99,10 +76,6 @@ export function SettingsDialog() {
           <small>{t('只保存在这台电脑上，不会写进内容数据，也不会被打包或发给模型。')}</small>
         </label>
         </> : null}
-        <div className="md-field-row">
-          <label className="md-field"><span>{t('配图数量')}</span><input type="number" min="0" max="4" value={form.imageCount} onChange={e => set('imageCount', e.target.value)} /></label>
-          <label className="md-field"><span>{t('分镜格数')}</span><input type="number" min="0" max="12" value={form.shotCount} onChange={e => set('shotCount', e.target.value)} /></label>
-        </div>
         <button type="button" className="md-advanced" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}><Icon name={advanced ? 'chevD' : 'chevR'} size={12} />{t('高级')}</button>
         {advanced ? (
           <>
