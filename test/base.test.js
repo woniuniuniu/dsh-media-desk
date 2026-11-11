@@ -32,6 +32,12 @@ test('不认识的操作被拒绝', () => {
   assert.equal(r.applied.length, 0)
   assert.equal(r.errors.length, 1)
 })
+test('原型链上的名字不算操作', () => {
+  const r = applyOps(emptyState(), ['constructor', 'toString', '__proto__', 'hasOwnProperty'].map(op => ({ op })))
+  assert.deepEqual(r.applied, [])
+  assert.equal(r.errors.length, 4)
+  for (const message of r.errors) assert.match(message, /不认识的操作/)
+})
 test('设置：时间格式和数量被校验', async () => {
   const settings = new Settings(await mkdtemp(join(tmpdir(), 'xdesk-')))
   assert.equal((await settings.read()).composeAt, '07:00')
