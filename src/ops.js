@@ -1,6 +1,7 @@
 // 工作台的唯一写入口：界面操作都走这里，统一校验字段并产出结果。
 // 模型输出也是不可信输入，所以这里只放行白名单字段。
 import { tr } from './i18n.js'
+import { normalizeStyle } from './style.js'
 
 const HANDLE = /^[A-Za-z0-9_]{1,15}$/
 const TIERS = ['engage', 'topic']
@@ -102,6 +103,44 @@ const HANDLERS = {
     const row = need(state.rules, op.id, tr('规则'))
     state.rules = state.rules.filter(entry => entry.id !== op.id)
     return tr('已删除规则：{name}', { name: row.name })
+  },
+  set_core(state, op) {
+    if (op.source !== 'card') throw new Error(tr('核心风格只能用风格卡设置'))
+    const card = normalizeStyle(op.card)
+    state.voice.core = { id: 'core', name: card.name, source: 'card', card, skillText: null, condensed: null, updatedAt: new Date().toISOString() }
+    return tr('已设置核心风格：{name}', { name: card.name })
+  },
+  clear_core(state) {
+    state.voice.core = null
+    return tr('已清除核心风格')
+  },
+  add_type(state, op) {
+    const name = text(op.name, 20)
+    if (!name) throw new Error(tr('类型要有名字'))
+    state.voice.types.push({ id: newId('t'), name, source: 'card', card: normalizeStyle(op.card, name), skillText: null, condensed: null, updatedAt: new Date().toISOString() })
+    return tr('已添加类型：{name}', { name })
+  },
+  update_type(state, op) {
+    const row = need(state.voice.types, op.id, tr('内容类型'))
+    if (op.name !== undefined) {
+      const name = text(op.name, 20)
+      if (!name) throw new Error(tr('类型要有名字'))
+      row.name = name
+    }
+    if (op.card !== undefined) {
+      row.card = normalizeStyle(op.card, row.name)
+      row.source = 'card'
+      row.skillText = null
+      row.condensed = null
+    }
+    row.updatedAt = new Date().toISOString()
+    return tr('已更新类型：{name}', { name: row.name })
+  },
+  delete_type(state, op) {
+    const row = need(state.voice.types, op.id, tr('内容类型'))
+    if (state.voice.types.length <= 1) throw new Error(tr('至少保留一个内容类型'))
+    state.voice.types = state.voice.types.filter(entry => entry.id !== op.id)
+    return tr('已删除类型：{name}', { name: row.name })
   },
 }
 

@@ -2,10 +2,12 @@
 import { createReadStream } from 'node:fs'
 import { stat, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
-import { assistantModelOverride, defaultSelection, modelInfo, modelStatus, setAssistantModel } from './ai.js'
+import { callModel, assistantModelOverride, defaultSelection, extractJson, modelInfo, modelStatus, setAssistantModel } from './ai.js'
 import { generateImage } from './images.js'
 import { generateToolImage, imageTool } from './image-tool.js'
 import { applyOps, newId } from './ops.js'
+import { importVoice, setCondensed } from './voice.js'
+import { normalizeStyle, stylePrompts } from './style.js'
 import { publicSettings, Settings, imageReady } from './settings.js'
 import { Store } from './store.js'
 import { tr } from './i18n.js'
@@ -143,6 +145,22 @@ async function route(ctx, store, desk, req, res) {
         return { ...applied, state: draft }
       }, { undoable: body.undoable !== false })
       return json(res, 200, result)
+    }
+    case 'voice/import': {
+      const callText = async prompts => (await callModel(ctx, { ...prompts, maxTokens: 1500, light: true })).text
+      return json(res, 200, { state: await importVoice({ store, callText }, body) })
+    }
+    case 'voice/condensed': return json(res, 200, { state: await setCondensed({ store }, body) })
+    case 'style/extract': {
+      const text = typeof body.text === 'string' ? body.text.trim() : ''
+      if (!text) return json(res, 400, { error: tr('先贴入要提炼的文字') })
+      let reply
+      try {
+        reply = await callModel(ctx, { ...stylePrompts(text, typeof body.name === 'string' ? body.name : ''), maxTokens: 1500, light: true })
+        return json(res, 200, { style: normalizeStyle(extractJson(reply.text), body.name) })
+      } catch (err) {
+        return json(res, 502, { error: tr('提炼风格失败：{reason}', { reason: err.message }) })
+      }
     }
     case 'undo': {
       const label = await store.undoLast()
