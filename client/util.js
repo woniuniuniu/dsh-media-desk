@@ -111,3 +111,24 @@ export function renderMarkdown(source) {
 export function textLength(text) {
   return text.replace(/\s/g, '').length
 }
+
+const URL_RUN = /https?:\/\/[^\s]+/g
+
+/** 一键发帖链接，与 src/inbox.js 的 intentUrl 一致；先把孤立代理项换成 U+FFFD，避免 encodeURIComponent 抛错。 */
+export function intentUrl(candidate) {
+  const wellFormed = value => (value.toWellFormed ? value.toWellFormed() : value)
+  let url = `https://x.com/intent/tweet?text=${encodeURIComponent(wellFormed(candidate.text))}`
+  if (candidate.form === 'quote' && candidate.quoteUrl) url += `&url=${encodeURIComponent(wellFormed(candidate.quoteUrl))}`
+  return url
+}
+
+/** X 的字数，与 src/inbox.js 的 tweetLength 一致：码点在 U+1100 及以上计 2，其余计 1；网址统一计 23。 */
+export function tweetLength(text) {
+  let count = 0
+  const rest = String(text).replace(URL_RUN, () => {
+    count += 23
+    return ''
+  })
+  for (const ch of rest) count += ch.codePointAt(0) >= 0x1100 ? 2 : 1
+  return count
+}

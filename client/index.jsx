@@ -1,5 +1,6 @@
 // dsh-x-desk 浏览器半片：侧栏入口 + main 全局面板。
 import React from 'react'
+import { InboxView } from './inbox.jsx'
 import { loadDesk, setDesk, undo, useDesk } from './desk.js'
 import { ModelButton, ModelPicker } from './modelpick.jsx'
 import { ScheduleView } from './schedule.jsx'
@@ -7,7 +8,7 @@ import { SettingsDialog } from './settings.jsx'
 import { StyleView } from './style.jsx'
 import css from './styles.css'
 import { t } from './util.js'
-import { Empty, FormDialog, Icon, IconButton, Toast } from './ui.jsx'
+import { FormDialog, Icon, IconButton, Toast } from './ui.jsx'
 
 const PANEL_ID = 'x-desk'
 
@@ -16,14 +17,6 @@ const NAV = [
   { id: 'schedule', label: '排期' },
   { id: 'style', label: '风格' },
 ]
-
-function InboxView() {
-  return (
-    <div className="md-page">
-      <Empty title={t('收件箱')} hint={t('收件箱将在后续任务接入')} />
-    </div>
-  )
-}
 
 const VIEWS = { inbox: InboxView, schedule: ScheduleView, style: StyleView }
 
