@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "handle": "karpathy",
+  "postId": "1855000000000000001",
+  "text": "Sample: a small model with a well-built eval set beats a big model you never measure. Write the evals first.",
+  "postedAt": "2026-11-11T01:00:00Z",
+  "fetchedAt": "2026-11-11T03:00:00Z",
+  "metrics": { "likes": 5200, "replies": 310, "reposts": 780, "quotes": 140, "views": 610000 },
+  "isRepost": false
+}

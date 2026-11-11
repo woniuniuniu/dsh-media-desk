@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "handle": "sama",
+  "postId": "1855000000000000002",
+  "text": "Sample: the new model is rolling out today. Faster, cheaper, and noticeably better at long documents.",
+  "postedAt": "2026-11-11T01:30:00Z",
+  "fetchedAt": "2026-11-11T03:00:00Z",
+  "metrics": { "likes": 18400, "replies": 1250, "reposts": 2900, "quotes": 460, "views": 2300000 },
+  "isRepost": false
+}

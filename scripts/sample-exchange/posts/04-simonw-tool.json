@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "handle": "simonw",
+  "postId": "1855000000000000004",
+  "text": "Sample: a tiny CLI that pipes any web page into a prompt. Forty lines of shell, no dependencies.",
+  "postedAt": "2026-11-11T02:10:00Z",
+  "fetchedAt": "2026-11-11T03:00:00Z",
+  "metrics": { "likes": 95, "replies": 6, "reposts": 11, "quotes": 1, "views": 8100 },
+  "isRepost": false
+}
