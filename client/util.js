@@ -196,3 +196,20 @@ export function formToCard(form) {
   for (const key of CARD_LIST) card[key] = String(form[key] ?? '').split('\n').map(line => line.trim()).filter(Boolean)
   return card
 }
+
+/**
+ * 今天的成稿状态。lastComposeError 在失败后会一直留到下次成功，所以失败只在"今天试过"时才算今天的。
+ * @param {{lastComposeDay: string|null, lastComposeError: string|null, lastComposeAt?: string|null}} runs - 状态里的 runs。
+ * @param {string} composeAt - 设置里的成稿时间 HH:MM。
+ * @param {Date} now - 当前时间。
+ * @returns {{kind: 'done', at: string|null}|{kind: 'empty'}|{kind: 'failed', error: string}|{kind: 'waiting', composeAt: string}} 状态。
+ */
+export function composeStatus(runs, composeAt, now) {
+  const today = dayKey(now)
+  const error = runs.lastComposeError ?? null
+  const doneToday = runs.lastComposeDay === today
+  if (doneToday && error === null) return { kind: 'done', at: runs.lastComposeAt ?? null }
+  if (doneToday && error === '今天没有新素材') return { kind: 'empty' }
+  if (error !== null && runs.lastComposeAt && dayKey(runs.lastComposeAt) === today) return { kind: 'failed', error }
+  return { kind: 'waiting', composeAt }
+}

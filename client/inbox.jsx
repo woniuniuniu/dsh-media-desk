@@ -1,11 +1,10 @@
 // 收件箱：今天的成稿状态、待处理的候选稿、手动素材。
 import React from 'react'
 import { composeNote, dispatchOps, reviseCandidate, runCompose, toast, useDesk } from './desk.js'
-import { compact, dayKey, fmtDate, fmtTime, t, tweetLength } from './util.js'
+import { compact, composeStatus, dayKey, fmtDate, fmtTime, t, tweetLength } from './util.js'
 import { Dialog, Empty, Icon } from './ui.jsx'
 
 const PLACEHOLDER = '【此处填你的经历】'
-const NO_MATERIAL = '今天没有新素材'
 const MAX_TWEET = 280
 const STATUS_LABEL = { approved: '已通过', discarded: '已丢掉', sent: '已发出', expired: '已过期' }
 const DISCARD_REASONS = [
@@ -28,15 +27,13 @@ function StatusBar() {
   const composeAt = useDesk(s => s.settings?.composeAt ?? '07:00')
   const [running, setRunning] = React.useState(false)
   const [confirming, setConfirming] = React.useState(false)
-  const today = dayKey(new Date())
-  const doneToday = runs.lastComposeDay === today
-  const error = runs.lastComposeError
-
+  const status = composeStatus(runs, composeAt, new Date())
+  const failed = status.kind === 'failed'
   let text
-  let failed = false
-  if (doneToday && error === NO_MATERIAL) text = t('今天没有新素材')
-  else if (doneToday && !error) text = t('今天 {time} 已出 {n} 条', { time: composeAt, n: candidates.filter(row => dayKey(row.createdAt) === today).length })
-  else if (error && error !== NO_MATERIAL) { text = t('今天成稿失败：{error}', { error }); failed = true } else text = t('今天还没到成稿时间（{time}）', { time: composeAt })
+  if (status.kind === 'empty') text = t('今天没有新素材')
+  else if (status.kind === 'done') text = t('今天 {time} 已出 {n} 条', { time: status.at ? fmtTime(status.at) : composeAt, n: candidates.filter(row => dayKey(row.createdAt) === dayKey(new Date())).length })
+  else if (failed) text = t('今天成稿失败：{error}', { error: status.error })
+  else text = t('今天还没到成稿时间（{time}）', { time: composeAt })
 
   const run = async (force) => {
     setConfirming(false)
@@ -101,7 +98,7 @@ function Sources({ candidate }) {
             <p>{post.text}</p>
             <small>
               {t('赞 {likes} · 回复 {replies} · 转发 {reposts}', { likes: compact(post.likes), replies: compact(post.replies), reposts: compact(post.reposts) })}
-              {post.url ? <> · <a href={post.url} target="_blank" rel="noreferrer">{t('原帖')}</a></> : null}
+              {post.url ? <> · <a href={post.url} target="_blank" rel="noopener noreferrer">{t('原帖')}</a></> : null}
             </small>
           </li>
         ))}
@@ -269,7 +266,7 @@ export function InboxView() {
         {pending.length ? (
           <div className="md-inbox-list">{pending.map(row => <Card key={row.id} candidate={row} />)}</div>
         ) : !candidates.length && !hasPosts ? (
-          <Empty title={t('还没有素材')} hint={t('把帖子文件放进 {dir}/posts/，或在下面贴一段内容。', { dir: exchangeDir ?? '' })} />
+          <Empty title={t('还没有素材')} hint={exchangeDir ? t('把帖子文件放进 {dir}/posts/，或在下面贴一段内容。', { dir: exchangeDir }) : t('把帖子文件放进交换文件夹的 posts/ 目录，或在下面贴一段内容。')} />
         ) : <Empty title={t('没有待处理的稿子')} />}
         <Handled />
         <Notes />

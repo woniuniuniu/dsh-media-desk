@@ -37,7 +37,7 @@ async function setup({ responses = [], posts = POSTS(), notes = [] } = {}) {
     if (!queue.length) throw new Error('假模型没有更多回复')
     const next = queue.shift()
     if (next instanceof Error) throw next
-    return { text: next, model: 'fake' }
+    return { text: typeof next === 'function' ? await next(store) : next, model: 'fake' }
   }
   return { store, calls, composer: new Composer({ store, settings, callText, now: () => NOW }) }
 }
@@ -55,6 +55,7 @@ test('正常一天：选题 → 成稿 → 一次性入库，用过的帖子被�
   assert.ok(s.candidates[0].score >= s.candidates[1].score)
   assert.equal(s.runs.lastComposeDay, '2026-11-11')
   assert.equal(s.runs.lastComposeError, null)
+  assert.equal(s.runs.lastComposeAt, NOW.toISOString())
   assert.equal(s.posts.filter(p => p.used).length, 3)
   assert.deepEqual(calls.map(c => [c.maxTokens, c.light]), [[3000, true], [1200, undefined], [1200, undefined]])
 })
@@ -87,6 +88,7 @@ test('Review Focus 3：选题返回乱码时不产生任何候选稿，记下原
   assert.equal(s.candidates.length, 0)
   assert.equal(s.runs.lastComposeDay, null)
   assert.ok(s.runs.lastComposeError)
+  assert.equal(s.runs.lastComposeAt, NOW.toISOString())
   assert.ok(s.posts.every(p => !p.used))
 })
 
@@ -124,6 +126,7 @@ test('Review Focus 3：模型调用直接抛错，同样不留半成品', async 
   const s = await store.read()
   assert.equal(s.candidates.length, 0)
   assert.match(s.runs.lastComposeError, /网络断了/)
+  assert.equal(s.runs.lastComposeAt, NOW.toISOString())
   assert.equal(s.runs.lastComposeDay, null)
 })
 
@@ -133,6 +136,7 @@ test('没有新素材不算失败', async () => {
   const s = await store.read()
   assert.equal(s.runs.lastComposeDay, '2026-11-11')
   assert.equal(s.runs.lastComposeError, '今天没有新素材')
+  assert.equal(s.runs.lastComposeAt, NOW.toISOString())
   assert.equal(calls.length, 0)
 })
 
@@ -275,6 +279,18 @@ test('beforeCall 在第二次模型调用前返回 false：整体放弃，什么
   assert.equal(s.posts.filter(p => p.used).length, 0)
   assert.equal(s.runs.lastComposeDay, null)
   assert.equal(s.runs.lastComposeError, null)
+  assert.equal(s.runs.lastComposeAt, null)
+})
+
+test('素材在成稿途中被其他任务用掉：记下原因和时间', async () => {
+  const useAll = async (store) => { await store.mutate('抢先', (s) => { s.posts.forEach((p) => { p.used = true }) }, { undoable: false }); return '正文' }
+  const { composer, store } = await setup({ responses: [TOPICS, useAll, useAll] })
+  const r = await composer.composeDaily()
+  assert.deepEqual(r, { created: 0, error: '素材已被其他任务用掉' })
+  const s = await store.read()
+  assert.equal(s.runs.lastComposeError, '素材已被其他任务用掉')
+  assert.equal(s.runs.lastComposeDay, null)
+  assert.equal(s.runs.lastComposeAt, NOW.toISOString())
 })
 
 test('undoable: false 时三个入口都不占撤销位', async () => {

@@ -81,6 +81,7 @@ export class Composer {
     const { dailyCandidates } = await this.settings.read()
     const typeIds = state.voice.types.map(t => t.id)
     const note = (message, mark) => this.store.mutate('选题', s => {
+      s.runs.lastComposeAt = now.toISOString()
       s.runs.lastComposeError = message === null ? null : String(message).slice(0, MAX_ERROR)
       if (mark) s.runs.lastComposeDay = day
     }, { undoable })
@@ -163,6 +164,7 @@ export class Composer {
           decidedAt: null, discardReason: null, view: null, revision: 0, image: null,
         })
       }
+      s.runs.lastComposeAt = now.toISOString()
       if (!written.length) {
         s.runs.lastComposeError = tr('素材已被其他任务用掉')
         return 0
