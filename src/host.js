@@ -2,6 +2,10 @@
 import { createReadStream } from 'node:fs'
 import { stat, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
+import { Composer } from './compose.js'
+import { Exchange } from './exchange.js'
+import { Lock } from './lock.js'
+import { Worker, imagesToday, localDay, resolveExchangeDir } from './worker.js'
 import { callModel, assistantModelOverride, defaultSelection, extractJson, modelInfo, modelStatus, setAssistantModel } from './ai.js'
 import { generateImage } from './images.js'
 import { generateToolImage, imageTool } from './image-tool.js'
@@ -110,7 +114,8 @@ async function route(ctx, store, desk, req, res) {
   if (method === 'GET') {
     if (path === 'state') {
       const state = await store.read()
-      return json(res, 200, { state, model: engineLabel(ctx), modelOk: modelStatus.ok, modelError: modelStatus.error, canUndo: store.undo.length > 0 })
+      const exchangeDir = resolveExchangeDir(await desk.settings.read(), store.root)
+      return json(res, 200, { state, exchangeDir, model: engineLabel(ctx), modelOk: modelStatus.ok, modelError: modelStatus.error, canUndo: store.undo.length > 0 })
     }
     if (path === 'settings') return json(res, 200, publicSettings(await desk.settings.read(), Boolean(imageTool(ctx))))
     if (path === 'models') {
@@ -186,6 +191,38 @@ async function route(ctx, store, desk, req, res) {
       await writeFile(join(store.filesDir, name), buffer)
       return json(res, 200, { src: `x-desk/files/${name}` })
     }
+    case 'compose/run': {
+      const state = await store.read()
+      if (state.runs.lastComposeDay === localDay(new Date()) && body.force !== true) return json(res, 409, { error: tr('今天已经成稿了；要再来一次请选择强制重新成稿') })
+      const result = await desk.composer.composeDaily()
+      return json(res, 200, { ...result, state: await store.read() })
+    }
+    case 'candidate/revise': {
+      await desk.composer.revise(body.id, { view: body.view, instruction: body.instruction, typeId: body.typeId })
+      return json(res, 200, { state: await store.read() })
+    }
+    case 'note/compose': {
+      await desk.composer.composeFromNote(body.id)
+      return json(res, 200, { state: await store.read() })
+    }
+    case 'candidate/image': {
+      const settings = await desk.settings.read()
+      const state = await store.read()
+      const candidate = state.candidates.find(c => c.id === body.id)
+      if (!candidate) return json(res, 404, { error: tr('找不到候选稿') })
+      if (candidate.status !== 'approved') return json(res, 400, { error: tr('只有已通过的候选稿才能配图') })
+      if (!imageReady(settings, Boolean(imageTool(ctx)))) return json(res, 400, { error: tr('还没有配置生图：请先在设置里填好生图接口或选择订阅生图工具') })
+      if (imagesToday(state, new Date()) >= settings.dailyImages) return json(res, 429, { error: tr('今天的配图数量已达上限（{n} 张）', { n: settings.dailyImages }) })
+      const prompt = `${candidate.text}\n\n为这条推文配一张简洁的横版插图，不要出现文字`
+      const { buffer, ext } = await (settings.image.source === 'tool' ? generateToolImage(ctx, settings.image, prompt) : generateImage(settings.image, prompt))
+      const name = `${newId('i')}${ext}`
+      await writeFile(join(store.filesDir, name), buffer)
+      await store.mutate('配图', s => {
+        const row = s.candidates.find(c => c.id === body.id)
+        if (row) Object.assign(row, { image: name, imageAt: new Date().toISOString() })
+      })
+      return json(res, 200, { state: await store.read() })
+    }
     default: return json(res, 404, { error: tr('接口不存在') })
   }
 }
@@ -210,7 +247,14 @@ export default {
   apply(ctx) {
     const store = new Store()
     const settings = new Settings(store.root)
-    const desk = { settings }
+    const composer = new Composer({ store, settings, callText: options => callModel(ctx, options) })
+    const desk = { settings, composer }
+    const worker = new Worker({
+      store, settings, composer,
+      lock: new Lock(join(store.root, 'worker.lock')),
+      exchangeFor: current => new Exchange(resolveExchangeDir(current, store.root)),
+    })
+    ctx.effect(() => worker.start(), 'dsh-x-desk: worker')
     // 启动时恢复用户在工作台里选过的助手模型
     settings.read().then(saved => setAssistantModel(saved.assistant)).catch(() => {})
     ctx.effect(() => ctx.webServer.register({
