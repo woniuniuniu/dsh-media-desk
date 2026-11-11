@@ -1,4 +1,4 @@
-// 持久化：$DSH_HOME/media-desk/state.json。桌面端和 Web 端读同一份数据。
+// 持久化：$DSH_HOME/x-desk/state.json。桌面端和 Web 端读同一份数据。
 // 两个 Host 进程可能同时运行，所以每次写入前都按 mtime 判断是否需要重读。
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -61,7 +61,7 @@ export function dshHome(env = process.env) {
 }
 
 export class Store {
-  constructor(root = join(dshHome(), 'media-desk')) {
+  constructor(root = join(dshHome(), 'x-desk')) {
     this.root = root
     this.file = join(root, 'state.json')
     this.filesDir = join(root, 'files')

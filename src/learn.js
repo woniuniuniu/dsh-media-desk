@@ -174,7 +174,7 @@ export async function exportSkill(state, home) {
   const rules = state.skills.filter(skill => !skill.sample && (skill.status === 'active' || skill.status === 'exported'))
   const picked = activeStyle(state)
   const style = picked && !picked.preset ? picked : null
-  const name = 'media-desk-voice'
+  const name = 'x-desk-voice'
   const dir = join(home, 'skills', name)
   if (!rules.length && !style) {
     // 之前导出过的旧 Skill 不再代表现在的设置，撤掉它
@@ -187,5 +187,5 @@ export async function exportSkill(state, home) {
   const ruleBlock = rules.length ? `## ${tr('必须遵守的规则')}\n\n${rules.map(r => `- **${r.name}**${tr('：')}${r.rule}${r.evidence ? tr('（依据：{evidence}）', { evidence: r.evidence }) : ''}`).join('\n')}\n` : ''
   const body = `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${tr('自媒体写作风格')}\n\n${tr('由「自媒体工作台」沉淀，更新于 {date}。', { date: new Date().toISOString().slice(0, 10) })}\n\n${styleBlock}${ruleBlock}`
   await writeFile(join(dir, 'SKILL.md'), body)
-  return { name, path: join(dir, 'SKILL.md'), rules: rules.length, slug: slug(name, 'media-desk') }
+  return { name, path: join(dir, 'SKILL.md'), rules: rules.length, slug: slug(name, 'x-desk') }
 }

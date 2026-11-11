@@ -75,7 +75,7 @@ export async function generateToolImage(ctx, image, prompt, { signal } = {}) {
     const timeout = AbortSignal.timeout(300_000)
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
     combined.throwIfAborted()
-    const id = `media-desk:${randomUUID()}`
+    const id = `x-desk:${randomUUID()}`
     // 工作台是独立服务，无聊天 Agent、伪造会话或日志；全局执行策略仍由宿主管理。
     const batch = await selected.tools.execute({ calls: [{ type: 'tool-call', id, name: selected.name, arguments: JSON.stringify(args) }], signal: combined })
     combined.throwIfAborted()

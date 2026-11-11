@@ -43,7 +43,7 @@ export async function saveProduction(production, { filesDir, exportDir, videoCov
   const files = []
 
   const copy = async (asset, name) => {
-    const match = /^media-desk\/files\/([\w.-]+)$/.exec(asset?.src ?? '')
+    const match = /^x-desk\/files\/([\w.-]+)$/.exec(asset?.src ?? '')
     if (!match) return null
     const file = `${name}${extname(match[1])}`
     await copyFile(join(filesDir, match[1]), join(target, file))

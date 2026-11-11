@@ -24,7 +24,7 @@ function BoardCard({ item: raw }) {
       className="md-board-card"
       draggable
       onDragStart={(event) => {
-        event.dataTransfer.setData('text/media-desk-item', item.id)
+        event.dataTransfer.setData('text/x-desk-item', item.id)
         event.dataTransfer.effectAllowed = 'move'
       }}
       onClick={(event) => {
@@ -66,7 +66,7 @@ function Board({ items }) {
             onDrop={(event) => {
               event.preventDefault()
               setOver(null)
-              const id = event.dataTransfer.getData('text/media-desk-item')
+              const id = event.dataTransfer.getData('text/x-desk-item')
               if (id) dispatchOps([{ op: 'set_status', id, status }], { label: t('修改状态') })
             }}
           >

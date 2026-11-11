@@ -22,7 +22,7 @@ function context(execute, names = ['image_generate']) {
 const success = (batch, path) => ({ results: [{ callId: batch.calls[0].id, result: { isError: false, value: { paths: [path] } } }] })
 
 async function fixture(run) {
-  const dir = await mkdtemp(join(tmpdir(), 'media-desk-tool-'))
+  const dir = await mkdtemp(join(tmpdir(), 'x-desk-tool-'))
   const before = process.env.DSH_HOME
   process.env.DSH_HOME = dir
   try {
@@ -120,7 +120,7 @@ test('uses public batch execution and canonical value, imports image, never pass
     assert.deepEqual(Object.keys(batch).sort(), ['calls', 'signal'])
     const call = batch.calls[0]
     assert.equal(call.type, 'tool-call')
-    assert.match(call.id, /^media-desk:/)
+    assert.match(call.id, /^x-desk:/)
     assert.equal(call.name, 'image_generate')
     assert.deepEqual(JSON.parse(call.arguments), { prompt: 'paper boat', size: '1536x1024', quality: 'high' })
     assert.equal(batch.signal.aborted, false)
@@ -240,7 +240,7 @@ test('authenticated settings/test and readiness use the same tool backend; HTTP 
   plugin.apply(ctx)
   const request = (method, route, body = {}) => new Promise(resolve => {
     const res = { headersSent: false, setHeader() {}, end(raw) { resolve({ status: this.statusCode, body: JSON.parse(raw) }) } }
-    handler({ method, url: `/media-desk/${route}`, headers: { 'sec-fetch-site': 'same-origin' }, async *[Symbol.asyncIterator]() { yield Buffer.from(JSON.stringify(body)) } }, res)
+    handler({ method, url: `/x-desk/${route}`, headers: { 'sec-fetch-site': 'same-origin' }, async *[Symbol.asyncIterator]() { yield Buffer.from(JSON.stringify(body)) } }, res)
   })
   let response = await request('GET', 'settings')
   assert.equal(response.body.image.source, 'http')
@@ -256,7 +256,7 @@ test('authenticated settings/test and readiness use the same tool backend; HTTP 
   assert.equal(response.body.imageReady, true)
   response = await request('POST', 'settings/test')
   assert.equal(response.status, 200)
-  assert.match(response.body.src, /^media-desk\/files\//)
+  assert.match(response.body.src, /^x-desk\/files\//)
   assert.equal(generated, 1)
   ctx.get = name => name === 'tools' ? undefined : name === 'connection' ? { requestRejection: () => undefined } : undefined
   response = await request('GET', 'settings')

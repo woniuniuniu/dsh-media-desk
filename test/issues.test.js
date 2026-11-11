@@ -89,7 +89,7 @@ test('#4 模型调用带上会话标识，供 opencode-go 这类按会话路由�
   await callModel(ctx, { system: 's', user: 'u' })
   await callModel(ctx, { system: 's', user: 'u' })
   await callModel(ctx, { system: 's', user: 'u', sessionId: 'custom' })
-  assert.match(PLUGIN_SESSION_ID, /^dsh-media-desk-[\da-f-]{36}$/)
+  assert.match(PLUGIN_SESSION_ID, /^dsh-x-desk-[\da-f-]{36}$/)
   assert.deepEqual(requests.map(row => row.sessionId), [PLUGIN_SESSION_ID, PLUGIN_SESSION_ID, 'custom'])
 })
 
@@ -110,7 +110,7 @@ test('PR #5 助手模型自选：指定后优先用，清空后跟随默认；�
     setAssistantModel(null)
   }
 
-  const dir = await mkdtemp(join(tmpdir(), 'media-desk-'))
+  const dir = await mkdtemp(join(tmpdir(), 'x-desk-'))
   try {
     const settings = new Settings(dir)
     assert.deepEqual((await settings.read()).assistant, { provider: '', model: '' })

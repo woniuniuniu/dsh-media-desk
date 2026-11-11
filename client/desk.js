@@ -3,7 +3,7 @@ import React from 'react'
 import { coverDataUrl } from './cover.js'
 import { lang, plural, setLanguagePreference, t } from './i18n.js'
 
-const BASE = 'media-desk/'
+const BASE = 'x-desk/'
 
 let snapshot = {
   state: null, model: null, modelOk: null, modelError: null, canUndo: false, error: null,
@@ -31,8 +31,8 @@ export function useDesk(selector) {
 }
 
 async function request(path, body) {
-  const res = await fetch(BASE + path, body === undefined ? { headers: { 'x-media-desk-lang': lang() } } : {
-    method: 'POST', headers: { 'content-type': 'application/json', 'x-media-desk-lang': lang() }, body: JSON.stringify(body),
+  const res = await fetch(BASE + path, body === undefined ? { headers: { 'x-desk-lang': lang() } } : {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-desk-lang': lang() }, body: JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error || t('请求失败（{status}）', { status: res.status }))
@@ -262,7 +262,7 @@ export async function captureUrl(url, extra = {}) {
 }
 
 export async function uploadFile(file) {
-  const res = await fetch(`${BASE}upload`, { method: 'POST', headers: { 'content-type': file.type, 'x-media-desk-lang': lang() }, body: file })
+  const res = await fetch(`${BASE}upload`, { method: 'POST', headers: { 'content-type': file.type, 'x-desk-lang': lang() }, body: file })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error || t('上传失败'))
   return data

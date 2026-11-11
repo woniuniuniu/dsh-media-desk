@@ -36,10 +36,10 @@ test('英文请求下生成英文示例，结构和中文版完全一致', async
   const en = withLang('en', () => buildSeed(NOW))
   assert.equal(zh.sampleLang, 'zh')
   assert.equal(en.sampleLang, 'en')
-  assert.deepEqual(en.items.map(row => [row.id, row.kind, row.status, row.platform, row.scheduledAt, row.media?.src ?? null]), zh.items.map(row => [row.id, row.kind, row.status, row.platform, row.scheduledAt, ({ seed_7: 'media-desk/assets/poster-en.jpg', seed_20: 'media-desk/assets/emboss-en.jpg' })[row.id] ?? row.media?.src ?? null]))
+  assert.deepEqual(en.items.map(row => [row.id, row.kind, row.status, row.platform, row.scheduledAt, row.media?.src ?? null]), zh.items.map(row => [row.id, row.kind, row.status, row.platform, row.scheduledAt, ({ seed_7: 'x-desk/assets/poster-en.jpg', seed_20: 'x-desk/assets/emboss-en.jpg' })[row.id] ?? row.media?.src ?? null]))
   // 图上印着中文的那张，英文版换成英文图；切回中文换回来
   const back = localizeSamples(structuredClone(en), 'zh')
-  assert.equal(back.items.find(row => row.id === 'seed_7').media.src, 'media-desk/assets/poster.jpg')
+  assert.equal(back.items.find(row => row.id === 'seed_7').media.src, 'x-desk/assets/poster.jpg')
   assert.deepEqual(en.metrics, zh.metrics)
   assert.deepEqual(en.styles.map(row => [row.id, row.category, row.icon]), zh.styles.map(row => [row.id, row.category, row.icon]))
   for (const row of en.items) for (const field of ['title', 'body', 'source', ...row.tags]) assert.ok(!CJK.test(field in row ? row[field] : field), `${row.id} ${field}`)
@@ -47,7 +47,7 @@ test('英文请求下生成英文示例，结构和中文版完全一致', async
   for (const row of en.styles) assert.ok(!CJK.test(JSON.stringify({ ...row, category: '' })), row.id)
 
   // Store 在请求里第一次建库时也按请求语言写示例
-  const dir = await mkdtemp(join(tmpdir(), 'media-desk-'))
+  const dir = await mkdtemp(join(tmpdir(), 'x-desk-'))
   try {
     const state = await withLang('en', () => new Store(dir).read())
     assert.equal(state.sampleLang, 'en')
@@ -211,7 +211,7 @@ test('英文成稿：回执、默认景别和封面大字兜底都是英文，�
 })
 
 test('GET state 按请求头的语言换示例文字', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'media-desk-'))
+  const dir = await mkdtemp(join(tmpdir(), 'x-desk-'))
   const previous = process.env.DSH_HOME
   process.env.DSH_HOME = dir
   try {
@@ -224,7 +224,7 @@ test('GET state 按请求头的语言换示例文字', async () => {
     plugin.apply(ctx)
     const get = lang => new Promise((resolve) => {
       const res = { statusCode: 0, headersSent: false, setHeader() {}, end: body => resolve({ status: res.statusCode, body: JSON.parse(body) }) }
-      handler({ url: '/media-desk/state', method: 'GET', headers: { 'x-media-desk-lang': lang } }, res)
+      handler({ url: '/x-desk/state', method: 'GET', headers: { 'x-desk-lang': lang } }, res)
     })
     const zh = await get('zh')
     assert.equal(zh.status, 200)

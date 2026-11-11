@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto'
  * 插件在会话之外调模型，自己带一个会话标识。有些网关（如 opencode-go）按会话路由，
  * 缺了 x-opencode-session 头会直接返回 400 MissingSessionID；DSH 会把 sessionId 映射成这类头。
  */
-export const PLUGIN_SESSION_ID = `dsh-media-desk-${randomUUID()}`
+export const PLUGIN_SESSION_ID = `dsh-x-desk-${randomUUID()}`
 
 /** 最近一次模型调用的结果。选了模型不等于能用，比如还没配密钥。 */
 export const modelStatus = { ok: null, error: null }
@@ -64,7 +64,7 @@ export async function callModel(ctx, { system, user, maxTokens = 4000, signal, o
     for await (const chunk of call.stream({
       ...call.config,
       system: currentLang() === 'en' ? `${system}\n${ENGLISH_DIRECTIVE}` : system,
-      messages: [{ role: 'user', content: [{ type: 'text', text: user }], source: { kind: 'dsh-media-desk' } }],
+      messages: [{ role: 'user', content: [{ type: 'text', text: user }], source: { kind: 'dsh-x-desk' } }],
       sessionId,
       signal,
     })) {

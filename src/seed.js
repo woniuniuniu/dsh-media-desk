@@ -2,7 +2,7 @@
 import { currentLang, normalizeLang } from './i18n.js'
 import { PRESET_VERSION, migratePresets, presetText, seedPresets } from './style-presets.js'
 
-const A = name => `media-desk/assets/${name}`
+const A = name => `x-desk/assets/${name}`
 
 const RAW = [
   { k: 'image', img: ['hills', 900, 620], t: '普通人第一次用 AI 做出能赚钱的东西，到底卡在哪', b: '不是不会提示词，是不知道第一个可以卖的东西长什么样。把这一步拆成三张图。', tags: ['AI', '变现'], a: 'case', p: ['newbie'], st: 'draft', day: 0, src: '路上想到' },

@@ -55,9 +55,9 @@ function coerce(type, value) {
       if (value === null) return null
       if (!value || typeof value.src !== 'string') return undefined
       // 媒体只允许插件自己的相对路径或 http(s) 地址
-      const local = /^media-desk\/(assets|files)\/[\w.-]+$/.test(value.src)
+      const local = /^x-desk\/(assets|files)\/[\w.-]+$/.test(value.src)
       if (!local && !isHttpUrl(value.src)) return undefined
-      const poster = typeof value.poster === 'string' && (/^media-desk\/(assets|files)\/[\w.-]+$/.test(value.poster) || isHttpUrl(value.poster)) ? value.poster : undefined
+      const poster = typeof value.poster === 'string' && (/^x-desk\/(assets|files)\/[\w.-]+$/.test(value.poster) || isHttpUrl(value.poster)) ? value.poster : undefined
       return { src: value.src, ...(poster ? { poster } : {}), ...(Number.isFinite(value.w) ? { w: value.w } : {}), ...(Number.isFinite(value.h) ? { h: value.h } : {}) }
     }
     default: return undefined

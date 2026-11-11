@@ -9,7 +9,7 @@ import { STATUS_LABEL, computeStreak, dayKey, displayItem, fmtDate, fmtTime, pos
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 // 中文原文，显示时再翻译
 const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
-const TYPE = 'text/media-desk-item'
+const TYPE = 'text/x-desk-item'
 
 function startDrag(event, id) {
   event.dataTransfer.setData(TYPE, id)

@@ -109,7 +109,7 @@ test('clear_samples 清空示例但保留用户内容', () => {
 })
 
 test('Store 持久化、撤销，并能感知另一进程的写入', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'media-desk-'))
+  const dir = await mkdtemp(join(tmpdir(), 'x-desk-'))
   try {
     const a = new Store(dir)
     const before = (await a.read()).items.length
@@ -173,7 +173,7 @@ test('requestRejection 没有鉴权服务时拒绝，有服务时听它的', () 
 })
 
 test('exportSkill 不导出示例规则和示例人物', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'media-desk-skill-'))
+  const dir = await mkdtemp(join(tmpdir(), 'x-desk-skill-'))
   try {
     const state = seed()
     await assert.rejects(exportSkill(state, dir), /示例规则和模板不会被导出/)
@@ -181,7 +181,7 @@ test('exportSkill 不导出示例规则和示例人物', async () => {
     const result = await exportSkill(state, dir)
     assert.equal(result.rules, 1)
     const body = await readFile(result.path, 'utf8')
-    assert.match(body, /^---\nname: media-desk-voice\n/)
+    assert.match(body, /^---\nname: x-desk-voice\n/)
     assert.match(body, /我的规则/)
     assert.doesNotMatch(body, /开头先给数字/)
     assert.doesNotMatch(body, /想入门的小林/)
@@ -251,7 +251,7 @@ test('generateImage 遇到 5xx 重试一次', async () => {
 })
 
 test('Settings 权限 600，密钥不外泄，空密钥不覆盖', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'media-desk-set-'))
+  const dir = await mkdtemp(join(tmpdir(), 'x-desk-set-'))
   try {
     const settings = new Settings(dir)
     await settings.update({ image: { baseUrl: 'https://x.example/v1/images/generations/', model: 'm', apiKey: 'sk-abcdefgh1234' }, imageCount: 99 })
@@ -283,7 +283,7 @@ test('normalizePlan 丢弃多余字段并按设置截断', () => {
 })
 
 async function producerFixture({ callText, generate, ready = true }) {
-  const dir = await mkdtemp(join(tmpdir(), 'media-desk-prod-'))
+  const dir = await mkdtemp(join(tmpdir(), 'x-desk-prod-'))
   const store = new Store(dir)
   await store.read()
   const settings = new Settings(dir)
@@ -323,7 +323,7 @@ test('Producer 跑完整条线：文章、规划、全部图片，语气进入�
     assert.match(p.article, /## 第一节/)
     assert.doesNotMatch(p.article, /模型标题/)
     assert.equal(p.cover.status, 'done')
-    assert.match(p.cover.src, /^media-desk\/files\/g_.+\.png$/)
+    assert.match(p.cover.src, /^x-desk\/files\/g_.+\.png$/)
     assert.equal(p.shots.length, 2)
     assert.ok(p.shots.every(s => s.status === 'done'))
     assert.equal(item.status, 'draft')
@@ -504,7 +504,7 @@ test('chatPrompts 只有成稿完成时才把成稿交给模型', () => {
 })
 
 test('saveProduction 写出文章、脚本和素材，标题里的路径字符被清掉', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'media-desk-save-'))
+  const dir = await mkdtemp(join(tmpdir(), 'x-desk-save-'))
   try {
     const filesDir = join(dir, 'files')
     await mkdir(filesDir)
@@ -512,9 +512,9 @@ test('saveProduction 写出文章、脚本和素材，标题里的路径字符�
     await writeFile(join(filesDir, 'b.jpg'), PNG)
     const p = revisable()
     p.title = '../危险/标题: 测试'
-    p.cover.src = 'media-desk/files/a.jpg'
-    p.images[0].src = 'media-desk/files/b.jpg'
-    p.shots[0].src = 'media-desk/assets/../../secret.jpg'
+    p.cover.src = 'x-desk/files/a.jpg'
+    p.images[0].src = 'x-desk/files/b.jpg'
+    p.shots[0].src = 'x-desk/assets/../../secret.jpg'
     p.shots[0].voice = '带|竖线'
     const saved = await saveProduction(p, { filesDir, exportDir: join(dir, 'out'), videoCover: Buffer.from([0xff, 0xd8, 0xff]) })
     assert.equal(saved.path, join(dir, 'out', '危险 标题 测试'))
@@ -809,10 +809,10 @@ test('Monid：封面存到本地，内网地址、非图片和已有封面都跳
     { id: 'none', cover: null },
     { id: 'known', cover: 'https://93.184.216.34/known.png' },
   ]
-  const state = { items: [{ externalId: '抖音:known', media: { src: 'media-desk/files/x.png' } }] }
+  const state = { items: [{ externalId: '抖音:known', media: { src: 'x-desk/files/x.png' } }] }
   const saved = await saveCovers(posts, '抖音', state, dir, fake)
   assert.deepEqual([...saved.keys()], ['ok'])
-  assert.match(saved.get('ok'), /^media-desk\/files\/c_[\w]+\.png$/)
+  assert.match(saved.get('ok'), /^x-desk\/files\/c_[\w]+\.png$/)
   assert.equal(requested.some(url => url.includes('127.0.0.1') || url.includes('known')), false)
   assert.equal((await readdir(dir)).length, 1)
   await rm(dir, { recursive: true })
@@ -830,7 +830,7 @@ test('排期：排上日历就是待发布，取消排期退回草稿，已发�
   assert.equal(done.status, 'draft')
   applyOps(state, [{ op: 'update_item', id: doneR.target, status: 'published' }, { op: 'schedule_item', id: doneR.target, scheduledAt: null }])
   assert.equal(done.status, 'published')
-  const [media] = applyOps(state, [{ op: 'add_item', kind: 'image', media: { src: 'media-desk/files/x.png' } }]).receipts
+  const [media] = applyOps(state, [{ op: 'add_item', kind: 'image', media: { src: 'x-desk/files/x.png' } }]).receipts
   assert.match(state.items.find(row => row.id === media.target).title, /的图片$/)
 })
 

@@ -1,4 +1,4 @@
-// dsh-media-desk 浏览器半片：侧栏入口 + main 全局面板。
+// dsh-x-desk 浏览器半片：侧栏入口 + main 全局面板。
 import React from 'react'
 import { HomeView } from './canvas.jsx'
 import { ChatDock } from './chat.jsx'
@@ -14,7 +14,7 @@ import css from './styles.css'
 import { lang, subscribeLang, t, useLang } from './i18n.js'
 import { Dialog, FormDialog, Icon, IconButton, Toast } from './ui.jsx'
 
-const PANEL_ID = 'media-desk'
+const PANEL_ID = 'x-desk'
 
 // navKey：同一个中文在别处意思不同（单数的“灵感”“风格”），英文导航另查一条
 const NAV = [
@@ -208,5 +208,5 @@ export function apply(ctx) {
     mount()
     const off = subscribeLang(mount)
     return () => { off(); release?.() }
-  }, 'dsh-media-desk: sidebar entry')
+  }, 'dsh-x-desk: sidebar entry')
 }

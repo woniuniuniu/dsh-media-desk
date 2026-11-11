@@ -333,7 +333,7 @@ export class Producer {
         const asset = assetAt(production, target)
         if (!asset) return
         asset.status = 'done'
-        asset.src = `media-desk/files/${name}`
+        asset.src = `x-desk/files/${name}`
       })
     } catch (err) {
       if (signal?.aborted) return
