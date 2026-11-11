@@ -1,6 +1,10 @@
 #!/bin/sh
 # 在隔离的 DSH_HOME 里重新安装插件并启动 Web 版，不碰 ~/.dsh。用法：scripts/dev-sandbox.sh [端口]
 set -e
+if ! command -v dsh >/dev/null 2>&1; then
+  echo "找不到 dsh 命令。请先在 DeepSeek Harness 桌面版菜单里选择「管理 dsh 命令」开启。" >&2
+  exit 1
+fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SANDBOX="${DSH_SANDBOX:-$ROOT/../.dsh-sandbox}"
 PORT="${1:-4311}"

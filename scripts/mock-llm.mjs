@@ -1,73 +1,103 @@
-// 本地模拟模型（OpenAI 兼容流式接口），只用于开发时验证模型链路，不消耗真实额度。
-// 也模拟图片接口：返回一张内置的 1x1 图片，并故意延迟几秒，用来看生成过程。
+// 本地模拟模型（OpenAI 兼容流式接口），只用于开发和测试，不消耗真实额度。
+// 能应答本项目的五类提示词（见 classify），并模拟生图接口：返回一张内置的 1x1 图片，故意延迟几秒。
 // 用法：node scripts/mock-llm.mjs [端口]。每次请求的摘要写到 stdout。
 import { createServer } from 'node:http'
+import { pathToFileURL } from 'node:url'
 
-const PORT = Number(process.argv[2] ?? 4399)
 const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
-let served = 0
+const SUMMARY = '口吻平实克制，像朋友聊天，先说结论再给一个具体的例子。不用感叹号，不用营销腔，不喊口号。常用表达：说白了、其实、先别急。句子短，一句话只讲一件事，段落之间留白。遇到不确定的事直接说不确定，不装懂。结尾不总结，不号召，停在最有意思的那一句上。禁用词：赋能、颠覆、重磅、干货。这是模拟模型生成的精简版，仅用于沙盒演示，字数固定为二百字。每次回答都一样，方便前后对照，不必逐字细读它，看个大意就好吧，真的。'
 
-function answer(system, user) {
-  if (system.includes('文风分析师')) {
-    return JSON.stringify({ name: '慢半拍', summary: '不急着下结论，先把场景讲清楚。', tone: '平静、好奇。', sentences: '长短交替，常用逗号断开。', opening: '从一个具体的早晨开始。', structure: '场景、疑问、一个小发现。', words: ['那天', '后来'], avoid: ['感叹号'], samples: ['那天早上我差点迟到，却停在了一块广告牌前。'] })
-  }
-  if (system.includes('策划案')) {
-    return JSON.stringify({ title: '慢一点，也算到达', coverText: '慢，也算到达', facts: ['差点迟到 3 分钟'], outline: ['第一部分', '结尾'], cover: 'A lone commuter on an empty subway platform at dawn, soft golden light', characters: 'a young man in a grey jacket with a canvas backpack', images: [{ anchor: '第一部分', caption: '站台上的早晨', prompt: 'Morning light on a subway platform, one figure waiting' }, { anchor: '结尾', caption: '抬头那一刻', prompt: 'A person looks up at a billboard with quiet wonder' }], shots: [['特写', '广告牌上的一行字', '慢一点也算到达。', 'Close-up of a blank billboard corner'], ['中景', '他停下脚步抬头', '那天我差点迟到。', 'Medium shot from behind, man stops and looks up'], ['全景', '人潮从他身边涌过', '所有人都在赶路。', 'Wide shot, crowd rushing past a still man'], ['近景', '他笑了一下', '我忽然不急了。', 'Close shot of the man smiling faintly'], ['俯拍', '站台上的人流', '慢下来才看见路。', 'Top-down view of commuters on a platform'], ['中景', '他走上楼梯进入阳光', '你今天慢下来了吗？', 'Medium shot, man climbing stairs into sunlight']].map(([shot, visual, voice, prompt]) => ({ shot, visual, voice, seconds: 5, prompt })) })
-  }
-  if (system.includes('只输出一个 JSON 对象')) {
-    const said = user.slice(user.lastIndexOf('用户说：') + 4)
-    const focus = /focusId: (\S+)/.exec(user)?.[1]
-    if (user.includes('<production>')) {
-      return JSON.stringify({ reply: '标题改短了，第一个要点也换了说法，第 3 镜重画成俯拍。', ops: [], revise: { title: '慢一点，也算到', edits: [{ find: '要点一', replace: '第一点：先停下来' }], shots: [{ no: 3, shot: '俯拍', voice: '所有人都在赶路，只有他停住了。', prompt: 'Top-down view of a crowd flowing around one still man' }] } })
-    }
-    if (said.includes('排查错误')) return '这不是 JSON'
-    if (said.includes('写成脚本') && focus !== 'null') return JSON.stringify({ reply: '开始写脚本。', ops: [], actions: [{ type: 'draft', id: focus, format: 'script' }] })
-    return JSON.stringify({
-      reply: '已经帮你补全成一个选题，并放进灵感墙。',
-      ops: [
-        { op: 'add_item', kind: 'note', title: `补全后的选题：${said.slice(0, 16)}`, body: '模型补全的说明。', tags: ['模拟'], status: 'idea' },
-        { op: 'add_skill', name: '模拟规则', rule: '标题不超过 20 字', source: '对话', status: 'proposed', confidence: 0.6 },
-        { op: 'delete_item', id: 'not-a-real-id' },
-      ],
-    })
-  }
-  return '# 模型写的标题\n\n那天早上我差点迟到，3 分钟后的地铁，我却停在了一块广告牌前。\n\n## 第一部分\n\n广告牌上只有一句话。这是流式写出的正文，用来验证打字效果，正式内容由真实模型生成。\n\n- 要点一\n- 要点二\n\n<script>window.__xss = 1</script>\n\n## 结尾\n\n只留一个行动：今天慢下来一次。\n'
+/**
+ * 按系统提示词里稳定的措辞判断是哪一类请求（措辞来自 src/ai.js、src/voice.js、src/style.js）。
+ * @param {string} system - 系统提示词。
+ * @returns {'topics'|'condense'|'style'|'revise'|'draft'} 请求类别。
+ */
+export function classify(system) {
+  if (system.includes('归并成选题')) return 'topics'
+  if (system.includes('精简版')) return 'condense'
+  if (system.includes('文风分析师')) return 'style'
+  if (system.includes('改推文草稿')) return 'revise'
+  return 'draft'
 }
 
-createServer((req, res) => {
-  const chunks = []
-  req.on('data', c => chunks.push(c))
-  req.on('end', async () => {
-    if (req.url.endsWith('/models')) {
-      res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify({ data: [{ id: 'mock-model' }] }))
-      return
-    }
-    const body = JSON.parse(Buffer.concat(chunks).toString() || '{}')
-    if (req.url.endsWith('/images/generations')) {
-      served += 1
-      await new Promise(r => setTimeout(r, 2500 + (served % 5) * 1500))
-      res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify({ data: [{ b64_json: PIXEL }] }))
-      return
-    }
-    const messages = body.messages ?? []
-    const flat = m => (typeof m.content === 'string' ? m.content : (m.content ?? []).map(p => p.text ?? '').join(''))
-    const system = messages.filter(m => m.role === 'system' || m.role === 'developer').map(flat).join('\n')
-    const user = messages.filter(m => m.role === 'user').map(flat).join('\n')
-    const text = answer(system, user)
-    console.log(JSON.stringify({ url: req.url, model: body.model, stream: body.stream, systemHead: system.slice(0, 30), hasRules: system.includes('开头先给数字'), hasVoice: system.includes('<voice>') }))
-    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
-    const base = { id: 'mock', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: body.model }
-    const send = choice => res.write(`data: ${JSON.stringify({ ...base, choices: [choice] })}\n\n`)
-    send({ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null })
-    for (let i = 0; i < text.length; i += 12) {
-      send({ index: 0, delta: { content: text.slice(i, i + 12) }, finish_reason: null })
-      await new Promise(r => setTimeout(r, 70))
-    }
-    send({ index: 0, delta: {}, finish_reason: 'stop' })
-    res.write(`data: ${JSON.stringify({ ...base, choices: [], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } })}\n\n`)
-    res.write('data: [DONE]\n\n')
-    res.end()
+/** 选题：把请求里出现的帖子编号两两一组，最多三个选题。 */
+function topicsAnswer(user) {
+  const ids = [...new Set([...user.matchAll(/"id":"([^"]+)"/g)].map(m => m[1]))]
+  const topics = []
+  for (let i = 0; i < ids.length && topics.length < 3; i += 2) {
+    topics.push({ title: `模拟选题 ${topics.length + 1}`, postIds: ids.slice(i, i + 2), fun: 2, info: 2, resonance: 1, form: 'post', reason: '模拟模型的理由' })
+  }
+  return JSON.stringify(topics)
+}
+
+/**
+ * 生成回答文本。
+ * @param {string} system - 系统提示词。
+ * @param {string} user - 用户消息。
+ * @returns {string} 回答。
+ */
+export function answer(system, user) {
+  const kind = classify(system)
+  if (kind === 'topics') return topicsAnswer(user)
+  if (kind === 'condense') return SUMMARY
+  if (kind === 'style') return JSON.stringify({ name: '慢半拍', summary: '不急着下结论，先把场景讲清楚。', tone: '平静、好奇。', sentences: '长短交替，常用逗号断开。', opening: '从一个具体的早晨开始。', structure: '场景、疑问、一个小发现。', words: ['那天', '后来'], avoid: ['感叹号'], samples: ['那天早上我差点迟到，却停在了一块广告牌前。'] })
+  if (kind === 'revise') return '这是按你的要求改过的一条模拟推文：先说结论，再补一个具体的例子。'
+  return '这是模拟模型写的一条推文草稿：评测做得扎实，比盲目换更大的模型管用得多。'
+}
+
+/**
+ * 启动模拟服务。
+ * @param {number} [port] - 端口，0 表示随机空闲端口。
+ * @param {{delay?: number, imageDelay?: number, log?: boolean}} [options] - 流式每块间隔、生图延迟（毫秒）、是否打印日志。
+ * @returns {Promise<import('node:http').Server>} 已在监听的服务。
+ */
+export function startMock(port = 0, { delay = 70, imageDelay = 2500, log = false } = {}) {
+  let served = 0
+  const server = createServer((req, res) => {
+    const chunks = []
+    req.on('data', c => chunks.push(c))
+    req.on('end', async () => {
+      if (req.url.endsWith('/models')) {
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ data: [{ id: 'mock-model' }] }))
+        return
+      }
+      const body = JSON.parse(Buffer.concat(chunks).toString() || '{}')
+      if (req.url.endsWith('/images/generations')) {
+        served += 1
+        await new Promise(r => setTimeout(r, imageDelay + (served % 5) * 1500))
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ data: [{ b64_json: PIXEL }] }))
+        return
+      }
+      const messages = body.messages ?? []
+      const flat = m => (typeof m.content === 'string' ? m.content : (m.content ?? []).map(p => p.text ?? '').join(''))
+      const system = messages.filter(m => m.role === 'system' || m.role === 'developer').map(flat).join('\n')
+      const user = messages.filter(m => m.role === 'user').map(flat).join('\n')
+      const text = answer(system, user)
+      if (log) console.log(JSON.stringify({ url: req.url, model: body.model, kind: classify(system) }))
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+      const base = { id: 'mock', object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: body.model }
+      const send = choice => res.write(`data: ${JSON.stringify({ ...base, choices: [choice] })}\n\n`)
+      send({ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null })
+      for (let i = 0; i < text.length; i += 12) {
+        send({ index: 0, delta: { content: text.slice(i, i + 12) }, finish_reason: null })
+        if (delay) await new Promise(r => setTimeout(r, delay))
+      }
+      send({ index: 0, delta: {}, finish_reason: 'stop' })
+      res.write(`data: ${JSON.stringify({ ...base, choices: [], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } })}\n\n`)
+      res.write('data: [DONE]\n\n')
+      res.end()
+    })
   })
-}).listen(PORT, '127.0.0.1', () => console.log(`mock llm on ${PORT}`))
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(port, '127.0.0.1', () => resolve(server))
+  })
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const port = Number(process.argv[2] ?? 4399)
+  await startMock(port, { log: true })
+  console.log(`mock llm on ${port}`)
+}
