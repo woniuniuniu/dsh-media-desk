@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { Exchange, parseDecision, parsePost } from '../src/exchange.js'
 
 const POST = { schema: 1, handle: 'karpathy', postId: '1855000000000000001', text: 'hello', postedAt: '2026-11-11T01:00:00Z', fetchedAt: '2026-11-11T03:00:00Z', metrics: { likes: 10, replies: 2, reposts: 3, quotes: 1, views: 900 }, isRepost: false, url: 'https://evil.example/x' }
-async function fresh() { const ex = new Exchange(await mkdtemp(join(tmpdir(), 'xdesk-ex-'))); await ex.ensure(); return ex }
+const LATER = () => Date.now() + 60_000
+async function fresh(opts) { const ex = new Exchange(await mkdtemp(join(tmpdir(), 'xdesk-ex-')), opts); await ex.ensure(); return ex }
 
 test('帖子：链接由程序自己拼，不信任文件里的值', () => {
   const p = parsePost(POST)
@@ -40,7 +41,7 @@ test('处理结果：返回约定形状，文字截断到 1000', () => {
   assert.equal(parseDecision({ schema: 1, candidateId: 'c_ab12', action: 'approve', at: '2026-11-11T04:00:00Z' }).text, null)
 })
 test('Review Focus 1：坏文件被跳过并报告，好文件照常读入，且都只处理一次', async () => {
-  const ex = await fresh()
+  const ex = await fresh({ now: LATER })
   await writeFile(join(ex.root, 'posts', 'a-good.json'), JSON.stringify(POST))
   await writeFile(join(ex.root, 'posts', 'b-broken.json'), '{not json')
   await writeFile(join(ex.root, 'posts', 'c-huge.json'), JSON.stringify({ ...POST, text: 'x'.repeat(70000) }))
@@ -48,13 +49,17 @@ test('Review Focus 1：坏文件被跳过并报告，好文件照常读入，且
   await writeFile(join(ex.root, 'posts', 'e-notes.txt'), 'hi')
   const first = await ex.readNew('posts')
   assert.equal(first.items.length, 1)
-  assert.deepEqual(first.skipped.map(s => s.file).sort(), ['b-broken.json', 'c-huge.json', 'd bad name!.json'])
+  assert.deepEqual(first.skipped.sort((a, b) => a.file.localeCompare(b.file)), [
+    { file: 'b-broken.json', why: '不是有效的 JSON' },
+    { file: 'c-huge.json', why: '文件太大' },
+    { file: 'd bad name!.json', why: '文件名不合规' },
+  ])
   const second = await ex.readNew('posts')
   assert.equal(second.items.length, 0)
   assert.equal(second.skipped.length, 0)
 })
 test('已处理记录只保留最近 5000 个名字，按文件名升序读入', async () => {
-  const ex = await fresh()
+  const ex = await fresh({ now: LATER })
   await writeFile(join(ex.root, 'posts', 'b.json'), JSON.stringify({ ...POST, postId: '1855000000000000002' }))
   await writeFile(join(ex.root, 'posts', 'a.json'), JSON.stringify(POST))
   const r = await ex.readNew('posts')
@@ -69,7 +74,7 @@ test('已处理记录只保留最近 5000 个名字，按文件名升序读入',
   assert.equal(trimmed.at(-1), 'c.json')
 })
 test('decisions 目录同样读入并校验', async () => {
-  const ex = await fresh()
+  const ex = await fresh({ now: LATER })
   await writeFile(join(ex.root, 'decisions', 'd1.json'), JSON.stringify({ schema: 1, candidateId: 'c_ab12', action: 'approve', at: '2026-11-11T04:00:00Z' }))
   await writeFile(join(ex.root, 'decisions', 'd2.json'), JSON.stringify({ schema: 1, candidateId: 'bad', action: 'approve', at: '2026-11-11T04:00:00Z' }))
   const r = await ex.readNew('decisions')
@@ -114,5 +119,58 @@ test('示例文件都能通过校验，不会过期', async () => {
   assert.equal(posts.length, 6)
   assert.equal(decisions.length, 3)
   for (const f of posts) assert.ok(parsePost(JSON.parse(await readFile(new URL(`posts/${f}`, base), 'utf8'))), f)
-  for (const f of decisions) assert.ok(parseDecision(JSON.parse(await readFile(new URL(`decisions/${f}`, base), 'utf8'))), f)
+  for (const f of decisions) {
+    const d = parseDecision(JSON.parse(await readFile(new URL(`decisions/${f}`, base), 'utf8')))
+    assert.ok(d, f)
+    assert.equal(d.candidateId, 'c_sample1')
+  }
+})
+test('点开头的文件和子目录被静默忽略', async () => {
+  const ex = await fresh({ now: LATER })
+  await writeFile(join(ex.root, 'posts', '.hidden.json'), JSON.stringify(POST))
+  await mkdir(join(ex.root, 'posts', 'sub.json'))
+  await mkdir(join(ex.root, 'posts', 'sub2'))
+  await writeFile(join(ex.root, 'posts', 'sub2', 'x.json'), JSON.stringify(POST))
+  const r = await ex.readNew('posts')
+  assert.deepEqual(r, { items: [], skipped: [] })
+})
+test('刚写入的坏文件可能没写完：不报告、不记已处理，过 10 秒才算坏文件', async () => {
+  let t = Date.now()
+  const ex = await fresh({ now: () => t })
+  const path = join(ex.root, 'posts', 'half.json')
+  await writeFile(path, JSON.stringify(POST).slice(0, 20))
+  const r1 = await ex.readNew('posts')
+  assert.deepEqual(r1, { items: [], skipped: [] })
+  await writeFile(path, JSON.stringify(POST))
+  const r2 = await ex.readNew('posts')
+  assert.equal(r2.items.length, 1)
+  await writeFile(join(ex.root, 'posts', 'stay-bad.json'), '{oops')
+  assert.deepEqual(await ex.readNew('posts'), { items: [], skipped: [] })
+  t += 60_000
+  assert.deepEqual((await ex.readNew('posts')).skipped, [{ file: 'stay-bad.json', why: '不是有效的 JSON' }])
+  assert.deepEqual(await ex.readNew('posts'), { items: [], skipped: [] })
+})
+test('刚写入但内容不符合格式的文件同样先等待', async () => {
+  let t = Date.now()
+  const ex = await fresh({ now: () => t })
+  await writeFile(join(ex.root, 'posts', 'p.json'), JSON.stringify({ ...POST, schema: 2 }))
+  assert.deepEqual(await ex.readNew('posts'), { items: [], skipped: [] })
+  t += 60_000
+  assert.deepEqual((await ex.readNew('posts')).skipped, [{ file: 'p.json', why: '内容不符合格式' }])
+})
+test('读取出错：报告读取失败、不记已处理，恢复后能读到', async t => {
+  if (process.getuid?.() === 0) return t.skip('root 用户不受文件权限限制，无法构造读取失败')
+  const ex = await fresh({ now: LATER })
+  const path = join(ex.root, 'posts', 'locked.json')
+  await writeFile(path, JSON.stringify(POST))
+  await chmod(path, 0o000)
+  try {
+    const r1 = await ex.readNew('posts')
+    assert.deepEqual(r1, { items: [], skipped: [{ file: 'locked.json', why: '读取失败' }] })
+  } finally {
+    await chmod(path, 0o644)
+  }
+  const r2 = await ex.readNew('posts')
+  assert.equal(r2.items.length, 1)
+  assert.equal(r2.skipped.length, 0)
 })

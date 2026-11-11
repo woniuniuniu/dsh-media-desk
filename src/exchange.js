@@ -4,6 +4,7 @@ import { join } from 'node:path'
 const DIRS = ['posts', 'decisions', 'drafts', 'voice', 'replies', 'mine']
 const MAX_FILE_BYTES = 65536
 const MAX_SEEN = 5000
+const FRESH_MS = 10_000
 const FILE_NAME = /^[\w.-]{1,120}\.json$/
 const HANDLE = /^[A-Za-z0-9_]{1,15}$/
 const POST_ID = /^\d{5,25}$/
@@ -71,8 +72,9 @@ async function writeAtomic(path, content) {
 }
 
 export class Exchange {
-  constructor(root) {
+  constructor(root, { now = Date.now } = {}) {
     this.root = root
+    this.now = now
   }
 
   async ensure() {
@@ -101,24 +103,45 @@ export class Exchange {
       .sort()
     const items = []
     const skipped = []
+    const processed = []
     for (const name of names) {
-      const skip = why => skipped.push({ file: name, why })
-      if (!FILE_NAME.test(name)) { skip('文件名不合规'); continue }
-      let parsed
-      try {
-        const path = join(dir, name)
-        if ((await stat(path)).size > MAX_FILE_BYTES) { skip('文件太大'); continue }
-        parsed = JSON.parse(await readFile(path, 'utf8'))
-      } catch {
-        skip('不是有效的 JSON')
+      if (!FILE_NAME.test(name)) {
+        skipped.push({ file: name, why: '文件名不合规' })
+        processed.push(name)
         continue
       }
-      const item = parse(parsed)
-      if (item) items.push(item)
-      else skip('内容不符合格式')
+      const path = join(dir, name)
+      let info
+      let buf
+      try {
+        info = await stat(path)
+        if (info.size <= MAX_FILE_BYTES) buf = await readFile(path)
+      } catch (e) {
+        if (e.code !== 'ENOENT') skipped.push({ file: name, why: '读取失败' })
+        continue
+      }
+      if (!buf || buf.length > MAX_FILE_BYTES) {
+        skipped.push({ file: name, why: '文件太大' })
+        processed.push(name)
+        continue
+      }
+      let item = null
+      let why = '不是有效的 JSON'
+      try {
+        const parsed = JSON.parse(buf.toString('utf8'))
+        item = parse(parsed)
+        if (!item) why = '内容不符合格式'
+      } catch {}
+      if (item) {
+        items.push(item)
+        processed.push(name)
+      } else if (this.now() - info.mtimeMs >= FRESH_MS) {
+        skipped.push({ file: name, why })
+        processed.push(name)
+      }
     }
-    if (names.length) {
-      const next = [...seen, ...names].slice(-MAX_SEEN)
+    if (processed.length) {
+      const next = [...seen, ...processed].slice(-MAX_SEEN)
       await writeAtomic(join(this.root, `.seen-${kind}.json`), JSON.stringify(next))
     }
     return { items, skipped }
