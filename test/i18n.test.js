@@ -214,11 +214,12 @@ test('GET state 按请求头的语言换示例文字', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'media-desk-'))
   const previous = process.env.DSH_HOME
   process.env.DSH_HOME = dir
+  const disposers = []
   try {
     let handler = null
     const ctx = {
       get: name => (name === 'connection' ? { requestRejection: () => undefined } : undefined),
-      effect: fn => fn(),
+      effect: fn => { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose); return dispose },
       webServer: { register: (options) => { handler = options.handler } },
     }
     plugin.apply(ctx)
@@ -236,6 +237,7 @@ test('GET state 按请求头的语言换示例文字', async () => {
     const back = await get('zh')
     assert.equal(back.body.state.items[0].title, zh.body.state.items[0].title)
   } finally {
+    for (const dispose of disposers.reverse()) await dispose()
     if (previous === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previous
     await rm(dir, { recursive: true, force: true })

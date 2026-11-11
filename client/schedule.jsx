@@ -1,5 +1,6 @@
 // 排期：发布排期和灵感日历是同一张日历。每天一张灵感邮票，发布的内容从右边拖上来。
 import React from 'react'
+import { AccountBadge } from './accounts.jsx'
 import { dispatchOps, openItem, useDesk } from './desk.js'
 import { lang, t, useLang } from './i18n.js'
 import { Stamp, useDayMap } from './stamps.jsx'
@@ -36,7 +37,7 @@ function Chip({ item }) {
   return (
     <button type="button" className={`md-cal-chip status-${item.status}`} draggable title={`${fmtTime(item.scheduledAt)} ${shown.title}`} onDragStart={event => startDrag(event, item.id)} onClick={() => openItem(item.id)}>
       <Thumb item={item} />
-      <span className="md-cal-chip-text"><time>{fmtTime(item.scheduledAt)}</time><span>{shown.title}</span></span>
+      <span className="md-cal-chip-text"><time>{fmtTime(item.scheduledAt)}</time><span>{shown.title}</span><AccountBadge item={item} /></span>
     </button>
   )
 }
@@ -128,7 +129,7 @@ function TrayCard({ item }) {
       <span className={`md-tray-cover ${poster ? '' : 'is-type'}`}>
         {poster ? <img src={poster} alt="" loading="lazy" draggable={false} /> : <b>{item.production?.coverText ?? shown.title}</b>}
       </span>
-      <span className="md-tray-title">{shown.title}</span>
+      <span className="md-tray-title">{shown.title}<AccountBadge item={item} /></span>
     </button>
   )
 }

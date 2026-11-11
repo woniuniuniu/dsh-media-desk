@@ -1,6 +1,6 @@
 {
   "name": "dsh-media-desk",
-  "version": "2.6.2",
+  "version": "2.6.2-accounts.3",
   "description": "DeepSeek Harness 插件。一句话记灵感，一键成稿：口播脚本、标题、视频封面、配图和黑白线稿分镜。",
   "type": "module",
   "main": "src/host.js",
@@ -53,6 +53,19 @@
     "assets",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
-  ]
+    "LICENSE",
+    "bin",
+    "docs/automation.md",
+    "docs/media-desk.mcp.json",
+    "docs/GROK_BOT.md",
+    "docs/multi-account-workspaces.md"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@napi-rs/canvas": "1.1.0",
+    "ajv": "8.20.0"
+  },
+  "bin": {
+    "media-desk": "bin/media-desk.js"
+  }
 }

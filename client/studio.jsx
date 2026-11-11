@@ -1,3 +1,4 @@
+import { AccountAssignment } from './accounts.jsx'
 // 点开灵感后的工作区：左边对话，右边是一张稿面。稿面的格子一开始就排好，同时开工，一点点长满。
 import React from 'react'
 import { ChatPanel } from './chat.jsx'
@@ -86,15 +87,16 @@ function IdeaCard({ item, live, settings }) {
   const production = item.production
   const running = production?.status === 'running'
   const styles = useDesk(s => s.state.styles ?? [])
-  const activeId = useDesk(s => s.state.activeStyleId)
+  const activeId = useDesk(s => item.accountId ? s.allState.accounts.find(a=>a.id===item.accountId)?.defaultStyleId : s.allState.activeStyleId)
   return (
     <div className="md-idea-card">
       <span className="md-idea-label">{t('灵感')} · {fmtDate(item.createdAt)}</span>
       <AutoText className="md-idea-text" label={t('灵感')} value={item.title} disabled={running} onCommit={title => dispatchOps([{ op: 'update_item', id: item.id, title }], { label: t('修改灵感'), silent: true })} />
+      <AccountAssignment item={item} />
       {!running ? (
         <label className="md-style-pick">
           <span>{t('风格')}</span>
-          <select aria-label={t('风格')} value={activeId ?? ''} onChange={e => dispatchOps([{ op: 'set_style', id: e.target.value || null }], { label: t('切换风格'), silent: true })}>
+          <select aria-label={t('风格')} value={activeId ?? ''} onChange={e => dispatchOps([{ op: 'set_style', id: e.target.value || null, ...(item.accountId?{accountId:item.accountId}:{}) }], { label: t('切换风格'), silent: true, accountId:item.accountId??undefined })}>
             <option value="">{t('默认')}</option>
             {styles.some(style => !style.preset) ? <optgroup label={t('我的风格')}>{styles.filter(style => !style.preset).map(style => <option key={style.id} value={style.id}>{styleIcon(style)} {style.name}</option>)}</optgroup> : null}
             {STYLE_CATEGORIES.map(name => <optgroup key={name} label={t(name)}>{styles.filter(style => style.preset && style.category === name).map(style => <option key={style.id} value={style.id}>{styleIcon(style)} {style.name}</option>)}</optgroup>)}

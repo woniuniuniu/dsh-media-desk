@@ -25,13 +25,15 @@ async function fixture(run) {
   const dir = await mkdtemp(join(tmpdir(), 'media-desk-tool-'))
   const before = process.env.DSH_HOME
   process.env.DSH_HOME = dir
+  const disposers = []
   try {
     const root = join(dir, 'plugins', 'subscriptions', 'images')
     await mkdir(root, { recursive: true })
     const path = join(root, 'generated.png')
     await writeFile(path, PNG)
-    await run({ dir, root, path })
+    await run({ dir, root, path, onDispose: fn => disposers.push(fn) })
   } finally {
+    for (const dispose of disposers.reverse()) await dispose()
     if (before === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = before
     await rm(dir, { recursive: true, force: true })
@@ -230,12 +232,12 @@ test('Producer readiness uses injected capability and tool failures are not retr
   assert.equal(attempts, 1)
 }))
 
-test('authenticated settings/test and readiness use the same tool backend; HTTP source never calls tools', async () => fixture(async ({ path }) => {
+test('authenticated settings/test and readiness use the same tool backend; HTTP source never calls tools', async () => fixture(async ({ path, onDispose }) => {
   let handler, generated = 0
   const ctx = context(async batch => { generated++; return success(batch, path) })
   const baseGet = ctx.get
   ctx.get = name => name === 'connection' ? { requestRejection: () => undefined } : baseGet(name)
-  ctx.effect = fn => fn()
+  ctx.effect = fn => { const dispose = fn(); if (typeof dispose === 'function') onDispose(dispose); return dispose }
   ctx.webServer = { register: options => { handler = options.handler } }
   plugin.apply(ctx)
   const request = (method, route, body = {}) => new Promise(resolve => {

@@ -1,3 +1,4 @@
+import { createAccountProjection, enterAccountWorkspace, leaveAccountWorkspace, matchesWorkspace, originScope, reconcileAccountWorkspace, workspaceOrigin } from '../src/accounts.js'
 // 浏览器侧的状态：Host 状态的本地镜像，加上只属于界面的选中、视图等。
 import React from 'react'
 import { coverDataUrl } from './cover.js'
@@ -7,7 +8,7 @@ const BASE = 'media-desk/'
 
 let snapshot = {
   state: null, model: null, modelOk: null, modelError: null, canUndo: false, error: null,
-  view: 'home', mode: 'scatter', focusId: null, sheetOrigin: null, dockOpen: true, studioDock: false, chatQuote: null, query: '', kindFilter: 'all', related: null,
+  accountId: undefined, workspaceEntered: false, workspaceRevision: 0, view: 'accounts', mode: 'scatter', focusId: null, sheetOrigin: null, dockOpen: true, studioDock: false, chatQuote: null, query: '', kindFilter: 'all', related: null,
   live: {}, settings: null, settingsOpen: false, modelPickOpen: false, thinking: false, toast: null, capture: null, dialog: null,
 }
 const listeners = new Set()
@@ -17,7 +18,12 @@ export function getDesk() {
 }
 
 export function setDesk(patch) {
-  snapshot = { ...snapshot, ...(typeof patch === 'function' ? patch(snapshot) : patch) }
+  const next = typeof patch === 'function' ? patch(snapshot) : patch
+  if(next.capture) next.capture={...next.capture,accountId:snapshot.accountId}
+  snapshot = { ...snapshot, ...next }
+  snapshot = reconcileAccountWorkspace(snapshot)
+  if (!snapshot.workspaceEntered && snapshot.view !== 'accounts') snapshot = { ...snapshot, view: 'accounts' }
+  if(snapshot.focusId && snapshot.accountId!==undefined && snapshot.state && !snapshot.state.items.some(i=>i.id===snapshot.focusId&&(i.accountId??null)===snapshot.accountId)) snapshot={...snapshot,focusId:null,sheetOrigin:null,studioDock:false,chatQuote:null}
   listeners.forEach(fn => fn())
 }
 
@@ -26,8 +32,11 @@ function subscribe(fn) {
   return () => listeners.delete(fn)
 }
 
+const project = createAccountProjection()
+export function selectAccount(accountId) { snapshot=enterAccountWorkspace(snapshot,accountId);listeners.forEach(fn=>fn()) }
+export function leaveAccounts() { snapshot=leaveAccountWorkspace(snapshot);listeners.forEach(fn=>fn()) }
 export function useDesk(selector) {
-  return React.useSyncExternalStore(subscribe, () => selector(snapshot))
+  return React.useSyncExternalStore(subscribe, () => selector(project(snapshot)))
 }
 
 async function request(path, body) {
@@ -62,9 +71,11 @@ export async function loadDesk() {
   }
 }
 
-export async function dispatchOps(ops, { label = t('操作'), undoable = true, silent = false } = {}) {
+export async function dispatchOps(ops, options = {}) {
+  const {label=t('操作'),undoable=true,silent=false}=options
+  const accountId = Object.hasOwn(options,'accountId') ? options.accountId : snapshot.accountId
   try {
-    const data = await request('ops', { ops, label, undoable })
+    const data = await request('ops', { ops, label, undoable, accountId })
     setDesk({ state: data.state, canUndo: undoable || snapshot.canUndo })
     if (data.errors?.length) toast(data.errors[0], { error: true })
     else if (!silent && data.receipts?.[0]) toast(data.receipts[0].text, { undo: undoable })
@@ -94,9 +105,9 @@ export function closeItem() {
 }
 
 /** 一键成稿。任务在 Host 里跑，这里只负责启动和看进度。 */
-export async function runProduce(id) {
+export async function runProduce(id, accountId = snapshot.state.items.find(i=>i.id===id)?.accountId) {
   try {
-    const data = await request('produce', { id })
+    const data = await request('produce', { id, accountId })
     setDesk({ state: data.state })
   } catch (err) {
     report(err)
@@ -187,11 +198,13 @@ export async function testImage(payload) {
   }
 }
 
-function runActions(actions) {
+function runActions(actions, origin, actionAccountId) {
+  if (!matchesWorkspace(snapshot, origin)) return
   for (const action of actions) {
+    if(actionAccountId!==undefined && action.id && !snapshot.state.items.some(i=>i.id===action.id&&(i.accountId??null)===actionAccountId))continue
     if (action.type === 'produce' && action.id) {
       openItem(action.id)
-      runProduce(action.id)
+      runProduce(action.id,actionAccountId)
     }
     if (action.type === 'open' && action.id) openItem(action.id)
     if (action.type === 'nav' && action.view) setDesk({ view: action.view })
@@ -200,17 +213,19 @@ function runActions(actions) {
 
 export async function sendChat(text) {
   const { chatQuote: quote, focusId } = snapshot
+  const origin = workspaceOrigin(snapshot)
+  const accountId = snapshot.accountId !== undefined ? snapshot.accountId : focusId ? snapshot.state.items.find(i=>i.id===focusId)?.accountId ?? null : undefined
   // 选中的段落或某一镜，随消息一起交给模型
   const message = quote ? (quote.text ? t('关于{label}「{quote}」：{text}', { label: quote.label, quote: quote.text, text }) : t('关于{label}：{text}', { label: quote.label, text })) : text
   setDesk(s => ({
     thinking: true,
     chatQuote: null,
-    state: { ...s.state, chat: [...s.state.chat, { id: `tmp_${Date.now()}`, role: 'user', text: message, itemId: focusId ?? undefined }] },
+    state: { ...s.state, chat: [...s.state.chat, { id: `tmp_${Date.now()}`, role: 'user', text: message, itemId: focusId ?? undefined, accountId:accountId??null }] },
   }))
   try {
-    const data = await request('chat', { message, focusId: focusId ?? undefined })
+    const data = await request('chat', { message, focusId: focusId ?? undefined, accountId })
     setDesk({ state: data.state, canUndo: true, modelOk: data.modelOk, modelError: data.modelError })
-    runActions(data.actions || [])
+    runActions(data.actions || [], origin,accountId)
   } catch (err) {
     report(err)
     await loadDesk()
@@ -221,10 +236,12 @@ export async function sendChat(text) {
 
 export async function saveProduced(id) {
   try {
-    const production = snapshot.state.items.find(row => row.id === id)?.production
+    const item = snapshot.state.items.find(row => row.id === id)
+    const accountId=item?.accountId??null
+    const production = item?.production
     // 视频封面在浏览器里合成，一起存进文件夹
     const videoCover = await coverDataUrl({ src: production.cover?.src, text: production.coverText || production.title }).catch(() => undefined)
-    const data = await request('produce/save', { id, videoCover })
+    const data = await request('produce/save', { id, videoCover, accountId })
     setDesk({ state: data.state })
     toast(t('已保存到 {path}', { path: data.path }))
   } catch (err) {
@@ -242,7 +259,7 @@ export async function revealSaved(id) {
 
 export async function clearChat() {
   try {
-    const data = await request('chat/clear', {})
+    const data = await request('chat/clear', originScope(snapshot))
     setDesk({ state: data.state })
   } catch (err) {
     report(err)
@@ -250,8 +267,9 @@ export async function clearChat() {
 }
 
 export async function captureUrl(url, extra = {}) {
+  const origin=originScope(snapshot)
   try {
-    const data = await request('capture-url', { url, ...extra })
+    const data = await request('capture-url', { url, ...origin, ...extra })
     setDesk({ state: data.state, canUndo: true })
     toast(t('已收藏到灵感墙'), { undo: true })
     return data.id
@@ -268,12 +286,12 @@ export async function uploadFile(file) {
   return data
 }
 
-export async function captureFiles(files) {
+export async function captureFiles(files, origin = originScope(snapshot)) {
   for (const file of files) {
     try {
       const { src, kind } = await uploadFile(file)
       const title = file.name.replace(/\.[^.]+$/, '')
-      await dispatchOps([{ op: 'add_item', kind, title, media: { src } }], { label: t('收藏 {title}', { title }), silent: true })
+      await dispatchOps([{ op: 'add_item', kind, title, media: { src } }], { label: t('收藏 {title}', { title }), silent: true, ...origin })
       toast(t('已放到灵感墙'), { undo: true })
     } catch (err) {
       report(err)
@@ -296,7 +314,7 @@ export async function refreshAccount(payload) {
 
 export async function extractStyle(payload) {
   try {
-    const data = await request('style/extract', payload)
+    const data = await request('style/extract', { ...originScope(snapshot), ...payload })
     setDesk({ state: data.state, canUndo: true })
     const missed = data.failures?.length ?? 0
     toast(missed ? t(plural(missed, '风格提炼好了，有 1 个链接没抓到', '风格提炼好了，有 {n} 个链接没抓到'), { n: missed }) : t('风格提炼好了，之后就按它写'), { undo: true })
@@ -317,7 +335,7 @@ export async function monidStatus() {
 
 export async function importAccount(payload) {
   try {
-    const data = await request('monid/import', payload)
+    const data = await request('monid/import', { ...originScope(snapshot), ...payload })
     setDesk({ state: data.state, canUndo: true })
     const spent = data.cost ? t('，花费 ${cost}', { cost: data.cost.toFixed(3) }) : ''
     const what = t(plural(data.count, '读到 {name} 的 1 条内容，新增 {added} 条', '读到 {name} 的 {count} 条内容，新增 {added} 条'), { name: data.nickname, count: data.count, added: data.added })
@@ -331,7 +349,7 @@ export async function importAccount(payload) {
 
 export async function learnSkills() {
   try {
-    const data = await request('skills/learn', {})
+    const data = await request('skills/learn', originScope(snapshot))
     setDesk({ state: data.state, canUndo: true })
     toast(data.added ? t(plural(data.added, '从数据里提炼出 1 条新规则，等你确认', '从数据里提炼出 {n} 条新规则，等你确认'), { n: data.added }) : t('目前的数据还提炼不出新规则'))
   } catch (err) {
@@ -341,7 +359,7 @@ export async function learnSkills() {
 
 export async function exportSkills() {
   try {
-    const data = await request('skills/export', {})
+    const data = await request('skills/export', originScope(snapshot))
     setDesk({ state: data.state })
     toast(t(plural(data.rules, '已导出 Skill：{name}（1 条规则）', '已导出 Skill：{name}（{n} 条规则）'), { name: data.name, n: data.rules }))
   } catch (err) {
@@ -349,7 +367,10 @@ export async function exportSkills() {
   }
 }
 
-export function fetchInsights() {
-  return request('insights')
+export function fetchInsights(platform, accountId = snapshot.accountId) {
+  const params = new URLSearchParams()
+  if (accountId !== undefined) params.set('accountId', JSON.stringify(accountId))
+  if (platform) params.set('platform', platform)
+  return request('insights' + (params.size ? `?${params}` : ''))
 }
 

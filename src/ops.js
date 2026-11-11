@@ -1,11 +1,13 @@
 // 工作台的唯一写入口：对话、界面操作都走这里，统一校验字段并产出回执。
 // 模型输出也是不可信输入，所以这里只放行白名单字段。
+import { accountError, detachAccounts, hasActiveProduction, normalizedAccountId, requireAccount, requireMembership, requireStyle } from './accounts.js'
 import { currentLang, platformName, tr } from './i18n.js'
 
 export const STATUSES = ['idea', 'outline', 'draft', 'ready', 'published']
 export const STATUS_LABEL = { idea: '灵感', outline: '大纲', draft: '草稿', ready: '待发布', published: '已发布' }
 export const KINDS = ['image', 'video', 'web', 'quote', 'note']
-export const PLATFORMS = ['公众号', '小红书', '抖音', 'B站', '视频号', 'TikTok', 'Instagram', 'YouTube', 'X']
+import { PLATFORMS } from './platforms.js'
+export { PLATFORMS } from './platforms.js'
 
 /** 状态在当前语言下的名字。 */
 export function statusLabel(status) {
@@ -13,15 +15,15 @@ export function statusLabel(status) {
 }
 
 const ITEM_FIELDS = {
-  title: 'text', body: 'text', kind: 'kind', url: 'url', source: 'text', tags: 'list', status: 'status', angleId: 'id',
+  accountId: 'id', title: 'text', body: 'text', kind: 'kind', url: 'url', source: 'text', tags: 'list', status: 'status', angleId: 'id',
   personaIds: 'list', parentId: 'id', rel: 'text', scheduledAt: 'date', platform: 'platform', pinned: 'bool', media: 'media', pos: 'pos', score: 'num',
 }
 const PERSON_FIELDS = { name: 'text', role: 'text', note: 'text', traits: 'list', tone: 'num' }
 const ANGLE_FIELDS = { name: 'text', hook: 'text', prompt: 'text' }
 const STYLE_FIELDS = { name: 'text', icon: 'text', summary: 'text', tone: 'text', sentences: 'text', opening: 'text', structure: 'text', words: 'list', avoid: 'list', samples: 'list' }
-const SKILL_FIELDS = { name: 'text', rule: 'text', source: 'text', status: 'text', confidence: 'num', evidence: 'text' }
-const METRIC_FIELDS = { itemId: 'id', platform: 'platform', date: 'date', views: 'num', likes: 'num', comments: 'num', shares: 'num', saves: 'num' }
-const ACCOUNT_FIELDS = { platform: 'text', handle: 'text', url: 'url', followers: 'num', note: 'text', title: 'text', description: 'text', avatar: 'url', fetchedAt: 'date', fetchError: 'text' }
+const SKILL_FIELDS = { accountId: 'id', name: 'text', rule: 'text', source: 'text', status: 'text', confidence: 'num', evidence: 'text' }
+const METRIC_FIELDS = { accountId: 'id', itemId: 'id', platform: 'platform', date: 'date', views: 'num', likes: 'num', comments: 'num', shares: 'num', saves: 'num' }
+const ACCOUNT_FIELDS = { group: 'text', positioning: 'text', audience: 'text', defaultStyleId: 'id', archived: 'bool', platform: 'platform', handle: 'text', url: 'url', followers: 'num', note: 'text', title: 'text', description: 'text', avatar: 'url', fetchedAt: 'date', fetchError: 'text' }
 
 let counter = 0
 export function newId(prefix = 'x') {
@@ -118,10 +120,16 @@ function applySchedule(item, when) {
 
 const handlers = {
   add_item(state, op, now) {
+    requireAccount(state,op.accountId)
     const fields = pick(ITEM_FIELDS, op)
     const item = {
-      id: newId('it'), kind: 'note', title: '', body: '', tags: [], status: 'idea', personaIds: [], createdAt: now, drafts: {}, ...fields,
+      id: newId('it'), accountId: null, kind: 'note', title: '', body: '', tags: [], status: 'idea', personaIds: [], createdAt: now, drafts: {}, ...fields,
     }
+    if (op.accountId === undefined && item.parentId) item.accountId = normalizedAccountId(findById(state.items, item.parentId))
+    if(item.parentId && normalizedAccountId(findById(state.items,item.parentId))!==normalizedAccountId(item)) throw accountError('Parent belongs to another account.')
+    const account = requireAccount(state,item.accountId)
+    if (account && item.platform === undefined) item.platform = account.platform
+    if (account && item.platform !== account.platform) throw accountError('Item platform does not match account.')
     if (!item.title && !item.body && !item.media) throw new Error(tr('灵感内容为空'))
     // 只贴了图或视频也要有个名字，卡片和回执才有东西可显示
     if (!item.title) item.title = short(item.body, 28) || (item.media ? tr(item.kind === 'video' ? '{date}的视频' : '{date}的图片', { date: fmtShort(now) }) : '')
@@ -138,17 +146,24 @@ const handlers = {
   },
   update_item(state, op) {
     const item = findById(state.items, op.id)
+    requireAccount(state,op.accountId)
     const { status, scheduledAt, ...fields } = pick(ITEM_FIELDS, op)
+    if (fields.accountId !== undefined && fields.accountId !== normalizedAccountId(item)) throw accountError('Use assign_items to move existing content.')
+    const account = requireAccount(state,item.accountId)
+    if (account && fields.platform !== undefined && fields.platform !== account.platform) throw accountError('Item platform does not match account.')
+    if(fields.parentId && normalizedAccountId(findById(state.items,fields.parentId))!==normalizedAccountId(item)) throw accountError('Parent belongs to another account.')
     Object.assign(item, fields)
     if (scheduledAt !== undefined) applySchedule(item, scheduledAt)
     if (status !== undefined) applyStatus(item, status)
     const names = [...Object.keys(fields), ...(status !== undefined ? ['status'] : []), ...(scheduledAt !== undefined ? ['scheduledAt'] : [])].filter(key => key !== 'pos')
     return names.length ? { text: tr('更新《{title}》', { title: short(item.title) }), target: item.id, kind: 'item' } : null
   },
-  delete_item(state, op) {
+  delete_item(state, op, now, { accountId } = {}) {
     const item = findById(state.items, op.id)
     state.items = state.items.filter(row => row.id !== op.id)
-    for (const child of state.items) if (child.parentId === op.id) child.parentId = item.parentId ?? null
+    // Scoped deletion cannot edit children that were explicitly assigned elsewhere.
+    // Their stored backlink remains unchanged; All retains the legacy reparent behavior.
+    for (const child of state.items) if (child.parentId === op.id && (accountId === undefined || normalizedAccountId(child) === accountId)) child.parentId = item.parentId ?? null
     state.metrics = state.metrics.filter(row => row.itemId !== op.id)
     return { text: tr('删除《{title}》', { title: short(item.title) }) }
   },
@@ -157,6 +172,8 @@ const handlers = {
     const when = coerce('date', op.scheduledAt)
     if (when === undefined) throw new Error(tr('排期时间无效'))
     const platform = coerce('platform', op.platform)
+    const account = requireAccount(state,item.accountId)
+    if (account && platform !== undefined && platform !== account.platform) throw accountError('Item platform does not match account.')
     if (platform !== undefined) item.platform = platform
     applySchedule(item, when)
     return { text: when ? tr('把《{title}》排到 {when}', { title: short(item.title), when: fmtWhen(when) }) + (item.platform ? ` · ${platformName(item.platform)}` : '') : tr('取消《{title}》的排期', { title: short(item.title) }), target: item.id, kind: 'item' }
@@ -234,9 +251,14 @@ const handlers = {
     const style = findById(state.styles ?? [], op.id)
     state.styles = state.styles.filter(row => row.id !== op.id)
     if (state.activeStyleId === op.id) state.activeStyleId = null
+    for (const a of state.accounts) if (a.defaultStyleId === op.id) a.defaultStyleId = null
     return { text: tr('删除风格「{name}」', { name: style.name }) }
   },
   set_style(state, op) {
+    if (op.accountId !== undefined && op.accountId !== null) {
+      const account = requireAccount(state,op.accountId); requireStyle(state,op.id); account.defaultStyleId = op.id
+      return { text: 'Account default style updated.', target: account.id, kind: 'account' }
+    }
     if (op.id === null) {
       state.activeStyleId = null
       return { text: tr('不再使用特定风格') }
@@ -246,13 +268,15 @@ const handlers = {
     return { text: tr('之后按「{name}」的风格写', { name: style.name }) }
   },
   add_skill(state, op, now) {
-    const skill = { id: newId('s'), name: '', rule: '', source: tr('对话'), status: 'proposed', confidence: 0.5, createdAt: now, ...pick(SKILL_FIELDS, op) }
+    requireAccount(state,op.accountId)
+    const skill = { id: newId('s'), accountId: null, name: '', rule: '', source: tr('对话'), status: 'proposed', confidence: 0.5, createdAt: now, ...pick(SKILL_FIELDS, op) }
     if (!skill.name || !skill.rule) throw new Error(tr('Skill 需要名字和规则'))
     state.skills.unshift(skill)
     return { text: tr('沉淀规则「{name}」', { name: skill.name }), target: skill.id, kind: 'skill' }
   },
   update_skill(state, op) {
     const skill = findById(state.skills, op.id)
+    if(op.accountId!==undefined && op.accountId!==normalizedAccountId(skill)) throw accountError('Rule attribution cannot be changed.')
     Object.assign(skill, pick(SKILL_FIELDS, op))
     return { text: tr('更新规则「{name}」', { name: skill.name }), target: skill.id, kind: 'skill' }
   },
@@ -262,28 +286,54 @@ const handlers = {
     return { text: tr('删除规则「{name}」', { name: skill.name }) }
   },
   add_metric(state, op) {
-    const metric = { id: newId('m'), date: new Date().toISOString(), views: 0, likes: 0, comments: 0, shares: 0, saves: 0, ...pick(METRIC_FIELDS, op) }
+    const metric = { id: newId('m'), accountId: null, date: new Date().toISOString(), views: 0, likes: 0, comments: 0, shares: 0, saves: 0, ...pick(METRIC_FIELDS, op) }
+    const linked = metric.itemId ? findById(state.items,metric.itemId) : null
+    if (linked) { if (op.accountId !== undefined && op.accountId !== normalizedAccountId(linked)) throw accountError('Metric belongs to another account.'); metric.accountId = normalizedAccountId(linked) }
+    const account = requireAccount(state,metric.accountId)
+    if (account && metric.platform !== account.platform) throw accountError('Metric platform does not match account.')
     if (!metric.platform) throw new Error(tr('数据需要平台'))
     state.metrics.push(metric)
     return { text: tr('记录 {platform} 数据 {views} 阅读', { platform: platformName(metric.platform), views: metric.views }) }
   },
   add_account(state, op, now) {
-    const account = { id: newId('ac'), platform: '', handle: '', url: null, followers: null, createdAt: now, ...pick(ACCOUNT_FIELDS, op) }
+    const account = { id: newId('ac'), group: '', positioning: '', audience: '', defaultStyleId: null, archived: false, platform: '', handle: '', url: null, followers: null, createdAt: now, ...pick(ACCOUNT_FIELDS, op) }
+    if (op.defaultStyleId !== undefined) requireStyle(state,op.defaultStyleId)
+    if (op.platform !== undefined && !PLATFORMS.includes(op.platform)) throw accountError('Invalid account platform.')
     if (!account.platform && !account.handle && !account.url) throw new Error(tr('账号信息为空'))
     state.accounts.push(account)
     return { text: tr('添加账号档案「{name}」', { name: account.handle || account.title || platformName(account.platform) }), target: account.id, kind: 'account' }
   },
   update_account(state, op) {
     const account = findById(state.accounts, op.id)
+    if (op.defaultStyleId !== undefined) requireStyle(state,op.defaultStyleId)
+    if (op.platform !== undefined && !PLATFORMS.includes(op.platform)) throw accountError('Invalid account platform.')
+    if (op.platform !== undefined && op.platform !== account.platform && (state.items.some(i=>i.accountId===account.id) || state.metrics.some(metric=>metric.accountId===account.id))) throw accountError('Move assigned content and metrics before changing account platform.')
     Object.assign(account, pick(ACCOUNT_FIELDS, op))
     return { text: tr('更新账号档案「{name}」', { name: account.handle || account.title || platformName(account.platform) }) }
   },
   delete_account(state, op) {
     findById(state.accounts, op.id)
+    if(state.items.some(i=>i.accountId===op.id && hasActiveProduction(i))) throw accountError('Wait for production and assets to finish before deleting an account.')
+    detachAccounts(state,[op.id])
     state.accounts = state.accounts.filter(row => row.id !== op.id)
     return { text: tr('删除账号档案') }
   },
+  assign_items(state,op) {
+    if (!Array.isArray(op.ids) || !op.ids.length || op.ids.length > 100) throw accountError('Select 1 to 100 items.')
+    if (op.accountId === undefined) throw accountError('Assignment target is required.')
+    const account = requireAccount(state,op.accountId)
+    const items = [...new Set(op.ids)].map(id=>findById(state.items,id))
+    if (items.some(hasActiveProduction)) throw accountError('Wait for production and assets to finish before assigning accounts.')
+    if (account && !op.updatePlatform && items.some(i=>i.platform && i.platform!==account.platform)) throw accountError('Confirm platform update when assigning across platforms.')
+    for (const item of items) { if(item.production?.savedPath && item.production.savedAccountId===undefined) item.production.savedAccountId=normalizedAccountId(item); item.accountId = op.accountId; if (account) item.platform = account.platform }
+    const ids = new Set(items.map(i=>i.id))
+    for (const metric of state.metrics) if (ids.has(metric.itemId)) { metric.accountId = op.accountId; if (account) metric.platform = account.platform }
+    return { text: tr(items.length === 1 ? '已分配 1 条内容' : '已分配 {n} 条内容', { n: items.length }), kind: 'assignment', count: items.length, accountId: op.accountId }
+  },
   clear_samples(state) {
+    const removedAccounts=state.accounts.filter(account=>account.sample).map(account=>account.id)
+    if(state.items.some(item=>removedAccounts.includes(item.accountId) && hasActiveProduction(item))) throw accountError('Wait for active production and assets before clearing sample accounts.')
+    detachAccounts(state,removedAccounts)
     state.items = state.items.filter(row => !row.sample)
     state.people = state.people.filter(row => !row.sample)
     state.angles = state.angles.filter(row => !row.sample)
@@ -307,7 +357,7 @@ const handlers = {
  * @param {Array<object>} ops - 操作列表。
  * @returns {{receipts: Array<object>, errors: string[]}} 面向用户的回执。
  */
-export function applyOps(state, ops) {
+export function applyOps(state, ops, { accountId } = {}) {
   const receipts = []
   const errors = []
   const now = new Date().toISOString()
@@ -318,7 +368,19 @@ export function applyOps(state, ops) {
       continue
     }
     try {
-      const receipt = handler(state, op, now)
+      const scoped = { ...op }
+      requireAccount(state,accountId)
+      if (accountId !== undefined) {
+        const itemOps = ['update_item','delete_item','schedule_item','set_status','save_draft','update_production']
+        if (itemOps.includes(op.op)) requireMembership(state,op.id,accountId)
+        if (op.op === 'assign_items') for (const id of op.ids ?? []) requireMembership(state,id,accountId)
+        if (['add_item','add_metric','add_skill','set_style'].includes(op.op)) { if (op.accountId !== undefined && op.accountId !== accountId) throw accountError('Operation belongs to another account.'); scoped.accountId = accountId }
+        if (op.op === 'add_metric' && op.itemId) requireMembership(state,op.itemId,accountId)
+        if (['update_account','delete_account'].includes(op.op) && op.id !== accountId) throw accountError('Account belongs to another scope.')
+        if (['add_account','clear_samples','delete_style','update_style','add_person','update_person','delete_person','add_angle','update_angle','delete_angle'].includes(op.op)) throw accountError('Global operation is unavailable in account scope.')
+        if (['update_skill','delete_skill'].includes(op.op) && normalizedAccountId(findById(state.skills,op.id)) !== accountId) throw accountError('Rule belongs to another account.')
+      }
+      const receipt = handler(state, scoped, now, { accountId })
       if (receipt) receipts.push(receipt)
     } catch (err) {
       errors.push(err.message)

@@ -1,9 +1,10 @@
 // dsh-media-desk 浏览器半片：侧栏入口 + main 全局面板。
 import React from 'react'
+import { AccountProfileView, RootAccountsView, accountLabel } from './accounts.jsx'
 import { HomeView } from './canvas.jsx'
 import { ChatDock } from './chat.jsx'
 import { ContentView } from './content.jsx'
-import { captureFiles, captureUrl, dispatchOps, loadDesk, setDesk, undo, useDesk } from './desk.js'
+import { captureFiles, captureUrl, dispatchOps, leaveAccounts, loadDesk, setDesk, undo, useDesk } from './desk.js'
 import { InsightsView } from './insights.jsx'
 import { StyleView } from './style.jsx'
 import { ScheduleView } from './schedule.jsx'
@@ -22,10 +23,11 @@ const NAV = [
   { id: 'content', label: '内容' },
   { id: 'schedule', label: '排期' },
   { id: 'insights', label: '复盘' },
+  { id: 'accounts', label: '账号' },
   { id: 'style', label: '风格', navKey: '风格（导航）' },
 ]
 
-const VIEWS = { home: HomeView, content: ContentView, schedule: ScheduleView, insights: InsightsView, style: StyleView }
+const VIEWS = { accounts: AccountProfileView, home: HomeView, content: ContentView, schedule: ScheduleView, insights: InsightsView, style: StyleView }
 
 function CaptureDialog() {
   const capture = useDesk(s => s.capture)
@@ -46,12 +48,12 @@ function CaptureDialog() {
     event.preventDefault()
     setBusy(true)
     if (tab === 'link' && url.trim()) {
-      const id = await captureUrl(url.trim())
+      const id = await captureUrl(url.trim(), {accountId:capture.accountId})
       if (id) close()
     } else if (tab === 'quote' || tab === 'text') {
       const value = text.trim()
       if (value) {
-        await dispatchOps([{ op: 'add_item', kind: tab === 'quote' ? 'quote' : 'note', title: tab === 'quote' ? value : value.split(/[。！？\n]|[.!?](?=\s|$)/)[0].slice(0, 40), body: tab === 'quote' ? '' : value }], { label: t('记下灵感') })
+        await dispatchOps([{ op: 'add_item', kind: tab === 'quote' ? 'quote' : 'note', title: tab === 'quote' ? value : value.split(/[。！？\n]|[.!?](?=\s|$)/)[0].slice(0, 40), body: tab === 'quote' ? '' : value }], { label: t('记下灵感'), accountId:capture.accountId })
         close()
       }
     }
@@ -75,7 +77,7 @@ function CaptureDialog() {
             <Icon name="upload" size={22} />
             <span>{t('选择图片或视频')}</span>
             <small>{t('也可以直接把文件拖到灵感墙上')}</small>
-            <input ref={fileInput} type="file" hidden multiple accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime" onChange={async (e) => { const files = [...e.target.files]; close(); await captureFiles(files) }} />
+            <input ref={fileInput} type="file" hidden multiple accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime" onChange={async (e) => { const files = [...e.target.files]; close(); await captureFiles(files,{accountId:capture.accountId}) }} />
           </button>
         ) : (
           <label className="md-field">
@@ -116,6 +118,10 @@ function Desk() {
   const ready = useDesk(s => Boolean(s.state))
   const error = useDesk(s => s.error)
   const view = useDesk(s => s.view)
+  const accountId = useDesk(s => s.accountId)
+  const account = useDesk(s => s.state?.accounts.find(row => row.id === s.accountId))
+  const workspaceEntered = useDesk(s => s.workspaceEntered)
+  const workspaceRevision = useDesk(s => s.workspaceRevision)
   const dockOpen = useDesk(s => s.dockOpen)
   const canUndo = useDesk(s => s.canUndo)
   const rootRef = React.useRef(null)
@@ -148,35 +154,39 @@ function Desk() {
 
   // 工作区有自己的对话栏
   const focused = useDesk(s => Boolean(s.focusId))
-  const showDock = dockOpen && !focused
-  const Active = VIEWS[view] ?? HomeView
+  const showDock = workspaceEntered && dockOpen && !focused
+  const Active = workspaceEntered ? VIEWS[view] ?? ContentView : RootAccountsView
+  const context = accountId === undefined ? t('全部账号') : accountId === null ? t('未归属') : accountLabel(account)
   return (
-    <div className={`md-root ${narrow ? 'is-narrow' : ''} ${width < 780 ? 'is-compact' : ''} ${showDock ? 'has-dock' : ''}`} ref={rootRef}>
+    <div className={`md-root ${workspaceEntered ? 'md-workspace' : 'md-account-hub'} ${narrow ? 'is-narrow' : ''} ${width < 780 ? 'is-compact' : ''} ${showDock ? 'has-dock' : ''}`} ref={rootRef}>
       <style>{css}</style>
       <div className="md-ambient" aria-hidden="true"><i /><i /><i /></div>
       <div className="md-main">
         <header className="md-topbar" data-window-drag="">
-          <nav className="md-nav" aria-label={t('工作台导航')}>
+          <div className="md-account-context-row">
+            {workspaceEntered ? <><button type="button" className="md-btn" onClick={leaveAccounts}>{t('账号列表')}</button><span aria-hidden="true">/</span><strong className="md-account-context" title={context}>{context}</strong></> : <strong>{t('账号')}</strong>}
+            <span style={{ flex: 1 }} />
+            {ready && workspaceEntered ? <SampleBadge /> : null}
+            {canUndo ? <IconButton icon="undo" label={t('撤销上一步')} onClick={undo} /> : null}
+            {ready && workspaceEntered ? <ModelButton /> : null}
+            <IconButton icon="gear" label={t('设置')} onClick={() => setDesk({ settingsOpen: true })} />
+            {workspaceEntered && !showDock ? <button type="button" className="md-open-dock" onClick={() => setDesk({ dockOpen: true })}><Icon name="chat" size={15} />{t('助手')}</button> : null}
+          </div>
+          {workspaceEntered ? <nav className="md-nav" aria-label={t('工作台导航')}>
             {NAV.map(entry => (
               <button type="button" key={entry.id} className={view === entry.id ? 'is-on' : ''} aria-current={view === entry.id ? 'page' : undefined} onClick={() => setDesk({ view: entry.id, focusId: null })}>{entry.navKey && lang() === 'en' ? t(entry.navKey) : t(entry.label)}</button>
             ))}
-          </nav>
-          <span style={{ flex: 1 }} />
-          {ready ? <SampleBadge /> : null}
-          {canUndo ? <IconButton icon="undo" label={t('撤销上一步')} onClick={undo} /> : null}
-          {ready ? <ModelButton /> : null}
-          <IconButton icon="gear" label={t('设置')} onClick={() => setDesk({ settingsOpen: true })} />
-          {showDock ? null : <button type="button" className="md-open-dock" onClick={() => setDesk({ dockOpen: true })}><Icon name="chat" size={15} />{t('助手')}</button>}
+          </nav> : null}
         </header>
-        <main className="md-content" key={view}>
+        <main className="md-content" key={`${view}:${String(accountId)}:${workspaceRevision}`}>
           {error ? (
             <div className="md-page"><p className="md-muted">{t('工作台加载失败：{error}', { error })}</p><button type="button" className="md-btn" onClick={loadDesk}>{t('重试')}</button></div>
           ) : ready ? <Active /> : <div className="md-loading"><span className="md-shimmer">{t('正在铺开灵感…')}</span></div>}
         </main>
-        {ready ? <Studio /> : null}
+        {ready && workspaceEntered ? <Studio /> : null}
       </div>
       {ready && showDock ? <ChatDock /> : null}
-      {ready ? <CaptureDialog /> : null}
+      {ready && workspaceEntered ? <CaptureDialog /> : null}
       <FormDialog />
       {ready ? <SettingsDialog /> : null}
       {ready ? <ModelPicker /> : null}

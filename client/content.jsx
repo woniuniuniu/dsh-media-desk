@@ -1,3 +1,4 @@
+import { accountLabel } from './accounts.jsx'
 // 内容管理：看板和表格是同一份数据的两种看法。
 import React from 'react'
 import { dispatchOps, openItem, setDesk, useDesk } from './desk.js'
@@ -15,6 +16,7 @@ function useContentItems() {
 }
 
 function BoardCard({ item: raw }) {
+  const account = useDesk(s=>s.allState.accounts.find(a=>a.id===raw.accountId))
   // 有成稿时显示成稿的标题和封面
   const item = displayItem(raw)
   const poster = posterOf(item)
@@ -35,6 +37,7 @@ function BoardCard({ item: raw }) {
       {poster ? <img src={poster} alt="" loading="lazy" draggable={false} /> : null}
       <strong>{item.title}</strong>
       <span className="md-board-meta">
+        <span>{account?accountLabel(account):t('未归属')}</span>
         {item.platform ? <span>{t(item.platform)}</span> : null}
         {item.scheduledAt && item.status !== 'published' ? <span className="is-time">{relativeDay(item.scheduledAt)}</span> : null}
         {raw.production?.status === 'done' || item.drafts?.article ? <Icon name="pen" size={12} /> : null}
@@ -95,6 +98,9 @@ const COLUMNS = [
 ]
 
 function Table({ items }) {
+  const accounts=useDesk(s=>s.allState.accounts)
+  const [selected,setSelected]=React.useState([]),[target,setTarget]=React.useState(''),[changePlatform,setChangePlatform]=React.useState(false)
+  const toggle=id=>setSelected(ids=>ids.includes(id)?ids.filter(i=>i!==id):ids.length<100?[...ids,id]:ids)
   const [sort, setSort] = React.useState({ key: 'createdAt', dir: -1 })
   const sorted = React.useMemo(() => {
     const column = COLUMNS.find(c => c.key === sort.key)
@@ -106,9 +112,11 @@ function Table({ items }) {
   }, [items, sort])
   return (
     <div className="md-table-wrap">
+      <div className="md-account-filters"><span>{t('已选择 {n} 条',{n:selected.length})}</span><select aria-label={t('分配到账号')} value={target} onChange={e=>setTarget(e.target.value)}><option value="">{t('未归属')}</option>{accounts.filter(a=>!a.archived).map(a=><option key={a.id} value={a.id}>{accountLabel(a)}</option>)}</select><label><input type="checkbox" checked={changePlatform} onChange={e=>setChangePlatform(e.target.checked)}/>{t('同时更新平台')}</label><button className="md-btn" disabled={!selected.length} onClick={async()=>{const r=await dispatchOps([{op:'assign_items',ids:selected,accountId:target||null,updatePlatform:changePlatform}],{label:t('分配账号')});if(r&&!r.errors.length)setSelected([])}}>{t('分配账号')}</button><small>{t('每次最多100条，不移动分支')}</small></div>
       <table className="md-table">
         <thead>
           <tr>
+            <th><input type="checkbox" aria-label={t('选择前100条')} checked={items.length>0&&selected.length===Math.min(items.length,100)} onChange={e=>setSelected(e.target.checked?items.slice(0,100).map(i=>i.id):[])}/></th><th>{t('所属账号')}</th>
             {COLUMNS.map(column => (
               <th key={column.key} aria-sort={sort.key === column.key ? (sort.dir > 0 ? 'ascending' : 'descending') : 'none'}>
                 <button type="button" onClick={() => setSort(s => ({ key: column.key, dir: s.key === column.key ? -s.dir : 1 }))}>
@@ -122,8 +130,10 @@ function Table({ items }) {
         <tbody>
           {sorted.map((item) => {
             const poster = posterOf(item)
+            const accountName = accountLabel(accounts.find(account => account.id === item.accountId))
             return (
               <tr key={item.id} onClick={() => openItem(item.id)} tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter') openItem(item.id) }}>
+                <td onClick={e=>e.stopPropagation()}><input type="checkbox" aria-label={`${t('选择内容')} ${item.id}`} checked={selected.includes(item.id)} onChange={()=>toggle(item.id)}/></td><td><span title={accountName} style={{display:'block',maxWidth:240,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{accountName}</span></td>
                 <td className="md-table-title">
                   <span className="md-thumb">{poster ? <img src={poster} alt="" loading="lazy" /> : <span>{item.title.slice(0, 1)}</span>}</span>
                   <span><strong>{item.title}</strong><small>{item.parentId ? `${t('分支')} · ` : ''}{t(KIND_LABEL[item.kind])}{item.source ? ` · ${item.source}` : ''}</small></span>

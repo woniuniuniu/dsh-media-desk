@@ -3,6 +3,7 @@
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { assertAccountTransition } from './accounts.js'
 import { buildSeed, migrateState } from './seed.js'
 
 const MAX_UNDO = 30
@@ -136,10 +137,13 @@ export class Store {
 
   undoLast() {
     return this.run(async () => {
-      const entry = this.undo.pop()
+      const entry = this.undo.at(-1)
       if (!entry) return null
       await this.refresh()
-      this.state = revertChange(JSON.parse(entry.before), JSON.parse(entry.after), this.state)
+      const next = revertChange(JSON.parse(entry.before), JSON.parse(entry.after), this.state)
+      assertAccountTransition(this.state,next)
+      this.undo.pop()
+      this.state = next
       await this.persist()
       return entry.label
     })

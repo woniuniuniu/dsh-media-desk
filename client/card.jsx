@@ -1,5 +1,6 @@
 // 灵感卡片：散落、瀑布流复用同一张卡。
 import React from 'react'
+import { AccountBadge } from './accounts.jsx'
 import { setDesk } from './desk.js'
 import { t } from './i18n.js'
 import { Icon } from './ui.jsx'
@@ -77,6 +78,7 @@ export function Card({ item: raw, onOpen }) {
         <div className="md-card-caption"><h3>{item.title}</h3></div>
       )}
 
+      <AccountBadge item={item} />
       <footer className="md-card-foot">
         <span className={`md-dot status-${item.status}`} title={t(STATUS_LABEL[item.status])} />
         <span className="md-card-source">{item.kind === 'web' && item.url ? hostOf(item.url) : item.source || t(KIND_LABEL[item.kind])}</span>

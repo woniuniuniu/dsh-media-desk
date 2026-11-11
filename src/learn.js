@@ -3,6 +3,8 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { activeStyle, styleToVoice } from './style.js'
 import { platformName, tr } from './i18n.js'
+import { PLATFORMS } from './platforms.js'
+import { accountError } from './accounts.js'
 
 /** 按这台电脑的时区算日期，北京时间早上发的内容不会算到前一天。 */
 function localDay(iso) {
@@ -121,7 +123,13 @@ export function proposeRules(state) {
  * @param {object} state - 当前状态。
  * @returns {object} 概览、趋势、平台分布、排行与角度×人物覆盖。
  */
-export function computeInsights(state) {
+export function computeInsights(state, { platform } = {}) {
+  if (platform !== undefined) {
+    if (!PLATFORMS.includes(platform)) throw accountError('Invalid insights platform.')
+    const metrics = state.metrics.filter(metric => metric.platform === platform)
+    const linkedItems = new Set(metrics.map(metric => metric.itemId).filter(Boolean))
+    state = { ...state, items: state.items.filter(item => item.platform === platform || linkedItems.has(item.id)), metrics, accounts: state.accounts.filter(account => account.platform === platform) }
+  }
   const metrics = realMetrics(state)
   const onlyReal = metrics.length !== state.metrics.length || !metrics.some(metric => metric.sample)
   const totals = itemTotals({ metrics })
@@ -142,7 +150,7 @@ export function computeInsights(state) {
   }
   const top = state.items
     .filter(item => totals.has(item.id))
-    .map(item => ({ id: item.id, title: item.title, platform: item.platform, ...totals.get(item.id), engaged: engagement(totals.get(item.id)) }))
+    .map(item => ({ id: item.id, title: item.title, platform: platform ?? item.platform, ...totals.get(item.id), engaged: engagement(totals.get(item.id)) }))
     .sort((a, b) => (b.views - a.views) || (b.engaged - a.engaged))
   const views = sum(metrics, 'views')
   const engaged = metrics.reduce((total, metric) => total + engagement(metric), 0)
@@ -174,7 +182,7 @@ export async function exportSkill(state, home) {
   const rules = state.skills.filter(skill => !skill.sample && (skill.status === 'active' || skill.status === 'exported'))
   const picked = activeStyle(state)
   const style = picked && !picked.preset ? picked : null
-  const name = 'media-desk-voice'
+  const name = state.accountId ? `media-desk-voice-${Buffer.from(state.accountId).toString('hex')}` : 'media-desk-voice'
   const dir = join(home, 'skills', name)
   if (!rules.length && !style) {
     // 之前导出过的旧 Skill 不再代表现在的设置，撤掉它

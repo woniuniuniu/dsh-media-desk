@@ -820,3 +820,30 @@ button.md-receipt:hover { transform: translateX(2px); }
 .md-node.is-dim { opacity: .28; filter: saturate(.5); }
 .md-hero-related { margin-top: 10px; display: flex; gap: 10px; align-items: baseline; color: var(--ink2); font-size: 12.5px; line-height: 18px; animation: md-rise .5s var(--ease) both; }
 
+
+/* Account profiles use the same surfaces and controls as the workbench. */
+.md-account-switch { position: relative; max-width: 300px; }
+.md-account-switch > .md-btn { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-account-menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 60; width: 360px; max-height: 440px; overflow: auto; padding: 10px; border-radius: 14px; border: 1px solid var(--line); background: var(--card); box-shadow: 0 16px 50px #0004; }
+.md-account-menu input { width: 100%; padding: 9px; margin-bottom: 6px; }
+.md-account-menu button { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: inherit; padding: 10px; cursor: pointer; border-radius: 8px; }
+.md-account-menu button:hover { background: var(--hover); }
+.md-account-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 18px 0; }
+.md-account-filters input:not([type=checkbox]), .md-account-filters select { max-width: 330px; padding: 8px 10px; border-radius: 9px; background: transparent; color: inherit; border: 1px solid var(--line); }
+.md-account-id { display: block; opacity: .55; font-size: 11px; margin-top: 4px; }
+.md-topbar { flex-wrap: wrap; }
+.md-account-context-row { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; }
+.md-account-context { min-width: 0; max-width: 46%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; }
+.md-workspace .md-content { margin-top: 48px; }
+.md-account-scopes { display: flex; flex-wrap: wrap; gap: 12px; margin: 20px 0; }
+.md-account-scope { display: flex; flex-direction: column; gap: 6px; min-width: 240px; padding: 16px 20px !important; border: 1px solid var(--line-strong) !important; border-radius: var(--r-lg); background: var(--glass) !important; }
+.md-account-scope:hover { background: var(--hover) !important; }
+.md-account-scope span { color: var(--ink3); font-size: 12px; }
+.md-account-row { cursor: pointer; }
+.md-account-profile { max-width: 760px; display: grid; gap: 18px; }
+.md-account-profile > div { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 16px; }
+.md-account-profile dt { color: var(--ink3); }
+.md-account-profile dd { overflow-wrap: anywhere; white-space: pre-wrap; }
+.md-insights-filter { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin: 8px 8px 14px; }
+.md-insights-filter select { margin-left: 6px; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--card); }
+.md-text-btn { background: transparent; color: inherit; border: 0; font: inherit; cursor: pointer; text-align: left; }

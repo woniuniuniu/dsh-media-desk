@@ -1,3 +1,4 @@
+import { normalizedAccountId, requireMembership } from './accounts.js'
 // 一键成稿流水线：文章 → 标题与画面规划 → 封面、配图、分镜。
 // 任务在 Host 里跑，关掉页面也不会中断；每生成一张图就落盘一次。
 import { writeFile } from 'node:fs/promises'
@@ -166,26 +167,29 @@ export class Producer {
     }
   }
 
-  patch(id, mutate) {
+  patch(id, mutate, accountId) {
     return this.store.mutate('成稿', (state) => {
-      const item = state.items.find(row => row.id === id)
+      const item = accountId===undefined ? state.items.find(row => row.id === id) : requireMembership(state,id,accountId)
       if (item?.production) mutate(item.production, item)
       return state
     }, { undoable: false })
   }
 
-  async start(id) {
+  async start(id, accountId) {
     if (this.jobs.has(id)) return false
     const state = await this.store.read()
     const item = state.items.find(row => row.id === id)
     if (!item) throw Object.assign(new Error(tr('找不到这条灵感')), { status: 404 })
-    const job = { stage: 'brief', text: '', planText: '', controller: new AbortController() }
+    const originAccountId = accountId===undefined?normalizedAccountId(item):accountId
+    requireMembership(state,id,originAccountId)
+    const job = { accountId:originAccountId, stage: 'brief', text: '', planText: '', controller: new AbortController() }
     this.jobs.set(id, job)
-    await this.store.mutate('开始成稿', (draft) => {
-      const target = draft.items.find(row => row.id === id)
+    try { await this.store.mutate('开始成稿', (draft) => {
+      const target = requireMembership(draft,id,originAccountId)
       target.production = { status: 'running', stage: 'brief', startedAt: new Date().toISOString(), title: target.title, article: '', cover: null, images: [], shots: [] }
       return draft
     }, { undoable: false })
+    } catch(error) { this.jobs.delete(id); throw error }
     // 不等待：浏览器靠轮询拿进度
     this.run(id, job).catch(() => {}).finally(() => this.jobs.delete(id))
     return true
@@ -197,10 +201,11 @@ export class Producer {
 
   async run(id, job) {
     const { signal } = job.controller
+    const accountId=job.accountId
     try {
       const settings = await this.settings.read()
       const state = await this.store.read()
-      const item = state.items.find(row => row.id === id)
+      const item = requireMembership(state,id,accountId)
       const snapshot = JSON.parse(JSON.stringify(state))
 
       signal.throwIfAborted()
@@ -233,7 +238,7 @@ export class Producer {
         production.images = plan.images.map(row => ({ ...row, status: initial }))
         production.shots = plan.shots.map(row => ({ ...row, status: initial }))
         if (!ready) production.needsProvider = true
-      })
+      },accountId)
 
       // 策划案定了之后，文章和所有画面同时开工
       const writeArticle = async () => {
@@ -258,7 +263,7 @@ export class Producer {
           production.aiArticle = article
           production.engine = engine
           production.notice = notice
-        })
+        },accountId)
       }
 
       const tasks = [writeArticle()]
@@ -269,7 +274,7 @@ export class Producer {
           while (next < targets.length && !signal.aborted) {
             const target = targets[next]
             next += 1
-            await this.renderAsset(id, target, settings, signal)
+            await this.renderAsset(id, target, settings, signal,accountId)
           }
         }
         for (let i = 0; i < CONCURRENCY; i += 1) tasks.push(worker())
@@ -278,7 +283,7 @@ export class Producer {
       if (signal.aborted) throw new Error('cancelled')
 
       await this.store.mutate('完成成稿', (draft) => {
-        const target = draft.items.find(row => row.id === id)
+        const target = requireMembership(draft,id,accountId)
         if (!target?.production) return draft
         target.production.status = 'done'
         target.production.stage = 'done'
@@ -295,7 +300,7 @@ export class Producer {
         for (const asset of [production.cover, ...production.images ?? [], ...production.shots ?? []]) {
           if (asset && ['pending', 'running'].includes(asset.status)) asset.status = 'idle'
         }
-      })
+      },accountId)
     }
   }
 
@@ -315,7 +320,7 @@ export class Producer {
     }
   }
 
-  async renderAsset(id, target, settings, signal) {
+  async renderAsset(id, target, settings, signal, accountId) {
     let prompt = null
     await this.patch(id, (production) => {
       const asset = assetAt(production, target)
@@ -323,10 +328,11 @@ export class Producer {
       asset.status = 'running'
       asset.error = null
       prompt = fullPrompt(production, target, asset)
-    })
+    },accountId)
     if (!prompt) return
     try {
       const { buffer, ext } = await this.generateWithRetry(settings.image, prompt, signal)
+      requireMembership(await this.store.read(),id,accountId)
       const name = `${newId('g')}${ext}`
       await writeFile(join(this.store.filesDir, name), buffer)
       await this.patch(id, (production) => {
@@ -334,7 +340,7 @@ export class Producer {
         if (!asset) return
         asset.status = 'done'
         asset.src = `media-desk/files/${name}`
-      })
+      },accountId)
     } catch (err) {
       if (signal?.aborted) return
       await this.patch(id, (production) => {
@@ -342,23 +348,25 @@ export class Producer {
         if (!asset) return
         asset.status = 'failed'
         asset.error = err.message
-      })
+      },accountId)
     }
   }
 
   /** 单独重画一张。 */
-  async regenerate(id, target) {
+  async regenerate(id, target, accountId) {
     const settings = await this.settings.read()
     if (!this.ready(settings)) throw Object.assign(new Error(tr('还没有接入生图模型')), { status: 400 })
     if (!parseTarget(target)) throw Object.assign(new Error(tr('目标无效')), { status: 400 })
     const key = `${id}:${target}`
     if (this.assets.has(key)) return
     const state = await this.store.read()
-    const production = state.items.find(row => row.id === id)?.production
+    const item = requireMembership(state,id,accountId)
+    const originAccountId=accountId===undefined?normalizedAccountId(item):accountId
+    const production = item?.production
     if (!production || !assetAt(production, target)) throw Object.assign(new Error(tr('找不到这张图')), { status: 404 })
     this.assets.add(key)
-    await this.patch(id, (next) => { assetAt(next, target).status = 'running' })
-    this.renderAsset(id, target, settings).catch(() => {}).finally(() => this.assets.delete(key))
+    try { await this.patch(id, (next) => { assetAt(next, target).status = 'running' },originAccountId) } catch(error) {this.assets.delete(key);throw error}
+    this.renderAsset(id, target, settings, undefined,originAccountId).catch(() => {}).finally(() => this.assets.delete(key))
   }
 
   /** Host 重启后，没人在跑的「进行中」不能一直转圈。 */

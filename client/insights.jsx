@@ -1,12 +1,13 @@
 // 数据复盘。
 import React from 'react'
-import { dispatchOps, fetchInsights, learnSkills, openItem, setDesk, toast, useDesk } from './desk.js'
+import { AccountBadge } from './accounts.jsx'
+import { dispatchOps, getDesk, fetchInsights, learnSkills, openItem, setDesk, toast, useDesk } from './desk.js'
 import { ConnectDialog } from './connect.jsx'
-import { EN } from './en/index.js'
+import { normalizePlatform } from '../src/platforms.js'
 import { lang, plural, t, useLang } from './i18n.js'
 import { Icon, Segmented } from './ui.jsx'
 const clip = (text, n) => (text.length > n ? `${text.slice(0, n).trimEnd()}…` : text)
-import { PLATFORMS, compact, platformChoices, displayItem, fmtDate, posterOf, dayKey } from './util.js'
+import { compact, platformChoices, displayItem, fmtDate, posterOf, dayKey } from './util.js'
 
 /** 带数量的文字：英文在 1 时用单数那条 key；{s} 给共用词典里写成 piece{s} 的那种。 */
 function count(n, one, other, vars = {}) {
@@ -78,11 +79,13 @@ function TrendChart({ daily: rows, field }) {
   )
 }
 
-function addMetric(items) {
+function addMetric(items, platform) {
+  const accountId=getDesk().accountId
+  const account=getDesk().state.accounts.find(a=>a.id===accountId)
   setDesk({
     dialog: {
       title: t('录入一条数据'),
-      initial: { platform: '公众号', date: dayKey(new Date()) },
+      initial: { platform: platform || account?.platform || '公众号', date: dayKey(new Date()) },
       fields: [
         { name: 'itemId', label: t('对应内容'), type: 'select', options: [{ value: '', label: t('不关联内容') }, ...items.filter(i => !i.parentId).map(i => ({ value: i.id, label: displayItem(i).title.slice(0, 26) }))] },
         { name: 'platform', label: t('平台'), type: 'select', options: platformChoices().map(v => ({ value: v, label: t(v) })) },
@@ -94,16 +97,10 @@ function addMetric(items) {
       ],
       onSubmit: (v) => {
         const n = key => Number(v[key]) || 0
-        dispatchOps([{ op: 'add_metric', itemId: v.itemId || null, platform: v.platform, date: new Date(`${v.date}T12:00:00`).toISOString(), views: n('views'), likes: n('likes'), comments: n('comments'), saves: n('saves') }], { label: t('录入数据') })
+        dispatchOps([{ op: 'add_metric', itemId: v.itemId || null, platform: v.platform, date: new Date(`${v.date}T12:00:00`).toISOString(), views: n('views'), likes: n('likes'), comments: n('comments'), saves: n('saves') }], { label: t('录入数据'), accountId })
       },
     },
   })
-}
-
-/** 平台名：中文原文，或者它的英文名（不分大小写）。 */
-function platformOf(name) {
-  const value = String(name ?? '').toLowerCase()
-  return PLATFORMS.find(p => p.toLowerCase() === value || String(EN[p] ?? '').toLowerCase() === value)
 }
 
 /** CSV：日期,平台,阅读,点赞,评论,转发,收藏 */
@@ -114,7 +111,7 @@ export function parseCsv(text) {
     const cols = line.split(/[,，\t]/).map(c => c.trim())
     if (index === 0 && !/\d/.test(cols[0])) return
     const date = new Date(cols[0])
-    const platform = platformOf(cols[1])
+    const platform = normalizePlatform(cols[1])
     if (Number.isNaN(date.getTime()) || !platform) {
       errors.push(index + 1)
       return
@@ -126,6 +123,7 @@ export function parseCsv(text) {
 }
 
 function importCsv() {
+  const accountId=getDesk().accountId
   setDesk({
     dialog: {
       title: t('粘贴 CSV 数据'),
@@ -134,7 +132,7 @@ function importCsv() {
       onSubmit: (values) => {
         const { ops, errors } = parseCsv(values.csv ?? '')
         const done = count(ops.length, '导入 1 条数据', '导入 {n} 条数据')
-        if (ops.length) dispatchOps(ops, { label: done, silent: true })
+        if (ops.length) dispatchOps(ops, { label: done, silent: true, accountId })
         toast(errors.length ? t('导入 {n} 条，第 {rows} 行格式不对', { n: ops.length, rows: errors.slice(0, 5).join(t('、')) }) : done, { error: errors.length > 0, undo: !errors.length && ops.length > 0 })
       },
     },
@@ -150,16 +148,33 @@ export function InsightsView() {
   const items = useDesk(s => s.state.items)
   const metrics = useDesk(s => s.state.metrics)
   const skills = useDesk(s => s.state.skills)
-  const [data, setData] = React.useState(null)
+  const [result, setResult] = React.useState(null)
+  const [platform, setPlatform] = React.useState('')
   const [show, setShow] = React.useState('chart')
   const [connecting, setConnecting] = React.useState(false)
   const accounts = useDesk(s => s.state.accounts)
+  const accountId = useDesk(s => s.accountId)
+  const workspaceRevision = useDesk(s => s.workspaceRevision)
+  const scopeKey = JSON.stringify({ accountId, platform, workspaceRevision })
+  const data = result?.scopeKey === scopeKey && result.items === items && result.metrics === metrics ? result.data : null
   React.useEffect(() => {
     let alive = true
-    fetchInsights().then((next) => { if (alive) setData(next) }).catch(err => toast(err.message, { error: true }))
+    fetchInsights(platform || undefined, accountId).then((next) => {
+      if (alive) setResult({ scopeKey, items, metrics, data: next })
+    }).catch(err => { if (alive) toast(err.message, { error: true }) })
     return () => { alive = false }
-  }, [metrics, items])
-  if (!data) return <div className="md-board-page"><div className="md-tile md-i-hero" /></div>
+  }, [metrics, items, platform, accountId, scopeKey])
+  const kuaishou = (platform || accounts.find(account => account.id === accountId)?.platform) === '快手'
+  const filters = (
+    <div className="md-insights-filter">
+      <label>{t('平台筛选')} <select aria-label={t('复盘平台筛选')} value={platform} onChange={event => setPlatform(event.target.value)}>
+        <option value="">{t('全部平台')}</option>
+        {platformChoices().map(value => <option key={value} value={value}>{t(value)}</option>)}
+      </select></label>
+      {kuaishou ? <p className="md-muted">{t('快手支持手动录入、CSV 和 API 数据复盘；暂不支持 Monid 自动抓取。')}</p> : null}
+    </div>
+  )
+  if (!data) return <div className="md-board-page">{filters}<div className="md-tile md-i-hero" /></div>
   // 有真实数据后，不再把示例规则当建议
   const proposed = skills.filter(s => s.status === 'proposed' && (data.hasSample || !s.sample))
   // 有的平台公开接口读不到播放量，这时统一按互动来比
@@ -173,14 +188,15 @@ export function InsightsView() {
   const heroPic = bestItem && posterOf(displayItem(bestItem))
   const actions = (
     <div className="md-hero-actions">
-      <button type="button" className="md-pill is-primary" onClick={() => setConnecting(true)}><Icon name="user" size={14} />{t('导入账号数据')}</button>
-      <button type="button" className="md-pill" onClick={() => addMetric(items)}><Icon name="plus" size={14} />{t('录入数据')}</button>
+      {kuaishou ? null : <button type="button" className="md-pill is-primary" onClick={() => setConnecting(true)}><Icon name="user" size={14} />{t('导入账号数据')}</button>}
+      <button type="button" className="md-pill" onClick={() => addMetric(platform ? items.filter(item => item.platform === platform) : items, platform)}><Icon name="plus" size={14} />{t('录入数据')}</button>
       <button type="button" className="md-pill" onClick={importCsv}><Icon name="upload" size={14} />{t('粘贴 CSV')}</button>
     </div>
   )
-  if (!metrics.length) {
+  if (!data.daily.length) {
     return (
       <div className="md-board-page">
+        {filters}
         <section className="md-tile md-i-hero is-empty">
           <div className="md-hero-copy">
             <h1 className="md-i-line">{t('发布之后，把数据录进来，')}<br />{t('这里就开始替你复盘。')}</h1>
@@ -193,6 +209,7 @@ export function InsightsView() {
   }
   return (
     <div className="md-board-page">
+      {filters}
       <div className="md-insights">
         <section className="md-tile md-i-hero">
           <div className="md-hero-copy">
@@ -250,7 +267,7 @@ export function InsightsView() {
                   <button type="button" onClick={() => openItem(row.id)}>
                     <span className="md-top-rank">{index + 1}</span>
                     <span className="md-thumb">{poster ? <img src={poster} alt="" loading="lazy" /> : null}</span>
-                    <span className="md-top-title"><strong>{row.title}</strong><small>{t(row.platform)} · {t('{likes} 赞 · {saves} 收藏', { likes: compact(row.likes), saves: compact(row.saves) })}</small></span>
+                    <span className="md-top-title"><strong>{row.title}</strong>{item?<AccountBadge item={item} />:null}<small>{t(row.platform)} · {t('{likes} 赞 · {saves} 收藏', { likes: compact(row.likes), saves: compact(row.saves) })}</small></span>
                     <b>{row.views ? compact(row.views) : t(plural(row.engaged, '1 互动', '{n} 互动'), { n: compact(row.engaged) })}</b>
                   </button>
                 </li>

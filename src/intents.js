@@ -1,13 +1,13 @@
 // 本地规则解析：模型不可用时对话依然能完成常见操作，界面会标明这是本地规则。
 import { platformName, tr } from './i18n.js'
 import { fmtWhen, STATUSES } from './ops.js'
+import { platformInText } from './platforms.js'
 
 const WEEK = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0 }
 const STATUS_WORDS = { 灵感: 'idea', 大纲: 'outline', 草稿: 'draft', 待发布: 'ready', 已发布: 'published' }
 const CN_DIGIT = { 一: 1, 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10, 十一: 11, 十二: 12 }
 const WEEK_EN = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 }
 const MONTH_EN = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
-const PLATFORM_WORDS = { 'wechat channels': '视频号', wechat: '公众号', xiaohongshu: '小红书', rednote: '小红书', douyin: '抖音', bilibili: 'B站', channels: '视频号', tiktok: 'TikTok', instagram: 'Instagram', ig: 'Instagram', youtube: 'YouTube', twitter: 'X' }
 
 /** 英文里的日期时间：tomorrow 8pm、next wed、Nov 3 20:00、in 3 days。 */
 function parseWhenEn(text, now) {
@@ -197,8 +197,7 @@ export function localIntent(state, message, { focusId, now = new Date() } = {}) 
     const when = parseWhen(text, now)
     if (!when) return { reply: tr('没听出具体时间，可以说「明晚 8 点」或「11月3日 20:00」。'), ops: [] }
     if (!item) return { reply: tr('没找到要排期的内容，可以用《标题》告诉我是哪一篇。'), ops: [] }
-    const word = /\b(wechat channels|wechat|xiaohongshu|rednote|douyin|bilibili|channels|tiktok|instagram|ig|youtube|twitter)\b/i.exec(text)?.[1]?.replace(/\s+/g, ' ')
-    const platform = word ? PLATFORM_WORDS[word.toLowerCase()] : ['公众号', '小红书', '抖音', 'B站', '视频号', 'TikTok', 'Instagram', 'YouTube', 'X'].find(p => p.length > 1 && text.toLowerCase().includes(p.toLowerCase())) ?? (/\bon X\b/.test(text) ? 'X' : undefined)
+    const platform = platformInText(text)
     return { reply: tr('排好了。'), ops: [{ op: 'schedule_item', id: item.id, scheduledAt: when.toISOString(), ...(platform ? { platform } : {}) }] }
   }
   if (/写成|成文|成稿|写一篇|生成文章|生成脚本|成脚本|写脚本|分镜|配图/.test(text) || /\b(?:write|turn|make|produce|draft)\b.*\b(?:script|article|post|storyboard|figures?)\b|^(?:produce|write)(?: it| this)?\b|\bstoryboard\b/i.test(text)) {

@@ -29,11 +29,15 @@
 
 ## What it is
 
-Media Desk is a page in the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) sidebar. It opens on a wall of your ideas, one line each. Open one, click **Draft it**, and you get a spoken script, a title, a video cover, images and a six-frame storyboard. Ask for changes in the chat on the left and the draft updates on the right. Then drag the finished piece onto the calendar, publish it, and come back for the numbers.
+Media Desk is a page in the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) sidebar. Choose an account from the account list to enter its content workspace. Record an idea, open it, click **Draft it**, and you get a spoken script, a title, a video cover, images and a six-frame storyboard. Ask for changes in the chat on the left and the draft updates on the right. Then drag the finished piece onto the calendar, publish it, and come back for the numbers.
 
-There are five pages: **Ideas · Content · Schedule · Insights · Styles**. The interface is available in English and Chinese. By default it follows the DeepSeek Harness language, and you can lock it to either one in the plugin settings. When the interface is in English, scripts, titles and storyboards are written in English. The web version also works in a phone browser.
+Each account has six child pages: **Ideas · Content · Schedule · Insights · Account · Styles**. The interface is available in English and Chinese. By default it follows the DeepSeek Harness language, and you can lock it to either one in the plugin settings. When the interface is in English, scripts, titles and storyboards are written in English. The web version also works in a phone browser.
 
-It works with TikTok, Instagram, YouTube and X as well as Chinese platforms (RedNote, Douyin, Bilibili, WeChat).
+The account list is the main menu: choose an account to enter its Content workspace, then use Inspiration, Content, Schedule, Insights, Account and Styles within that account. The Account tab shows only that profile and its independent defaults; the Account list breadcrumb returns to the main menu. Search, groups, CSV add and archive/restore stay in the main menu. All accounts and Unassigned entries retain access to existing content.
+
+Insights has a platform filter including Kuaishou. Kuaishou supports manual entry, CSV and API metrics; automatic Monid fetching is unavailable. Natural language and CSV accept Kuaishou/Kwai, while structured CLI/MCP requests use canonical `快手`. `media_desk_status.supportedPlatforms` advertises all supported platforms, and `media_desk_get_insights` accepts optional `platform` after explicit account scoping. Account profiles need no social login, model or Monid call. See [automation](docs/automation.md).
+
+It works with TikTok, Instagram, YouTube and X as well as Chinese platforms (RedNote, Douyin, Kuaishou, Bilibili, WeChat). See [account workspaces and Kuaishou support](docs/multi-account-workspaces.md) for migration, scope and validation notes.
 
 <br>
 

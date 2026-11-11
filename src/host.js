@@ -1,3 +1,4 @@
+import { accountError, normalizedAccountId, requireAccount, requireMembership, resolveChatScope, scopeState, scopedActions, validateImportTarget } from './accounts.js'
 // dsh-media-desk host 半片：/media-desk/* 接口、文件服务和模型调用。
 import { createReadStream } from 'node:fs'
 import { execFile } from 'node:child_process'
@@ -19,6 +20,9 @@ import { normalizeStyle, stylePrompts } from './style.js'
 import { dshHome, Store } from './store.js'
 import { currentLang, platformName, tr, withLang } from './i18n.js'
 import { localizeSamples, samplesNeedLocale } from './seed.js'
+import { createAutomationService } from './automation/service.js'
+import { startAutomationServer } from './automation/server.js'
+import { hostProfile } from './automation/paths.js'
 
 const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets')
 const MAX_JSON = 4_000_000
@@ -99,12 +103,13 @@ function outageNotice(ctx, wasDown, fallback) {
   return modelInfo(ctx) ? tr('模型暂时用不了，{fallback}。可以到设置里检查账号或密钥。', { fallback }) : tr('当前没有连接模型，{fallback}。', { fallback })
 }
 
-async function chatTurn(ctx, store, desk, body) {
+export async function chatTurn(ctx, store, desk, body) {
   const message = String(body.message || '').trim()
   if (!message) throw Object.assign(new Error(tr('消息为空')), { status: 400 })
   const focusId = typeof body.focusId === 'string' ? body.focusId : undefined
   const state = await store.read()
-  const snapshot = JSON.parse(JSON.stringify(state))
+  const accountId = resolveChatScope(state,body)
+  const snapshot = JSON.parse(JSON.stringify(scopeState(state,accountId)))
   let plan
   let engine = 'local'
   let notice = null
@@ -130,14 +135,16 @@ async function chatTurn(ctx, store, desk, body) {
   const canDraw = desk.producer.ready(settings)
   // 只把真正改了数据的那一步放进撤销；问一句话不占撤销位
   const changed = await store.mutate(tr('对话：{text}', { text: message.slice(0, 18) }), (draft) => {
-    const target = focusId ? draft.items.find(row => row.id === focusId) : null
+    const target = focusId ? requireMembership(draft,focusId,accountId) : null
     const production = target?.production?.status === 'done' ? target.production : null
     // 本地规则只会改灵感标题；有成稿时要改的是成稿标题
     const ops = (Array.isArray(plan.ops) ? plan.ops : []).map((op) => {
       if (production && op?.op === 'update_item' && op.id === focusId && typeof op.title === 'string') return { op: 'update_production', id: focusId, title: op.title }
       return op
     })
-    const { receipts, errors } = applyOps(draft, ops)
+    const allowed = accountId === undefined ? ops : ops.filter(op=>['add_item','update_item','delete_item','schedule_item','set_status','save_draft','update_production','set_style','add_skill','update_skill','delete_skill','add_metric'].includes(op?.op))
+    const { receipts, errors } = applyOps(draft, allowed,{accountId})
+    if(allowed.length!==ops.length) errors.push('An operation outside this account scope was blocked.')
     let targets = []
     if (production && plan.revise) {
       // 没接生图时，图不会重画，回执要说实话
@@ -153,17 +160,17 @@ async function chatTurn(ctx, store, desk, body) {
     const at = new Date().toISOString()
     const itemId = focusId ?? undefined
     // 已经做好的成稿不会因为一句话被整篇重做，要重做请点「重新成稿」
-    const actions = (Array.isArray(plan.actions) ? plan.actions : [])
+    const actions = scopedActions(draft,plan.actions,accountId)
       .filter(a => a && ['produce', 'open', 'nav'].includes(a.type))
       .filter(a => !(a.type === 'produce' && (done && a.id === focusId || draft.items.find(row => row.id === a.id)?.production?.status === 'done')))
-    draft.chat.push({ id: newId('c'), at, role: 'user', text: message, itemId })
-    const answer = { id: newId('c'), at, role: 'assistant', text: plan.reply, receipts, errors, engine, notice, undoable: receipts.length > 0, itemId }
+    draft.chat.push({ id: newId('c'), at, role: 'user', text: message, itemId, accountId:accountId??null })
+    const answer = { id: newId('c'), at, role: 'assistant', text: plan.reply, receipts, errors, engine, notice, undoable: receipts.length > 0, itemId, accountId:accountId??null }
     draft.chat.push(answer)
     draft.chat = draft.chat.slice(-300)
     return { answer, actions, targets, state: draft, modelOk: modelStatus.ok, modelError: modelStatus.error }
   }, { undoable: false })
   if (canDraw) {
-    await Promise.all(result.targets.map(target => desk.producer.regenerate(focusId, target).catch(() => {})))
+    await Promise.all(result.targets.map(target => desk.producer.regenerate(focusId, target,accountId).catch(() => {})))
     return { ...result, state: await store.read() }
   }
   return result
@@ -188,11 +195,11 @@ async function extractStyle(ctx, store, body) {
   }
   const name = typeof body.name === 'string' ? body.name.trim().slice(0, 20) : ''
   const source = urls.length && parts.length === urls.length ? tr('链接') : urls.length ? tr('内容和链接') : tr('内容')
-  return styleFromMaterial(ctx, store, { material, name, source, sourceUrls: urls, failures })
+  return styleFromMaterial(ctx, store, { material, name, source, sourceUrls: urls, failures, accountId:body.accountId })
 }
 
 /** 提炼一张风格卡并设为当前风格。同一个账号再抓一次时更新原来那张。 */
-async function styleFromMaterial(ctx, store, { material, name, source, sourceUrls = [], failures = [], accountKey = null }) {
+async function styleFromMaterial(ctx, store, { material, name, source, sourceUrls = [], failures = [], accountKey = null, accountId }) {
   let style
   try {
     const { system, user } = stylePrompts(material, name)
@@ -204,35 +211,37 @@ async function styleFromMaterial(ctx, store, { material, name, source, sourceUrl
   return store.mutate(tr('提炼风格「{name}」', { name: style.name }), (draft) => {
     const existing = accountKey ? (draft.styles ?? []).find(row => row.accountKey === accountKey) : null
     const id = existing?.id ?? newId('st')
-    const row = { id, ...style, source, sourceUrls, ...(accountKey ? { accountKey } : {}), createdAt: existing?.createdAt ?? new Date().toISOString() }
+    const row = { id, ...style, ...(accountId!==undefined?{accountId}:{}), source, sourceUrls, ...(accountKey ? { accountKey } : {}), createdAt: existing?.createdAt ?? new Date().toISOString() }
     draft.styles = existing ? draft.styles.map(entry => (entry.id === id ? row : entry)) : [row, ...(draft.styles ?? [])]
-    draft.activeStyleId = id
+    if(accountId!==undefined && accountId!==null) requireAccount(draft,accountId).defaultStyleId=id
+    else draft.activeStyleId = id
     return { id, failures, state: draft }
   })
 }
 
 /** 导入用户自己的账号。钱花在 Monid 上，所以先把内容存好，提炼失败也不会白花。 */
-async function importAccountRoute(ctx, store, desk, body) {
+export async function importAccountRoute(ctx, store, desk, body) {
   if (desk.importing) throw Object.assign(new Error(tr('上一个账号还在导入，等它结束再试')), { status: 409 })
   desk.importing = true
   try {
     const account = await resolveAccount(body.text)
+    validateImportTarget(await store.read(),account,body.accountId)
     const { posts, profile, cost } = await fetchAccount(account, desk.monid)
     const covers = await saveCovers(posts, account.platform, await store.read(), store.filesDir)
-    const added = await store.mutate(tr('导入{platform}账号', { platform: platformName(account.platform) }), draft => importPosts(draft, { account, profile, posts, covers }).added)
+    const imported = await store.mutate(tr('导入{platform}账号', { platform: platformName(account.platform) }), draft => importPosts(draft, { account, profile, posts, covers, accountId:body.accountId }))
     const nickname = profile.nickname || platformName(account.platform)
     let styleError = null
     const material = postsToMaterial(posts)
     if (material.length >= 80) {
       try {
-        await styleFromMaterial(ctx, store, { material, name: nickname, source: tr('{platform}账号', { platform: platformName(account.platform) }), sourceUrls: [account.url], accountKey: `${account.platform}:${account.id}` })
+        await styleFromMaterial(ctx, store, { material, name: nickname, source: tr('{platform}账号', { platform: platformName(account.platform) }), sourceUrls: [account.url], accountKey: `${account.platform}:${account.id}`, accountId:imported.accountId })
       } catch (err) {
         styleError = err.message
       }
     } else {
       styleError = tr('这个账号的文字太少，提炼不出风格')
     }
-    return { platform: account.platform, nickname, count: posts.length, added, cost, styleName: styleError ? null : nickname, styleError, state: await store.read() }
+    return { platform: account.platform, nickname, count: posts.length, added:imported.added, accountId:imported.accountId, cost, styleName: styleError ? null : nickname, styleError, state: await store.read() }
   } finally {
     desk.importing = false
   }
@@ -242,7 +251,7 @@ async function addFromUrl(ctx, store, body) {
   const url = String(body.url || '').trim()
   const info = await harvest(url)
   const op = {
-    op: 'add_item', kind: 'web', title: body.title || info.title || url, body: body.note || info.description || '', url: info.url, source: info.siteName, tags: Array.isArray(body.tags) ? body.tags : [],
+    op: 'add_item', ...(body.accountId!==undefined?{accountId:body.accountId}:{}), kind: 'web', title: body.title || info.title || url, body: body.note || info.description || '', url: info.url, source: info.siteName, tags: Array.isArray(body.tags) ? body.tags : [],
     media: info.image ? { src: info.image } : null,
   }
   return store.mutate(tr('收藏《{title}》', { title: op.title.slice(0, 12) }), (draft) => {
@@ -325,7 +334,7 @@ async function route(ctx, store, desk, req, res) {
         current: assistantModelOverride(),
       })
     }
-    if (path === 'insights') return json(res, 200, computeInsights(await store.read()))
+    if (path === 'insights') return json(res, 200, computeInsights(scopeState(await store.read(),url.searchParams.has('accountId') ? JSON.parse(url.searchParams.get('accountId')) : undefined), { platform: url.searchParams.has('platform') ? url.searchParams.get('platform') : undefined }))
     if (path === 'monid/status') return json(res, 200, await monidStatus(desk.monid))
     return json(res, 404, { error: tr('接口不存在') })
   }
@@ -341,7 +350,7 @@ async function route(ctx, store, desk, req, res) {
     case 'ops': {
       const label = typeof body.label === 'string' ? body.label : tr('操作')
       const result = await store.mutate(label, (draft) => {
-        const applied = applyOps(draft, body.ops)
+        const applied = applyOps(draft, body.ops,{accountId:body.accountId})
         return { ...applied, state: draft }
       }, { undoable: body.undoable !== false })
       return json(res, 200, result)
@@ -352,34 +361,37 @@ async function route(ctx, store, desk, req, res) {
     }
     case 'chat': return json(res, 200, await chatTurn(ctx, store, desk, body))
     case 'chat/clear': {
-      const state = await store.mutate('清空对话', (draft) => { draft.chat = []; return draft }, { undoable: false })
+      const state = await store.mutate('清空对话', (draft) => { draft.chat = body.accountId===undefined?[]:draft.chat.filter(c=>normalizedAccountId(c)!==body.accountId); return draft }, { undoable: false })
       return json(res, 200, { state })
     }
     case 'produce': {
-      const started = await desk.producer.start(String(body.id))
+      requireMembership(await store.read(),String(body.id),body.accountId)
+      const started = await desk.producer.start(String(body.id),body.accountId)
       return json(res, 200, { started, state: await store.read() })
     }
     case 'produce/cancel':
       await desk.producer.cancel(String(body.id))
       return json(res, 200, { ok: true })
     case 'produce/regen':
-      await desk.producer.regenerate(String(body.id), body.target)
+      await desk.producer.regenerate(String(body.id), body.target,body.accountId)
       return json(res, 200, { state: await store.read() })
     case 'produce/save': {
-      const settings = await desk.settings.read()
       const state = await store.read()
-      const item = state.items.find(row => row.id === body.id)
+      const item = structuredClone(requireMembership(state,body.id,body.accountId))
+      const originAccountId=normalizedAccountId(item)
+      const settings = await desk.settings.read()
       if (!item?.production?.article) return json(res, 400, { error: tr('还没有可以保存的成稿') })
-      await store.read()
+      requireMembership(await store.read(),body.id,originAccountId)
       // 视频封面由浏览器合成（画面叠大字），这里只接受 JPEG
       const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(body.videoCover ?? '')
       const videoCover = match ? Buffer.from(match[1], 'base64') : null
       if (videoCover && !(videoCover[0] === 0xff && videoCover[1] === 0xd8)) return json(res, 400, { error: tr('封面不是有效的图片') })
-      const saved = await saveProduction(item.production, { filesDir: store.filesDir, exportDir: resolveExportDir(settings.exportDir), videoCover })
+      const saved = await saveProduction(item.production, { filesDir: store.filesDir, exportDir: resolveExportDir(settings.exportDir), videoCover, accountId:originAccountId })
       const next = await store.mutate('保存成稿', (draft) => {
-        const target = draft.items.find(row => row.id === body.id)
+        const target = requireMembership(draft,body.id,originAccountId)
         if (target?.production) {
           target.production.savedPath = saved.path
+          target.production.savedAccountId = originAccountId
           target.production.savedAt = new Date().toISOString()
         }
         return draft
@@ -418,12 +430,14 @@ async function route(ctx, store, desk, req, res) {
     case 'capture-url': return json(res, 200, await addFromUrl(ctx, store, body))
     case 'account/refresh': return json(res, 200, await refreshAccount(store, body))
     case 'skills/learn': {
-      const proposals = proposeRules(await store.read())
+      const current=await store.read()
+      const scopes=body.accountId!==undefined?[body.accountId]:[null,...new Set(current.items.map(i=>i.accountId).filter(id=>id&&current.accounts.some(a=>a.id===id)))]
+      const proposals=scopes.flatMap(accountId=>proposeRules(scopeState(current,accountId)).map(row=>({...row,accountId})))
       if (!proposals.length) return json(res, 200, { added: 0, state: await store.read() })
       const state = await store.mutate(tr('从数据中学习'), (draft) => {
         // 只用示例数据算出来的建议也算示例，清空示例时一起清掉，也不会被导出
         const fromSamples = !draft.metrics.some(metric => !metric.sample)
-        const { receipts } = applyOps(draft, proposals.map(row => ({ op: 'add_skill', ...row, status: 'proposed' })))
+        const { receipts } = applyOps(draft, proposals.map(row => ({ op: 'add_skill', ...row, status: 'proposed' })),{accountId:body.accountId})
         if (fromSamples) for (const receipt of receipts) { const skill = draft.skills.find(row => row.id === receipt?.target); if (skill) skill.sample = true }
         return draft
       })
@@ -431,9 +445,9 @@ async function route(ctx, store, desk, req, res) {
     }
     case 'skills/export': {
       const state = await store.read()
-      const result = await exportSkill(state, dshHome())
+      const result = await exportSkill(scopeState(state,body.accountId), dshHome())
       const next = await store.mutate('导出 Skill', (draft) => {
-        applyOps(draft, draft.skills.filter(s => !s.sample && s.status === 'active').map(s => ({ op: 'update_skill', id: s.id, status: 'exported' })))
+        applyOps(draft, scopeState(draft,body.accountId).skills.filter(s => !s.sample && s.status === 'active').map(s => ({ op: 'update_skill', id: s.id, status: 'exported' })))
         return draft
       }, { undoable: false })
       return json(res, 200, { ...result, state: next })
@@ -471,6 +485,27 @@ export default {
     const desk = { settings, producer, monid }
     // 启动时恢复用户在工作台里选过的助手模型
     settings.read().then(saved => setAssistantModel(saved.assistant)).catch(() => {})
+    // The local bridge shares these exact objects with the authenticated UI routes.
+    // Its startup/disposal cannot take down the normal workbench.
+    ctx.effect(() => {
+      const home = dshHome(); const profile = hostProfile()
+      const started = Promise.resolve().then(() => {
+        const service = createAutomationService({ store, settings, producer, profile, assist: body => chatTurn(ctx, store, desk, body), models: async () => {
+          const llm = ctx.get('llm')
+          const providers = llm ? (await llm.listProviders()).slice(0, 20) : []
+          const settled = await Promise.allSettled(providers.map(async p => ({
+            provider: String(p.id).slice(0, 200), name: String(p.name || p.id).slice(0, 200),
+            models: (await llm.listModels(p.id)).slice(0, 100).map(m => ({ id: String(m.id).slice(0, 200), name: String(m.name || m.id).slice(0, 200) })),
+          })))
+          return { providers: settled.filter(r => r.status === 'fulfilled').map(r => r.value), default: defaultSelection(ctx), current: assistantModelOverride() }
+        } })
+        return startAutomationServer({ home, profile, service })
+      }).catch(error => {
+        console.warn(`[media-desk] Local automation unavailable: ${String(error.message).slice(0, 300)} Desktop workbench remains available.`)
+        return null
+      })
+      return async () => { const bridge = await started; await bridge?.dispose() }
+    }, 'dsh-media-desk: local automation')
     ctx.effect(() => ctx.webServer.register({
       kind: 'prefix',
       path: '/media-desk',

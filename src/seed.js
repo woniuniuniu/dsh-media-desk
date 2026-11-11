@@ -1,4 +1,5 @@
 // 首次打开时的示例数据。全部带 sample 标记，界面上有一键清空入口。
+import { migrateAccounts } from './accounts.js'
 import { currentLang, normalizeLang } from './i18n.js'
 import { PRESET_VERSION, migratePresets, presetText, seedPresets } from './style-presets.js'
 
@@ -114,7 +115,7 @@ export function migrateState(state) {
   // 加入英文之前的数据都是中文示例
   if (state.sampleLang === undefined) state.sampleLang = 'zh'
   if (state.sampleLang === 'en') stashChineseLeftovers(state)
-  return migratePresets(state)
+  return migrateAccounts(migratePresets(state))
 }
 
 const SAMPLE_HANDLE = { zh: '示例账号', en: 'Sample account' }
@@ -155,7 +156,7 @@ export function buildSeed(now, lang = currentLang()) {
     const id = `seed_${index + 1}`
     const media = mediaOf(row)
     return {
-      id,
+      id, accountId: null,
       kind: row.k,
       title: row.t,
       body: row.b,
@@ -209,6 +210,7 @@ export function buildSeed(now, lang = currentLang()) {
     activeStyleId: null,
     chat: [],
   }
+  migrateAccounts(state)
   return normalizeLang(lang) === 'en' ? localizeSamples(state, 'en') : state
 }
 

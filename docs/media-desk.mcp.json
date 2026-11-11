@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "media-desk": {
+      "type": "stdio",
+      "command": "media-desk",
+      "args": ["mcp"]
+    }
+  }
+}

@@ -29,11 +29,11 @@
 
 ## 它是什么
 
-装在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 侧栏里的一个页面。打开是一面灵感墙，一句话记一个灵感；点开任何一条，一键生成口播脚本、标题、视频封面、配图和黑白线稿分镜；左边聊一句，右边就改。做好的稿子拖到日历上排期，发布之后回来看数据。
+装在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 侧栏里的一个页面。先从账号列表选择账号，进入它的内容工作区；一句话记一个灵感，点开后可一键生成口播脚本、标题、视频封面、配图和黑白线稿分镜；左边聊一句，右边就改。做好的稿子拖到日历上排期，发布之后回来看数据。
 
-五个页面：**灵感 · 内容 · 排期 · 复盘 · 风格**。界面有中文和英文，默认跟随 DeepSeek Harness 的语言，也可以在插件设置里固定；切到英文后，脚本、标题和分镜也用英文写。网页版在手机浏览器里也能打开。
+账号列表是总菜单，支持搜索、分组、批量添加和归档。账号内有六个子页面：**灵感 · 内容 · 排期 · 复盘 · 账号 · 风格**；「账号」只编辑当前档案，点击「账号列表」返回总菜单。「全部账号」和「未归属」保留汇总与旧内容入口。界面有中文和英文，默认跟随 DeepSeek Harness 的语言，也可以在插件设置里固定；切到英文后，脚本、标题和分镜也用英文写。网页版在手机浏览器里也能打开。
 
-除了小红书、抖音、B 站、公众号，也支持 TikTok、Instagram、YouTube 和 X，发海外也能用。
+除了小红书、抖音、B 站、公众号，也支持快手、TikTok、Instagram、YouTube 和 X。快手可用于手动或 CSV 指标录入、排期、复盘筛选及 CLI/MCP，Monid 自动抓取维持原有平台范围。详见[多账号工作区与快手支持](docs/multi-account-workspaces.md)。
 
 <br>
 
@@ -309,3 +309,7 @@ npm pack                       # 打出可安装的 tgz
 <br>
 
 <p align="center"><sub><a href="LICENSE">MIT</a> · 社区插件，与 DeepSeek 无关。DeepSeek Harness 的名称和标识归其所有者所有。</sub></p>
+
+## 本机 AI 自动化
+
+CLI 与 MCP 可直接操作已启动的桌面工作台，支持外部成稿、排期、现有成稿流水线与完整封面导出。见 [本机自动化说明](docs/automation.md)、[Grok Bot 接入](docs/GROK_BOT.md) 和 [MCP 配置示例](docs/media-desk.mcp.json)。

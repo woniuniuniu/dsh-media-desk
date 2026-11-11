@@ -1,3 +1,4 @@
+import { validateImportTarget } from './accounts.js'
 // 抓账号：通过用户自己装好的 Monid 命令行读取公开内容和互动数据。
 // 密钥由 Monid 自己保管，这里只调用命令，不读也不存。每次调用都花用户的余额，所以端点和条数都是写死的。
 import { execFile } from 'node:child_process'
@@ -478,33 +479,33 @@ export async function saveCovers(posts, platform, state, filesDir, fetchImpl = f
 }
 
 /** 把自己账号的内容写进内容库和复盘。再抓一次只更新数字，不会重复，也不改用户动过的文字。 */
-export function importPosts(draft, { account, profile, posts, covers = new Map(), now = new Date().toISOString() }) {
+export function importPosts(draft, { account, profile, posts, accountId, covers = new Map(), now = new Date().toISOString() }) {
   const { platform } = account
   const nickname = profile.nickname || platformName(platform)
+  const key = `${platform}:${account.id}`
+  let row = validateImportTarget(draft,account,accountId) ?? draft.accounts.find(entry=>entry.externalId===key)
+  if (!row) { row = {id:newId('ac'),createdAt:now,group:'',positioning:'',audience:'',defaultStyleId:null,archived:false}; draft.accounts.push(row) }
+  Object.assign(row,{externalId:key,platform,handle:nickname,url:account.url,followers:profile.followers||null,description:profile.description,fetchedAt:now,fetchError:null})
   let added = 0
   for (const post of posts) {
     const externalId = `${platform}:${post.id}`
     let item = draft.items.find(row => row.externalId === externalId)
     if (!item) {
       item = {
-        id: newId('it'), kind: 'web', title: post.title, body: post.body, tags: [], status: 'published', personaIds: [], drafts: {},
+        id: newId('it'), accountId: row.id, kind: 'web', title: post.title, body: post.body, tags: [], status: 'published', personaIds: [], drafts: {},
         createdAt: post.publishedAt, publishedAt: post.publishedAt, scheduledAt: post.publishedAt, platform, url: post.url, source: nickname, media: null, imported: true, externalId,
       }
       draft.items.push(item)
       added += 1
     }
+    if (item.accountId === undefined || item.accountId === null) item.accountId = row.id
     if (covers.has(post.id)) item.media = { src: covers.get(post.id) }
     const numbers = { views: post.views, likes: post.likes, comments: post.comments, shares: post.shares, saves: post.saves }
     const metric = draft.metrics.find(row => row.externalId === externalId)
-    if (metric) Object.assign(metric, numbers, { fetchedAt: now })
-    else draft.metrics.push({ id: newId('m'), itemId: item.id, platform, date: post.publishedAt, ...numbers, externalId, fetchedAt: now })
+    if (metric) Object.assign(metric, numbers, { fetchedAt: now, accountId: item.accountId })
+    else draft.metrics.push({ id: newId('m'), accountId: item.accountId, itemId: item.id, platform, date: post.publishedAt, ...numbers, externalId, fetchedAt: now })
   }
-  const key = `${platform}:${account.id}`
-  const row = draft.accounts.find(entry => entry.externalId === key)
-  const fields = { platform, handle: nickname, url: account.url, followers: profile.followers || null, description: profile.description, fetchedAt: now, fetchError: null }
-  if (row) Object.assign(row, fields)
-  else draft.accounts.push({ id: newId('ac'), createdAt: now, externalId: key, ...fields })
-  return { added, updated: posts.length - added }
+  return Object.defineProperty({ added, updated: posts.length - added },'accountId',{value:row.id,enumerable:false})
 }
 
 /** 给风格提炼用的素材。互动最高的放前面，模型会更看重开头的内容。 */

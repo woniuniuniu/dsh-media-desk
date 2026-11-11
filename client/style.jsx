@@ -1,6 +1,6 @@
 // 风格：按博主类型分板块的预设，加上从自己账号提炼的专属风格。选哪张，就按哪张写。
 import React from 'react'
-import { dispatchOps, exportSkills, extractStyle, learnSkills, setDesk, useDesk } from './desk.js'
+import { dispatchOps, getDesk, exportSkills, extractStyle, learnSkills, setDesk, useDesk } from './desk.js'
 import { ConnectDialog } from './connect.jsx'
 import { lang, t, useLang } from './i18n.js'
 import { Dialog, Icon, IconButton } from './ui.jsx'
@@ -53,6 +53,7 @@ function AddStyleDialog({ initialTab, onClose, onConnect }) {
 }
 
 function editStyle(style) {
+  const accountId=undefined // The library is shared; account defaults remain independent.
   const sep = lang() === 'en' ? ', ' : '、'
   setDesk({
     dialog: {
@@ -71,9 +72,9 @@ function editStyle(style) {
       ],
       onSubmit: (values) => {
         const list = value => String(value ?? '').split(/[、,，]/).map(v => v.trim()).filter(Boolean)
-        dispatchOps([{ op: 'update_style', id: style.id, name: values.name, icon: values.icon ?? '', summary: values.summary ?? '', tone: values.tone ?? '', sentences: values.sentences ?? '', opening: values.opening ?? '', structure: values.structure ?? '', words: list(values.words), avoid: list(values.avoid) }], { label: t('修改风格') })
+        dispatchOps([{ op: 'update_style', id: style.id, name: values.name, icon: values.icon ?? '', summary: values.summary ?? '', tone: values.tone ?? '', sentences: values.sentences ?? '', opening: values.opening ?? '', structure: values.structure ?? '', words: list(values.words), avoid: list(values.avoid) }], { label: t('修改风格'),accountId })
       },
-      onDelete: style.preset ? undefined : () => dispatchOps([{ op: 'delete_style', id: style.id }], { label: t('删除风格「{name}」', { name: style.name }) }),
+      onDelete: style.preset ? undefined : () => dispatchOps([{ op: 'delete_style', id: style.id }], { label: t('删除风格「{name}」', { name: style.name }),accountId }),
     },
   })
 }

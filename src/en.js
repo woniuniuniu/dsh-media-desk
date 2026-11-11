@@ -1,5 +1,7 @@
 // Host 英文词典：key 是中文原文，{name} 是占位符。
 export const EN = {
+  '已分配 1 条内容': 'Assigned 1 item.',
+  '已分配 {n} 条内容': 'Assigned {n} items.',
   // 请求与文件
   未授权: 'Not authorized',
   内容太大: 'The content is too large',

@@ -1,6 +1,7 @@
 // Host 这一侧的语言。浏览器每次请求都带上当前语言，一个请求里发起的生成任务沿用同一个语言。
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { EN } from './en.js'
+import { PLATFORM_EN } from './platforms.js'
 
 const current = new AsyncLocalStorage()
 
@@ -43,8 +44,6 @@ export const ENGLISH_DIRECTIVE = [
 export function byLang(zh, en) {
   return currentLang() === 'en' ? en : zh
 }
-
-const PLATFORM_EN = { 公众号: 'WeChat', 小红书: 'RedNote', 抖音: 'Douyin', B站: 'Bilibili', 视频号: 'WeChat Channels', TikTok: 'TikTok', Instagram: 'Instagram', YouTube: 'YouTube', X: 'X' }
 
 /** 平台在数据里一直是中文值；拼进给人看的句子时按当前语言显示。 */
 export function platformName(platform) {
