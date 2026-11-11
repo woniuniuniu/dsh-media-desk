@@ -43,3 +43,54 @@ test('release 时锁文件不存在不报错；锁所在目录不存在时 acqui
   await a.release()
   await a.release()
 })
+
+const contenders = (file, n, opts = {}) =>
+  Array.from({ length: n }, (_, i) => new Lock(file, { pid: 100 + i, ...opts }))
+const holder = async (file) => JSON.parse(await readFile(file, 'utf8')).pid
+
+test('20 个进程同时抢一把新锁，只有一个成功（重复 25 轮）', async () => {
+  for (let round = 0; round < 25; round++) {
+    const file = await tmpLockFile()
+    const results = await Promise.all(contenders(file, 20).map((l) => l.acquire()))
+    assert.equal(results.filter(Boolean).length, 1, `第 ${round} 轮`)
+    assert.equal(await holder(file), 100 + results.indexOf(true))
+  }
+})
+
+test('20 个进程同时接管一把过期锁，只有一个成功（重复 25 轮）', async () => {
+  for (let round = 0; round < 25; round++) {
+    const file = await tmpLockFile()
+    await writeFile(file, JSON.stringify({ pid: 999, at: 1 }))
+    const results = await Promise.all(contenders(file, 20, { now: () => 10_000_000 }).map((l) => l.acquire()))
+    assert.equal(results.filter(Boolean).length, 1, `第 ${round} 轮`)
+    assert.equal(await holder(file), 100 + results.indexOf(true))
+  }
+})
+
+test('接管时发现主人刚续了期：不抢，锁还给主人', async () => {
+  const file = await tmpLockFile()
+  const now = () => 10_000_000
+  await writeFile(file, JSON.stringify({ pid: 1, at: 1 }))
+  const hooks = { afterStaleRead: () => writeFile(file, JSON.stringify({ pid: 1, at: now() })) }
+  const b = new Lock(file, { pid: 2, now, hooks })
+  assert.equal(await b.acquire(), false)
+  assert.equal(await holder(file), 1)
+})
+
+test('非主人 release 不会动主人的锁', async () => {
+  const file = await tmpLockFile()
+  const a = new Lock(file, { pid: 1 })
+  const b = new Lock(file, { pid: 2 })
+  assert.equal(await a.acquire(), true)
+  await b.release()
+  assert.equal(await holder(file), 1)
+  assert.equal(await b.acquire(), false)
+})
+
+test('心跳时间在未来超过 ttl 的锁视为过期，可被接管', async () => {
+  const file = await tmpLockFile()
+  const now = () => 1_000_000
+  await writeFile(file, JSON.stringify({ pid: 9, at: now() + 180_000 + 1 }))
+  assert.equal(await new Lock(file, { pid: 2, now }).acquire(), true)
+  assert.equal(await holder(file), 2)
+})
