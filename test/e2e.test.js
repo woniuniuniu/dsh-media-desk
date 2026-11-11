@@ -1,11 +1,11 @@
 process.env.TZ = 'Asia/Shanghai'
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { startMock } from '../scripts/mock-llm.mjs'
+import { readCompletion, startMock, stopMock } from '../scripts/mock-llm.mjs'
 import { Composer } from '../src/compose.js'
 import { Exchange } from '../src/exchange.js'
 import { Lock } from '../src/lock.js'
@@ -16,23 +16,13 @@ import { Worker } from '../src/worker.js'
 const SAMPLES = fileURLToPath(new URL('../scripts/sample-exchange/posts/', import.meta.url))
 const NOW = new Date('2026-11-11T11:05:00+08:00')
 
-/** 把 callText 实现成对模拟模型的 HTTP 调用（OpenAI 兼容的流式接口）。 */
-const httpCallText = port => async ({ system, user }) => {
-  const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model: 'mock-model', stream: true, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
-  })
-  let text = ''
-  for (const line of (await res.text()).split('\n')) {
-    if (line.startsWith('data: ') && !line.includes('[DONE]')) text += JSON.parse(line.slice(6)).choices[0]?.delta?.content ?? ''
-  }
-  return { text, model: 'mock-model' }
-}
+/** 把 callText 实现成对模拟模型的 HTTP 调用。 */
+const httpCallText = port => prompts => readCompletion(port, prompts)
 
 test('端到端：示例帖子 → 成稿 → 通过和改稿 → 坏文件只留提示', async () => {
   const server = await startMock(0, { delay: 0 })
+  const root = await mkdtemp(join(tmpdir(), 'e2e-'))
   try {
-    const root = await mkdtemp(join(tmpdir(), 'e2e-'))
     const skew = { ms: 60_000 } // 交换文件夹只读 10 秒前写入的文件；用它把"现在"往后拨
     const clock = { t: NOW }
     const store = new Store(root)
@@ -91,6 +81,7 @@ test('端到端：示例帖子 → 成稿 → 通过和改稿 → 坏文件只�
     assert.equal(state.candidates.find(c => c.id === first.id).status, 'approved')
     assert.equal(state.candidates.find(c => c.id === second.id).revision, 1)
   } finally {
-    server.close()
+    await stopMock(server)
+    await rm(root, { recursive: true, force: true })
   }
 })

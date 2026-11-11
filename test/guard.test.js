@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readdir, readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import { assertPublicUrl } from '../src/harvest.js'
+import { violations } from './helpers/guard.js'
 
 const cache = new Map()
 async function sources(dirs) {
@@ -20,40 +21,8 @@ async function scan(dirs) {
   return out
 }
 
-// x.com 只允许出现在这些文件里：
-// exchange.js 拼帖子链接，inbox.js 和 client/util.js（镜像 intentUrl）拼发帖链接，
-// client/watch.jsx 只在输入框的提示文字里举例主页链接。
-const X_ALLOWED = new Set(['src/exchange.js', 'src/inbox.js', 'client/util.js', 'client/watch.jsx'])
-// 只有生图（下载图片）和链接校验两个模块可以碰网络。
-const NETWORK_ALLOWED = new Set(['src/images.js', 'src/harvest.js'])
-
-test('后台代码不向 X 或任何抓取服务发请求', async () => {
-  for (const [file, text] of await sources(['src'])) {
-    assert.doesNotMatch(text, /api\.x\.com|api\.twitter\.com|monid|tikhub|apify/i, file)
-  }
-})
-
-test('x.com 链接只出现在约定的文件里', async () => {
-  for (const [file, text] of await sources(['src', 'client', 'scripts'])) {
-    if (!X_ALLOWED.has(file)) assert.doesNotMatch(text, /https:\/\/(x|twitter)\.com/, file)
-  }
-})
-
-test('只有生图和链接校验两个模块可以发起网络请求或开子进程', async () => {
-  for (const [file, text] of await sources(['src'])) {
-    if (NETWORK_ALLOWED.has(file)) continue
-    assert.doesNotMatch(text, /\bfetch\(|node:https?|node:net|node:dgram|node:child_process|XMLHttpRequest|WebSocket/, file)
-  }
-})
-
-test('不读写原版插件的数据目录', async () => {
-  for (const [file, text] of await sources(['src', 'client'])) assert.doesNotMatch(text, /media-desk/, file)
-})
-
-test('没有任何点赞、发帖、转发、关注的调用路径', async () => {
-  for (const [file, text] of await sources(['src'])) {
-    assert.doesNotMatch(text, /likeTweet|createTweet|retweet|\/2\/tweets|statuses\/update|favorites\/create|friendships\/create/i, file)
-  }
+test('全部源码没有违反防护规则', async () => {
+  for (const [file, text] of await sources(['src', 'client', 'scripts'])) assert.deepEqual(violations(file, text), [], file)
 })
 
 test('不新增运行时依赖，开发依赖只有 esbuild', async () => {
@@ -67,4 +36,22 @@ test('链接校验拒绝本机和内网地址', async () => {
     await assert.rejects(assertPublicUrl(url), url)
   }
   assert.equal((await assertPublicUrl('http://8.8.8.8/a.png')).hostname, '8.8.8.8')
+})
+
+test('防护规则自测：违规的写法都会被抓到', () => {
+  for (const source of ["const c = require('child_process')", "import http from 'http'", "import('node:tls')", "import net from 'net'", "const w = require('worker_threads')", 'const f = fetch', 'globalThis.fetch(u)', "import('node:https')", "import {lookup} from 'node:dns'"]) {
+    assert.ok(violations('src/host.js', source).length > 0, source)
+  }
+  assert.ok(violations('src/harvest.js', 'await fetch(url)').length > 0)
+  assert.ok(violations('src/harvest.js', "import http from 'node:http'").length > 0)
+  assert.deepEqual(violations('src/harvest.js', "import { lookup } from 'node:dns/promises'\nimport { isIP } from 'node:net'"), [])
+  assert.deepEqual(violations('src/images.js', 'await fetchImpl(u); const f = fetch'), [])
+  assert.deepEqual(violations('src/host.js', "const site = req.headers['sec-fetch-site']"), [])
+})
+
+test('防护规则自测：x.com 的各种写法都会被抓到', () => {
+  for (const source of ["'http://x.com/a'", "'//x.com/a'", "'https://www.x.com/a'", "'https://mobile.twitter.com/a'"]) {
+    assert.ok(violations('src/host.js', source).length > 0, source)
+    assert.deepEqual(violations('src/exchange.js', source), [], source)
+  }
 })

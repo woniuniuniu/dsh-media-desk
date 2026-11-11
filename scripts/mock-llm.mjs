@@ -13,10 +13,12 @@ const SUMMARY = '口吻平实克制，像朋友聊天，先说结论再给一个
  * @returns {'topics'|'condense'|'style'|'revise'|'draft'} 请求类别。
  */
 export function classify(system) {
-  if (system.includes('归并成选题')) return 'topics'
-  if (system.includes('精简版')) return 'condense'
-  if (system.includes('文风分析师')) return 'style'
-  if (system.includes('改推文草稿')) return 'revise'
+  // 只看第一行：各类提示词的第一行是它独有的任务说明，后面拼接的写作风格是用户内容，可能含任何词
+  const head = system.split('\n')[0]
+  if (head.includes('归并成选题')) return 'topics'
+  if (head.includes('精简版')) return 'condense'
+  if (head.includes('文风分析师')) return 'style'
+  if (head.includes('改推文草稿')) return 'revise'
   return 'draft'
 }
 
@@ -65,7 +67,7 @@ export function startMock(port = 0, { delay = 70, imageDelay = 2500, log = false
       const body = JSON.parse(Buffer.concat(chunks).toString() || '{}')
       if (req.url.endsWith('/images/generations')) {
         served += 1
-        await new Promise(r => setTimeout(r, imageDelay + (served % 5) * 1500))
+        if (imageDelay) await new Promise(r => setTimeout(r, imageDelay + (served % 5) * 1500))
         res.setHeader('content-type', 'application/json')
         res.end(JSON.stringify({ data: [{ b64_json: PIXEL }] }))
         return
@@ -94,6 +96,30 @@ export function startMock(port = 0, { delay = 70, imageDelay = 2500, log = false
     server.once('error', reject)
     server.listen(port, '127.0.0.1', () => resolve(server))
   })
+}
+
+/**
+ * 测试用客户端：向模拟服务发一次流式请求，把增量文本拼成完整回答。
+ * @param {number} port - 端口。
+ * @param {{system: string, user: string}} prompts - 提示词。
+ * @returns {Promise<{text: string, model: string}>} 回答。
+ */
+export async function readCompletion(port, { system, user }) {
+  const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'mock-model', stream: true, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+  })
+  let text = ''
+  for (const line of (await res.text()).split('\n')) {
+    if (line.startsWith('data: ') && !line.includes('[DONE]')) text += JSON.parse(line.slice(6)).choices[0]?.delta?.content ?? ''
+  }
+  return { text, model: 'mock-model' }
+}
+
+/** 关闭服务并等它真正停下（先断开保持中的连接）。 */
+export async function stopMock(server) {
+  server.closeAllConnections?.()
+  await new Promise(resolve => server.close(resolve))
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -14,6 +14,7 @@
 
 **1. 帖子文件（放进 `posts/`）**：别人把读到的帖子放进来，插件读入后用来选题。
 
+<!-- example: posts -->
 ```json
 {
   "schema": 1,
@@ -27,15 +28,51 @@
 }
 ```
 
-**2. 处理结果文件（放进 `decisions/`）**：对某条候选稿做决定，动作有 `approve`（通过）、`discard`（丢掉）、`view`（附上你的看法让它重写）、`revise`（附上修改要求）。
+**2. 处理结果文件（放进 `decisions/`）**：对某条候选稿做决定。`action` 可以是 `approve`（通过）、`discard`（丢掉）、`view`（附上你的看法让它重写）、`revise`（附上修改要求）、`sent`（标记已发出）。`view` 和 `revise` 必须用 `text` 字段带上那句话；`discard` 可以用 `reason` 说明原因，取值只有 `not_interested`（不感兴趣）、`not_me`（不像我）、`stale`（过时了）。
 
+<!-- example: decisions -->
 ```json
 { "schema": 1, "candidateId": "c_sample1", "action": "approve", "at": "2026-11-11T04:00:00Z" }
 ```
 
-**3. 候选稿文件（插件写入 `drafts/`）**：每条候选稿一个文件，里面带"去 X 发布"的链接。你不用手写，只读。
+<!-- example: decisions -->
+```json
+{ "schema": 1, "candidateId": "c_sample1", "action": "discard", "reason": "not_interested", "at": "2026-11-11T04:05:00Z" }
+```
 
-**4. 风格文件（插件写入 `voice/`）**：`watchlist.json` 是你的账号名单，`SKILL.md` 是当前的写作风格说明，供外部工具参考。你不用手写，只读。
+<!-- example: decisions -->
+```json
+{ "schema": 1, "candidateId": "c_sample1", "action": "view", "text": "Sample: shorten it and lead with the price drop.", "at": "2026-11-11T04:10:00Z" }
+```
+
+**3. 候选稿文件（插件写入 `drafts/`）**：每条候选稿每个修订版一个文件，文件名是 `<候选稿编号>-r<修订号>.json`。你不用手写，只读；`intentUrl` 是点开就能在 X 上预填这条推文的链接。
+
+<!-- example: drafts -->
+```json
+{
+  "schema": 1,
+  "id": "c_sample1",
+  "revision": 0,
+  "form": "post",
+  "typeName": "模型",
+  "title": "评测先行",
+  "text": "一条候选推文的正文。",
+  "quoteUrl": null,
+  "intentUrl": "https://x.com/intent/tweet?text=%E4%B8%80%E6%9D%A1",
+  "status": "pending",
+  "scheduledAt": null,
+  "createdAt": "2026-11-11T03:05:00.000Z"
+}
+```
+
+**4. 风格文件（插件写入 `voice/`）**：你不用手写，只读。`watchlist.json` 是你的账号名单，`topic` 是全部账号，`engage` 只含需要重点互动的：
+
+<!-- example: watchlist -->
+```json
+{ "schema": 1, "engage": ["sama"], "topic": ["sama", "karpathy"] }
+```
+
+`SKILL.md` 是当前写作风格的说明，供外部工具参考：开头是名称和一句描述，正文依次是「风格」（口吻和结构）、「规则」（你确认生效的写作规则）、「边界」（只起草和通知，不代为发送、点赞、转发或关注）。
 
 ## 不连任何外部服务，怎么试一下
 
@@ -43,7 +80,7 @@
 2. 把 `scripts/sample-exchange/posts/` 里的 6 个 `.json` 文件复制到 `<交换文件夹>/posts/`。
 3. 文件放进去满 10 秒后会被读入；到了设置里的每日成稿时间，或在收件箱点"现在就出一批"，就会出现候选稿。
 
-示例帖子的发布时间是固定的旧日期，超过 14 天会被当作过期素材丢掉；试用时请把文件里的 `postedAt`、`fetchedAt` 改成最近的时间。
+注意：超过 14 天的帖子会被当作过期素材丢掉。`scripts/sample-exchange/` 里的示例时间是固定的旧日期，直接复制会被丢掉；用沙盒造数脚本 `scripts/seed-sandbox.sh` 复制时会自动把时间改成最近。
 
 ## 开发命令
 
