@@ -52,7 +52,7 @@ export async function loadDesk() {
   try {
     const settings = await api('settings')
     const data = await api('state')
-    setDesk({ settings, state: data.state, model: data.model, modelOk: data.modelOk, modelError: data.modelError, canUndo: data.canUndo, error: null })
+    setDesk({ settings, state: data.state, model: data.model, modelOk: data.modelOk, modelError: data.modelError, canUndo: data.canUndo, exchangeDir: data.exchangeDir ?? null, error: null })
   } catch (err) {
     setDesk({ error: err.message })
   }
@@ -86,6 +86,7 @@ export async function saveSettings(payload) {
     const settings = await api('settings', payload)
     setDesk({ settings })
     toast(t('设置已保存'))
+    api('state').then(data => setDesk({ exchangeDir: data.exchangeDir ?? null })).catch(() => {})
     return true
   } catch (err) {
     report(err)
@@ -182,5 +183,50 @@ export async function makeImage(id) {
   } catch (err) {
     report(err)
     return false
+  }
+}
+
+/** 图片文件的访问地址。 */
+export function fileUrl(name) {
+  return `${BASE}files/${encodeURIComponent(name)}`
+}
+
+/** 引入 skill：layer 是 'core' 或类型 id，path 与 text 二选一。成功后返回 true 并刷新状态。 */
+export async function importVoice({ layer, path, text }) {
+  try {
+    const body = { layer }
+    if (path) body.path = path
+    else body.text = text
+    const data = await api('voice/import', body)
+    setDesk({ state: data.state })
+    return true
+  } catch (err) {
+    report(err)
+    return false
+  }
+}
+
+/** 保存某一层的精简版（上限 2000 字）。 */
+export async function saveCondensed({ layer, condensed }) {
+  try {
+    const data = await api('voice/condensed', { layer, condensed })
+    setDesk({ state: data.state })
+    return true
+  } catch (err) {
+    report(err)
+    return false
+  }
+}
+
+/** 从一段文字提炼风格卡；不保存，返回风格卡，失败返回 null。 */
+export async function extractStyle({ text, name }) {
+  try {
+    const body = { text }
+    if (name) body.name = name
+    const data = await api('style/extract', body)
+    return data.style
+  } catch (err) {
+    report(err)
+    return null
   }
 }

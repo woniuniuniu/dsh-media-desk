@@ -17,6 +17,7 @@ const PRESETS = [
 export function SettingsDialog() {
   const open = useDesk(s => s.settingsOpen)
   const settings = useDesk(s => s.settings)
+  const exchangeDir = useDesk(s => s.exchangeDir)
   const [form, setForm] = React.useState(null)
   const [testing, setTesting] = React.useState(false)
   const [sample, setSample] = React.useState(null)
@@ -24,13 +25,19 @@ export function SettingsDialog() {
   React.useEffect(() => {
     if (!open || !settings) return
     const { image } = settings
-    setForm({ source: image.source ?? 'http', baseUrl: image.baseUrl, model: image.model, apiKey: '', size: image.size, quality: image.quality, toolSize: image.toolSize ?? '1536x1024', toolQuality: image.toolQuality ?? '', extra: image.extra })
+    setForm({ composeAt: settings.composeAt ?? '07:00', slots: settings.slots?.length ? [...settings.slots] : ['09:00'], dailyCandidates: settings.dailyCandidates ?? 6, dailyImages: settings.dailyImages ?? 3, exchangeDir: settings.exchangeDir ?? '', source: image.source ?? 'http', baseUrl: image.baseUrl, model: image.model, apiKey: '', size: image.size, quality: image.quality, toolSize: image.toolSize ?? '1536x1024', toolQuality: image.toolQuality ?? '', extra: image.extra })
     setSample(null)
   }, [open, settings])
   if (!open || !form) return null
   const close = () => setDesk({ settingsOpen: false })
   const set = (key, value) => setForm(f => ({ ...f, [key]: value }))
+  const setSlot = (index, value) => setForm(f => ({ ...f, slots: f.slots.map((slot, i) => (i === index ? value : slot)) }))
   const payload = () => ({
+    composeAt: form.composeAt,
+    slots: form.slots,
+    dailyCandidates: Number(form.dailyCandidates),
+    dailyImages: Number(form.dailyImages),
+    exchangeDir: form.exchangeDir.trim(),
     image: { source: form.source, baseUrl: form.baseUrl, model: form.model, apiKey: form.apiKey, size: form.size, quality: form.quality, toolSize: form.toolSize, toolQuality: form.toolQuality, extra: form.extra },
   })
   const activePreset = PRESETS.find(p => p.baseUrl && p.baseUrl === form.baseUrl)?.id ?? (form.baseUrl ? 'custom' : null)
@@ -40,6 +47,43 @@ export function SettingsDialog() {
         event.preventDefault()
         if (await saveSettings(payload())) close()
       }}>
+        <fieldset className="md-field md-settings-group">
+          <legend>{t('成稿与排期')}</legend>
+          <label className="md-field">
+            <span>{t('每日成稿时间')}</span>
+            <input type="time" required value={form.composeAt} onChange={e => set('composeAt', e.target.value)} />
+          </label>
+          <div className="md-field-row">
+            <label className="md-field">
+              <span>{t('每天候选稿数量')}</span>
+              <input type="number" min={1} max={12} step={1} required value={form.dailyCandidates} onChange={e => set('dailyCandidates', e.target.value)} />
+              <small>{t('1 到 12')}</small>
+            </label>
+            <label className="md-field">
+              <span>{t('每天配图上限')}</span>
+              <input type="number" min={0} max={10} step={1} required value={form.dailyImages} onChange={e => set('dailyImages', e.target.value)} />
+              <small>{t('0 到 10，0 表示不配图')}</small>
+            </label>
+          </div>
+          <div className="md-field">
+            <span>{t('发布时段')}</span>
+            <ul className="md-slots">
+              {form.slots.map((slot, index) => (
+                <li key={index}>
+                  <input type="time" required aria-label={t('发布时段 {n}', { n: index + 1 })} value={slot} onChange={e => setSlot(index, e.target.value)} />
+                  <button type="button" className="md-icon-btn" aria-label={t('删除发布时段 {n}', { n: index + 1 })} title={t('删除')} disabled={form.slots.length <= 1} onClick={() => setForm(f => ({ ...f, slots: f.slots.filter((_, i) => i !== index) }))}><Icon name="close" size={14} /></button>
+                </li>
+              ))}
+            </ul>
+            <button type="button" className="md-btn is-small md-slots-add" disabled={form.slots.length >= 8} onClick={() => setForm(f => ({ ...f, slots: [...f.slots, '12:00'] }))}><Icon name="plus" size={12} />{t('添加时段')}</button>
+            <small>{t('1 到 8 个')}</small>
+          </div>
+          <label className="md-field">
+            <span>{t('交换文件夹位置')}</span>
+            <input value={form.exchangeDir} onChange={e => set('exchangeDir', e.target.value)} placeholder={exchangeDir ?? ''} />
+            <small>{exchangeDir ? t('当前使用：{dir}', { dir: exchangeDir }) : ''}{exchangeDir ? '　' : ''}{t('留空使用默认位置')}</small>
+          </label>
+        </fieldset>
         <div className="md-field">
           <span>{t('生图来源')}</span>
           <div className="md-presets" role="radiogroup" aria-label={t('生图来源')}>

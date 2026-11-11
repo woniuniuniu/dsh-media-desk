@@ -132,3 +132,67 @@ export function tweetLength(text) {
   for (const ch of rest) count += ch.codePointAt(0) >= 0x1100 ? 2 : 1
   return count
 }
+
+const HANDLE = /^[A-Za-z0-9_]{1,15}$/
+
+/**
+ * 从「@name」「name」或主页链接里取出账号名；不合法返回 null。
+ * @param {string} input - 用户输入。
+ * @returns {string|null} 账号名。
+ */
+export function extractHandle(input) {
+  let value = String(input ?? '').trim()
+  const link = /^https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/([^/?#\s]+)/i.exec(value)
+  if (link) value = link[1]
+  else if (/^https?:\/\//i.test(value)) return null
+  value = value.replace(/^@/, '')
+  return HANDLE.test(value) ? value : null
+}
+
+/**
+ * 排期页右侧「接下来要发的」：只取已通过的，按排期时间升序。
+ * @param {Array<{status: string, scheduledAt?: string}>} candidates - 候选稿。
+ * @returns {Array<object>} 排序后的候选稿。
+ */
+export function upcomingList(candidates) {
+  return candidates
+    .filter(row => row.status === 'approved' && row.scheduledAt)
+    .sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt))
+}
+
+/** 已过排期时间仍没发。 */
+export function isDue(candidate, now = new Date()) {
+  return candidate.status === 'approved' && Boolean(candidate.scheduledAt) && Date.parse(candidate.scheduledAt) <= now.getTime()
+}
+
+/**
+ * 把排期挪到另一天，保留原来的几点几分。
+ * @param {string} iso - 原排期时间。
+ * @param {Date} date - 目标日期。
+ * @returns {string} 新的 ISO 时间。
+ */
+export function moveToDay(iso, date) {
+  const previous = new Date(iso)
+  const target = new Date(date)
+  target.setHours(previous.getHours(), previous.getMinutes(), 0, 0)
+  return target.toISOString()
+}
+
+const CARD_TEXT = ['name', 'summary', 'tone', 'sentences', 'opening', 'structure']
+const CARD_LIST = ['words', 'avoid', 'samples']
+
+/** 风格卡 → 编辑表单（列表字段一行一项）。 */
+export function cardToForm(card) {
+  const form = {}
+  for (const key of CARD_TEXT) form[key] = card?.[key] ?? ''
+  for (const key of CARD_LIST) form[key] = (card?.[key] ?? []).join('\n')
+  return form
+}
+
+/** 编辑表单 → 风格卡，空行丢掉。 */
+export function formToCard(form) {
+  const card = {}
+  for (const key of CARD_TEXT) card[key] = String(form[key] ?? '').trim()
+  for (const key of CARD_LIST) card[key] = String(form[key] ?? '').split('\n').map(line => line.trim()).filter(Boolean)
+  return card
+}
