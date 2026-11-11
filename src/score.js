@@ -1,8 +1,11 @@
 // 选题打分：纯函数，不读时钟（调用方传 now），不依赖其他模块。
 const HOUR = 3600e3
-const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+const SKEW = 5 * 60e3 // 允许的时钟偏差
+const MAX = Number.MAX_SAFE_INTEGER
+// 指标来自不可信文件：非数字/NaN 记 0，其余夹到 [0, MAX_SAFE_INTEGER]
+const num = v => (typeof v === 'number' && !Number.isNaN(v) ? Math.min(MAX, Math.max(0, v)) : 0)
 
-export const engagement = p => num(p.likes) + 2 * num(p.reposts) + 2 * num(p.quotes) + 3 * num(p.replies)
+export const engagement = p => Math.min(MAX, num(p.likes) + 2 * num(p.reposts) + 2 * num(p.quotes) + 3 * num(p.replies))
 
 export function velocity(p) {
   const hours = (Date.parse(p.fetchedAt) - Date.parse(p.postedAt)) / HOUR
@@ -27,18 +30,20 @@ export const burst = (post, posts) => velocity(post) / baseline(posts, post.hand
 
 export function eligible(posts, now) {
   const t = new Date(now).getTime()
+  const bases = new Map()
+  const base = h => (bases.has(h) ? bases.get(h) : bases.set(h, baseline(posts, h)).get(h))
   return posts
     .filter(p => {
       const age = t - Date.parse(p.postedAt)
-      return Number.isFinite(age) && Number.isFinite(Date.parse(p.fetchedAt)) && age <= 36 * HOUR && !p.isRepost && !p.used
+      return Number.isFinite(age) && Number.isFinite(Date.parse(p.fetchedAt)) && age >= -SKEW && age <= 36 * HOUR && !p.isRepost && !p.used
     })
-    .map(p => ({ p, b: burst(p, posts) }))
+    .map(p => ({ p, b: velocity(p) / base(p.handle) }))
     .sort((x, y) => y.b - x.b || Date.parse(y.p.postedAt) - Date.parse(x.p.postedAt))
     .slice(0, 20)
     .map(x => x.p)
 }
 
-const dim = v => (typeof v === 'number' && Number.isFinite(v) ? Math.min(2, Math.max(0, Math.round(v))) : 0)
+const dim = v => (typeof v === 'number' && !Number.isNaN(v) ? Math.min(2, Math.max(0, Math.round(v))) : 0)
 
 export function qualityScore({ fun, info, resonance } = {}) {
   const d = [dim(fun), dim(info), dim(resonance)]

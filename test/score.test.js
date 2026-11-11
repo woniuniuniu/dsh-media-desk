@@ -62,3 +62,35 @@ test('选题质量：三项至少占两项才及格', () => {
   assert.equal(qualityScore({ fun: 1, info: 2, resonance: 0 }), 0.5)
   assert.equal(qualityScore({ fun: 9, info: 2, resonance: 'x' }), 4 / 6)
 })
+test('极端数值：互动量、速度、基线、爆发倍数都是有限数，排序稳定不抛错', () => {
+  const weird = [
+    post('w', 'w1', 1, 1e308, { replies: 1e308, reposts: 1e308, quotes: 1e308 }),
+    post('w', 'w2', 1, Infinity, { replies: Infinity }),
+    post('w', 'w3', 1, NaN, { replies: -5, reposts: '9', quotes: null }),
+    post('w', 'w4', 1, -100),
+    post('w', 'w5', 1, 1e308, { replies: 1e308 }),
+    post('w', 'w6', 1, 1e308, { replies: 1e308 }),
+  ]
+  for (const p of weird) {
+    assert.ok(Number.isFinite(engagement(p)))
+    assert.ok(Number.isFinite(velocity(p)))
+    assert.ok(Number.isFinite(burst(p, weird)))
+  }
+  assert.ok(Number.isFinite(baseline(weird, 'w')))
+  assert.equal(engagement(weird[0]), Number.MAX_SAFE_INTEGER)
+  assert.equal(engagement(weird[2]), 0)
+  const a = eligible(weird, NOW).map(p => p.id)
+  assert.equal(a.length, 6)
+  assert.deepEqual(eligible(weird, NOW).map(p => p.id), a)
+})
+test('未来时间：晚于 now 5 分钟内算合格，超过则排除；36 小时边界含端点', () => {
+  const at = (id, offsetMs) => post('t', id, 0, 5, { postedAt: new Date(NOW.getTime() + offsetMs).toISOString() })
+  const ids = eligible([at('f10', 10 * 60e3), at('f2', 2 * 60e3), at('edge', -36 * 3600e3), at('over', -36 * 3600e3 - 1)], NOW).map(p => p.id).sort()
+  assert.deepEqual(ids, ['edge', 'f2'])
+})
+test('选题质量：越界夹取、NaN 与非数字记 0、小数四舍五入', () => {
+  assert.equal(qualityScore({ fun: Infinity, info: 2, resonance: 0 }), 4 / 6)
+  assert.equal(qualityScore({ fun: -Infinity, info: 2, resonance: 0 }), 0)
+  assert.equal(qualityScore({ fun: NaN, info: 1, resonance: '2' }), 0)
+  assert.equal(qualityScore({ fun: 1.4, info: 1.6, resonance: 0 }), 3 / 6)
+})
