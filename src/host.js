@@ -140,8 +140,9 @@ async function route(ctx, store, desk, req, res) {
   switch (path) {
     case 'ops': {
       const label = typeof body.label === 'string' ? body.label : tr('操作')
+      const { slots } = await desk.settings.read()
       const result = await store.mutate(label, (draft) => {
-        const applied = applyOps(draft, body.ops)
+        const applied = applyOps(draft, body.ops, { now: new Date(), slots })
         return { ...applied, state: draft }
       }, { undoable: body.undoable !== false })
       return json(res, 200, result)

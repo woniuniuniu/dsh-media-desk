@@ -2,6 +2,7 @@
 // 模型输出也是不可信输入，所以这里只放行白名单字段。
 import { tr } from './i18n.js'
 import { normalizeStyle } from './style.js'
+import { approve, discard, markSent, unapprove, setText } from './inbox.js'
 
 const HANDLE = /^[A-Za-z0-9_]{1,15}$/
 const TIERS = ['engage', 'topic']
@@ -33,6 +34,17 @@ const need = (list, id, what) => {
   const row = list.find(entry => entry.id === id)
   if (!row) throw new Error(tr('找不到{what}：{id}', { what, id: String(id) }))
   return row
+}
+
+const DEFAULT_SLOTS = ['09:00', '12:30', '18:00', '21:00', '22:30']
+
+// 候选稿操作：迁移不被允许或找不到稿子时报错，状态不变。
+function candidateOp(label, change) {
+  return (state, op, ctx) => {
+    if (!state.candidates.some(row => row.id === op.id)) throw new Error(tr('找不到这条稿子'))
+    if (!change(state, op, ctx)) throw new Error(tr('这条稿子现在不能这样处理'))
+    return tr(label)
+  }
 }
 
 const HANDLERS = {
@@ -142,15 +154,26 @@ const HANDLERS = {
     state.voice.types = state.voice.types.filter(entry => entry.id !== op.id)
     return tr('已删除类型：{name}', { name: row.name })
   },
+  approve_candidate: candidateOp('已通过，已排好发帖时间', (state, op, ctx) => approve(state, op.id, { ...ctx, scheduledAt: op.scheduledAt })),
+  discard_candidate: candidateOp('已丢弃', (state, op, ctx) => discard(state, op.id, { now: ctx.now, reason: op.reason })),
+  mark_sent: candidateOp('已标记为已发', (state, op, ctx) => markSent(state, op.id, { now: ctx.now })),
+  unapprove_candidate: candidateOp('已撤回，回到待处理', (state, op) => unapprove(state, op.id)),
+  edit_candidate: candidateOp('已修改文字', (state, op) => typeof op.text === 'string' && op.text.trim() !== '' && setText(state, op.id, op.text)),
+  reschedule_candidate: candidateOp('已改发帖时间', (state, op, ctx) => {
+    const row = state.candidates.find(entry => entry.id === op.id)
+    return row.status === 'approved' && approve(state, op.id, { ...ctx, scheduledAt: op.scheduledAt })
+  }),
 }
 
 /**
  * 逐条执行操作。某一条失败不影响其他条。
  * @param {object} state - 就地修改的状态。
  * @param {object[]} ops - 操作列表。
+ * @param {{now?: Date, slots?: string[]}} [ctx] - now 是当前时间，slots 是发帖时段。
  * @returns {{applied: string[], errors: string[]}} 成功的说明和失败的原因。
  */
-export function applyOps(state, ops) {
+export function applyOps(state, ops, ctx = {}) {
+  const env = { now: ctx.now ?? new Date(), slots: ctx.slots ?? DEFAULT_SLOTS }
   const applied = []
   const errors = []
   if (!Array.isArray(ops)) return { applied, errors: [tr('操作列表无效')] }
@@ -161,7 +184,7 @@ export function applyOps(state, ops) {
       continue
     }
     try {
-      applied.push(handler(state, op))
+      applied.push(handler(state, op, env))
     } catch (err) {
       errors.push(err.message)
     }
