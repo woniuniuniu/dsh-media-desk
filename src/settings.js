@@ -1,17 +1,26 @@
 // 工作台设置。密钥和内容数据分开存放，文件权限 600，也不会返回给浏览器。
 import { chmod, readFile, rename, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { tr } from './i18n.js'
 
 const DEFAULTS = {
   image: { source: 'http', baseUrl: '', model: '', apiKey: '', size: '1536x1024', quality: '', toolSize: '1536x1024', toolQuality: '', extra: '' },
   // 助手文字模型：空对象表示跟随 DeepSeek Harness 默认模型
   assistant: { provider: '', model: '' },
-  voice: '',
-  exportDir: '',
-  imageCount: 2,
-  shotCount: 6,
-  language: 'auto',
+  exchangeDir: '',
+  composeAt: '07:00',
+  slots: ['09:00', '12:30', '18:00', '21:00', '22:30'],
+  dailyCandidates: 7,
+  dailyImages: 3,
+  activeFrom: '08:00',
+  activeTo: '22:00',
+}
+
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/
+
+function checkTime(value, label) {
+  if (typeof value !== 'string' || !TIME.test(value)) throw Object.assign(new Error(tr('{label}要写成 HH:MM，比如 07:00', { label })), { status: 400 })
+  return value
 }
 
 function clamp(value, min, max, fallback) {
@@ -85,11 +94,20 @@ export class Settings {
       if (Boolean(provider) !== Boolean(model)) throw Object.assign(new Error(tr('助手模型的提供方和模型要一起填')), { status: 400 })
       next.assistant = { provider, model }
     }
-    if (typeof patch.voice === 'string') next.voice = patch.voice.slice(0, 8000)
-    if (typeof patch.exportDir === 'string') next.exportDir = patch.exportDir.trim().slice(0, 500)
-    if (patch.imageCount !== undefined) next.imageCount = clamp(patch.imageCount, 0, 4, current.imageCount)
-    if (['auto', 'zh', 'en'].includes(patch.language)) next.language = patch.language
-    if (patch.shotCount !== undefined) next.shotCount = clamp(patch.shotCount, 0, 12, current.shotCount)
+    if (patch.exchangeDir !== undefined) {
+      const dir = typeof patch.exchangeDir === 'string' ? patch.exchangeDir.trim() : null
+      if (dir === null || dir.length > 500 || (dir && !isAbsolute(dir))) throw Object.assign(new Error(tr('交换文件夹要留空，或填一个绝对路径')), { status: 400 })
+      next.exchangeDir = dir
+    }
+    if (patch.composeAt !== undefined) next.composeAt = checkTime(patch.composeAt, '成稿时间')
+    if (patch.activeFrom !== undefined) next.activeFrom = checkTime(patch.activeFrom, '活跃开始时间')
+    if (patch.activeTo !== undefined) next.activeTo = checkTime(patch.activeTo, '活跃结束时间')
+    if (patch.slots !== undefined) {
+      if (!Array.isArray(patch.slots) || patch.slots.length < 1 || patch.slots.length > 8) throw Object.assign(new Error(tr('发帖时段要有 1 到 8 个')), { status: 400 })
+      next.slots = patch.slots.map(slot => checkTime(slot, '发帖时段'))
+    }
+    if (patch.dailyCandidates !== undefined) next.dailyCandidates = clamp(patch.dailyCandidates, 1, 12, current.dailyCandidates)
+    if (patch.dailyImages !== undefined) next.dailyImages = clamp(patch.dailyImages, 0, 10, current.dailyImages)
     const tmp = `${this.file}.${process.pid}.tmp`
     await writeFile(tmp, JSON.stringify(next, null, 2), { mode: 0o600 })
     await chmod(tmp, 0o600)

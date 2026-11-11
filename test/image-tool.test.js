@@ -5,8 +5,6 @@ import { tmpdir } from 'node:os'
 import { test } from 'node:test'
 import { imageTool, generateToolImage } from '../src/image-tool.js'
 import { imageReady, publicSettings, Settings } from '../src/settings.js'
-import { Producer } from '../src/produce.js'
-import { Store } from '../src/store.js'
 import plugin from '../src/host.js'
 
 const PNG = Buffer.from('89504e470d0a1a0a000000000000', 'hex')
@@ -195,39 +193,6 @@ test('realpath prevents an output directory symlink from exposing another direct
     if (process.platform === 'win32') await rmdir(escape)
     else await unlink(escape)
   }
-}))
-
-test('Producer readiness uses injected capability and tool failures are not retried on 429 text', async () => fixture(async ({ dir, path }) => {
-  const store = new Store(join(dir, 'desk'))
-  await store.read()
-  const settings = new Settings(store.root)
-  await settings.update({ image: { source: 'tool' }, imageCount: 1, shotCount: 1 })
-  const ctx = context(async batch => success(batch, path))
-  const producer = new Producer({ store, settings, ready: saved => imageReady(saved, Boolean(imageTool(ctx))), generate: (image, prompt, options) => generateToolImage(ctx, image, prompt, options), callText: async () => { throw new Error('offline') } })
-  const state = await store.read()
-  const id = state.items[0].id
-  await store.mutate('test', draft => { draft.items.find(row => row.id === id).production = {}; return draft })
-  await producer.run(id, { controller: new AbortController(), planText: '', text: '' })
-  const done = (await store.read()).items.find(row => row.id === id).production
-  assert.equal(done.status, 'done')
-  assert.equal(done.cover.status, 'done')
-  assert.ok(done.cover.src)
-  assert.equal(done.images[0].status, 'done')
-  assert.equal(done.shots[0].status, 'done')
-  assert.equal(done.needsProvider, undefined)
-  let redrawn = 0
-  const generate = producer.generate
-  producer.generate = async (...args) => { redrawn++; return generate(...args) }
-  await producer.regenerate(id, 'image:0')
-  // regenerate is intentionally detached; drain this test's asset before cleanup.
-  while (producer.assets.size) await new Promise(resolve => setTimeout(resolve, 5))
-  assert.equal(redrawn, 1)
-  assert.equal((await store.read()).items.find(row => row.id === id).production.images[0].status, 'done')
-  assert.equal(producer.ready(await settings.read()), true)
-  let attempts = 0
-  producer.generate = async () => { attempts++; throw Object.assign(new Error('429'), { permanent: true }) }
-  await assert.rejects(producer.generateWithRetry({}, 'p'), /429/)
-  assert.equal(attempts, 1)
 }))
 
 test('authenticated settings/test and readiness use the same tool backend; HTTP source never calls tools', async () => fixture(async ({ path }) => {

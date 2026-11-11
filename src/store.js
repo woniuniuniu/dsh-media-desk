@@ -3,7 +3,7 @@
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { buildSeed, migrateState } from './seed.js'
+import { emptyState, migrateState } from './seed.js'
 
 const MAX_UNDO = 30
 
@@ -80,7 +80,7 @@ export class Store {
       if (err.code !== 'ENOENT') throw err
     }
     if (!info) {
-      this.state = buildSeed(new Date())
+      this.state = emptyState()
       await this.persist()
       return
     }

@@ -35,7 +35,6 @@
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
     "test": "node --test test/*.test.js",
-    "assets": "python3 scripts/gen-assets.py",
     "prepack": "npm run build"
   },
   "devDependencies": {
@@ -44,7 +43,6 @@
   "files": [
     "src",
     "dist",
-    "assets",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"

@@ -1,13 +1,10 @@
 // 本地模拟模型（OpenAI 兼容流式接口），只用于开发时验证模型链路，不消耗真实额度。
-// 也模拟图片接口：返回 assets 里的示例图，并故意延迟几秒，用来看生成过程。
+// 也模拟图片接口：返回一张内置的 1x1 图片，并故意延迟几秒，用来看生成过程。
 // 用法：node scripts/mock-llm.mjs [端口]。每次请求的摘要写到 stdout。
-import { readFileSync, readdirSync } from 'node:fs'
 import { createServer } from 'node:http'
 
 const PORT = Number(process.argv[2] ?? 4399)
-const ASSETS = new URL('../assets/', import.meta.url)
-const PHOTOS = readdirSync(ASSETS).filter(name => /^(hills|dunes|sea|still|night|ink)\.jpg$/.test(name))
-const SKETCHES = readdirSync(ASSETS).filter(name => /^(topo|stairs|facade)\.jpg$/.test(name))
+const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 let served = 0
 
 function answer(system, user) {
@@ -49,10 +46,9 @@ createServer((req, res) => {
     const body = JSON.parse(Buffer.concat(chunks).toString() || '{}')
     if (req.url.endsWith('/images/generations')) {
       served += 1
-      const pool = body.prompt.includes('storyboard') ? SKETCHES : PHOTOS
       await new Promise(r => setTimeout(r, 2500 + (served % 5) * 1500))
       res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify({ data: [{ b64_json: readFileSync(new URL(pool[served % pool.length], ASSETS)).toString('base64') }] }))
+      res.end(JSON.stringify({ data: [{ b64_json: PIXEL }] }))
       return
     }
     const messages = body.messages ?? []
