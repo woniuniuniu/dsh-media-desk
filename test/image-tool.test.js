@@ -200,7 +200,8 @@ test('authenticated settings/test and readiness use the same tool backend; HTTP 
   const ctx = context(async batch => { generated++; return success(batch, path) })
   const baseGet = ctx.get
   ctx.get = name => name === 'connection' ? { requestRejection: () => undefined } : baseGet(name)
-  ctx.effect = fn => fn()
+  const stops = []
+  ctx.effect = fn => { const stop = fn(); if (typeof stop === 'function') stops.push(stop) }
   ctx.webServer = { register: options => { handler = options.handler } }
   plugin.apply(ctx)
   const request = (method, route, body = {}) => new Promise(resolve => {
@@ -230,4 +231,6 @@ test('authenticated settings/test and readiness use the same tool backend; HTTP 
   assert.equal(response.status, 400)
   assert.match(response.body.error, /未找到订阅生图工具/)
   assert.equal(generated, 1)
+  // 后台处理会往数据目录写文件：先停掉再清理临时目录
+  await Promise.all(stops.map(stop => stop()))
 }))

@@ -37,8 +37,10 @@ export function normalizeTopics(raw, { postIds, typeIds }) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue
     const ids = [...new Set((Array.isArray(item.postIds) ? item.postIds : []).map(String).filter(id => postIds.has(id)))]
     if (!ids.length) continue
+    const title = String(item.title ?? '').trim().slice(0, 60)
+    if (!title) continue
     out.push({
-      title: String(item.title ?? '').trim().slice(0, 60),
+      title,
       postIds: ids,
       fun: dimension(item.fun),
       info: dimension(item.info),
@@ -58,6 +60,8 @@ function localDay(date) {
 
 const noteLabel = tr('手动素材')
 const LIVE = ['pending', 'approved']
+const TAKEN = tr('已被另一个进程接管')
+const MAX_ERROR = 200
 
 export class Composer {
   constructor({ store, settings, callText, now = () => new Date() }) {
@@ -67,16 +71,23 @@ export class Composer {
     this.now = now
   }
 
-  async composeDaily() {
+  /**
+   * @param {{undoable?: boolean, beforeCall?: () => Promise<boolean>}} [options] - beforeCall 在每次模型调用前执行，返回 false 就整体放弃、什么都不写。
+   */
+  async composeDaily({ undoable = true, beforeCall } = {}) {
     const now = this.now()
     const day = localDay(now)
     const state = await this.store.read()
     const { dailyCandidates } = await this.settings.read()
     const typeIds = state.voice.types.map(t => t.id)
     const note = (message, mark) => this.store.mutate('选题', s => {
-      s.runs.lastComposeError = message
+      s.runs.lastComposeError = message === null ? null : String(message).slice(0, MAX_ERROR)
       if (mark) s.runs.lastComposeDay = day
-    }, { undoable: false })
+    }, { undoable })
+    const callText = async req => {
+      if (beforeCall && (await beforeCall()) === false) throw Object.assign(new Error(TAKEN), { taken: true })
+      return this.callText(req)
+    }
     const failWith = async message => {
       await note(message, false)
       return { created: 0, error: message }
@@ -91,14 +102,15 @@ export class Composer {
     let topics
     try {
       const { system, user } = topicPrompts(posts, state.voice.types)
-      const { text } = await this.callText({ system, user, maxTokens: 3000, light: true })
+      const { text } = await callText({ system, user, maxTokens: 3000, light: true })
       topics = normalizeTopics(extractJson(text), { postIds: new Set(posts.map(p => p.id)), typeIds })
     } catch (err) {
+      if (err.taken) return { created: 0, error: TAKEN }
       return failWith(tr('选题失败：{reason}', { reason: err.message }))
     }
 
     const byId = new Map(posts.map(p => [p.id, p]))
-    const scored = topics
+    const rankedAll = topics
       .map(topic => {
         const sources = topic.postIds.map(id => byId.get(id))
         const top = sources.reduce((a, b) => (burst(b, state.posts) > burst(a, state.posts) ? b : a))
@@ -106,7 +118,18 @@ export class Composer {
       })
       .filter(x => Number.isFinite(x.score) && x.score > 0)
       .sort((a, b) => b.score - a.score)
-      .slice(0, dailyCandidates)
+    // 一条帖子只属于排名最高的选题；被掏空的选题丢掉
+    const claimed = new Set()
+    const ranked = []
+    for (const item of rankedAll) {
+      const ids = item.topic.postIds.filter(id => !claimed.has(id))
+      if (!ids.length) continue
+      ids.forEach(id => claimed.add(id))
+      const sources = ids.map(id => byId.get(id))
+      const top = sources.reduce((a, b) => (burst(b, state.posts) > burst(a, state.posts) ? b : a))
+      ranked.push({ ...item, topic: { ...item.topic, postIds: ids }, top })
+    }
+    const scored = ranked.slice(0, dailyCandidates)
     if (!scored.length) return failWith(tr('没有及格的选题'))
 
     const drafts = []
@@ -117,9 +140,10 @@ export class Composer {
           title: topic.title, form: topic.form, voice: voiceFor(state, topic.typeId),
           materials: topic.postIds.map(id => byId.get(id).text),
         })
-        const { text } = await this.callText({ system, user, maxTokens: 1200 })
+        const { text } = await callText({ system, user, maxTokens: 1200 })
         drafts.push({ topic, score, text: cleanDraft(text).slice(0, MAX_TEXT), quoteUrl: topic.form === 'quote' ? top.url ?? null : null })
       } catch (err) {
+        if (err.taken) return { created: 0, error: TAKEN }
         lastError = err.message
       }
     }
@@ -147,11 +171,11 @@ export class Composer {
       s.runs.lastComposeDay = day
       s.runs.lastComposeError = null
       return written.length
-    })
+    }, { undoable })
     return created ? { created, error: null } : { created: 0, error: tr('素材已被其他任务用掉') }
   }
 
-  async composeFromNote(noteId) {
+  async composeFromNote(noteId, { undoable = true } = {}) {
     const state = await this.store.read()
     const note = state.notes.find(n => n.id === noteId)
     if (!note) throw fail(tr('找不到这条笔记'), 404)
@@ -181,10 +205,10 @@ export class Composer {
       }
       s.candidates.push(candidate)
       return candidate
-    })
+    }, { undoable })
   }
 
-  async revise(candidateId, { view, instruction, typeId } = {}) {
+  async revise(candidateId, { view, instruction, typeId } = {}, { undoable = true } = {}) {
     const given = [['view', view], ['instruction', instruction], ['typeId', typeId]].filter(([, v]) => v !== undefined && v !== null)
     if (given.length !== 1) throw fail(tr('每次只能给一项：看法、修改要求或类型'))
     const [kind, value] = given[0]
@@ -221,6 +245,6 @@ export class Composer {
       if (kind === 'typeId') row.typeId = value
       row.revision += 1
       return row
-    })
+    }, { undoable })
   }
 }

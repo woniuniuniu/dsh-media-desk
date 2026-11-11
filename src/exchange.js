@@ -140,11 +140,15 @@ export class Exchange {
         processed.push(name)
       }
     }
-    if (processed.length) {
-      const next = [...seen, ...processed].slice(-MAX_SEEN)
+    // 调用方把这批内容落库之后再 commit；没 commit 的文件下次还会读到
+    let done = false
+    const commit = async () => {
+      if (done || !processed.length) return
+      done = true
+      const next = [...(await this.#loadSeen(kind)), ...processed].slice(-MAX_SEEN)
       await writeAtomic(join(this.root, `.seen-${kind}.json`), JSON.stringify(next))
     }
-    return { items, skipped }
+    return { items, skipped, commit }
   }
 
   async writeDraft(candidate, typeName, { intentUrl } = {}) {

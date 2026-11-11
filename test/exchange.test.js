@@ -9,6 +9,7 @@ const POST = { schema: 1, handle: 'karpathy', postId: '1855000000000000001', tex
 const LATER = () => Date.now() + 60_000
 async function fresh(opts) { const ex = new Exchange(await mkdtemp(join(tmpdir(), 'xdesk-ex-')), opts); await ex.ensure(); return ex }
 
+const plain = ({ items, skipped }) => ({ items, skipped })
 test('帖子：链接由程序自己拼，不信任文件里的值', () => {
   const p = parsePost(POST)
   assert.equal(p.url, 'https://x.com/karpathy/status/1855000000000000001')
@@ -54,6 +55,7 @@ test('Review Focus 1：坏文件被跳过并报告，好文件照常读入，且
     { file: 'c-huge.json', why: '文件太大' },
     { file: 'd bad name!.json', why: '文件名不合规' },
   ])
+  await first.commit()
   const second = await ex.readNew('posts')
   assert.equal(second.items.length, 0)
   assert.equal(second.skipped.length, 0)
@@ -64,11 +66,12 @@ test('已处理记录只保留最近 5000 个名字，按文件名升序读入',
   await writeFile(join(ex.root, 'posts', 'a.json'), JSON.stringify(POST))
   const r = await ex.readNew('posts')
   assert.deepEqual(r.items.map(p => p.id), ['1855000000000000001', '1855000000000000002'])
+  await r.commit()
   const seen = JSON.parse(await readFile(join(ex.root, '.seen-posts.json'), 'utf8'))
   assert.deepEqual(seen, ['a.json', 'b.json'])
   await writeFile(join(ex.root, '.seen-posts.json'), JSON.stringify(Array.from({ length: 6000 }, (_, i) => `n${i}.json`)))
   await writeFile(join(ex.root, 'posts', 'c.json'), JSON.stringify(POST))
-  await ex.readNew('posts')
+  await (await ex.readNew('posts')).commit()
   const trimmed = JSON.parse(await readFile(join(ex.root, '.seen-posts.json'), 'utf8'))
   assert.equal(trimmed.length, 5000)
   assert.equal(trimmed.at(-1), 'c.json')
@@ -80,6 +83,22 @@ test('decisions 目录同样读入并校验', async () => {
   const r = await ex.readNew('decisions')
   assert.equal(r.items.length, 1)
   assert.deepEqual(r.skipped, [{ file: 'd2.json', why: '内容不符合格式' }])
+})
+test('不 commit 就不算处理过：同样的文件下次还会读到；commit 可重复调用', async () => {
+  const ex = await fresh({ now: LATER })
+  await writeFile(join(ex.root, 'posts', 'a.json'), JSON.stringify(POST))
+  await writeFile(join(ex.root, 'posts', 'bad.json'), '{oops')
+  const r1 = await ex.readNew('posts')
+  const r2 = await ex.readNew('posts')
+  assert.equal(r1.items.length, 1)
+  assert.equal(r2.items.length, 1)
+  assert.equal(r2.skipped.length, 1)
+  await r1.commit()
+  await r1.commit()
+  const r3 = await ex.readNew('posts')
+  assert.equal(r3.items.length, 0)
+  assert.equal((await ex.readNew('decisions')).commit instanceof Function, true)
+  await (await ex.readNew('decisions')).commit()
 })
 test('候选稿文件只新增不覆盖', async () => {
   const ex = await fresh()
@@ -132,7 +151,7 @@ test('点开头的文件和子目录被静默忽略', async () => {
   await mkdir(join(ex.root, 'posts', 'sub2'))
   await writeFile(join(ex.root, 'posts', 'sub2', 'x.json'), JSON.stringify(POST))
   const r = await ex.readNew('posts')
-  assert.deepEqual(r, { items: [], skipped: [] })
+  assert.deepEqual(plain(r), { items: [], skipped: [] })
 })
 test('刚写入的坏文件可能没写完：不报告、不记已处理，过 10 秒才算坏文件', async () => {
   let t = Date.now()
@@ -140,23 +159,29 @@ test('刚写入的坏文件可能没写完：不报告、不记已处理，过 1
   const path = join(ex.root, 'posts', 'half.json')
   await writeFile(path, JSON.stringify(POST).slice(0, 20))
   const r1 = await ex.readNew('posts')
-  assert.deepEqual(r1, { items: [], skipped: [] })
+  assert.deepEqual(plain(r1), { items: [], skipped: [] })
   await writeFile(path, JSON.stringify(POST))
   const r2 = await ex.readNew('posts')
   assert.equal(r2.items.length, 1)
+  await r2.commit()
   await writeFile(join(ex.root, 'posts', 'stay-bad.json'), '{oops')
-  assert.deepEqual(await ex.readNew('posts'), { items: [], skipped: [] })
+  assert.deepEqual(plain(await ex.readNew('posts')), { items: [], skipped: [] })
   t += 60_000
-  assert.deepEqual((await ex.readNew('posts')).skipped, [{ file: 'stay-bad.json', why: '不是有效的 JSON' }])
-  assert.deepEqual(await ex.readNew('posts'), { items: [], skipped: [] })
+  const bad = await ex.readNew('posts')
+  assert.deepEqual(bad.skipped, [{ file: 'stay-bad.json', why: '不是有效的 JSON' }])
+  await bad.commit()
+  assert.deepEqual(plain(await ex.readNew('posts')), { items: [], skipped: [] })
 })
 test('刚写入但内容不符合格式的文件同样先等待', async () => {
   let t = Date.now()
   const ex = await fresh({ now: () => t })
   await writeFile(join(ex.root, 'posts', 'p.json'), JSON.stringify({ ...POST, schema: 2 }))
-  assert.deepEqual(await ex.readNew('posts'), { items: [], skipped: [] })
+  assert.deepEqual(plain(await ex.readNew('posts')), { items: [], skipped: [] })
   t += 60_000
-  assert.deepEqual((await ex.readNew('posts')).skipped, [{ file: 'p.json', why: '内容不符合格式' }])
+  const late = await ex.readNew('posts')
+  assert.deepEqual(late.skipped, [{ file: 'p.json', why: '内容不符合格式' }])
+  await late.commit()
+  assert.deepEqual(plain(await ex.readNew('posts')), { items: [], skipped: [] })
 })
 test('读取出错：报告读取失败、不记已处理，恢复后能读到', async t => {
   if (process.getuid?.() === 0) return t.skip('root 用户不受文件权限限制，无法构造读取失败')
@@ -166,7 +191,7 @@ test('读取出错：报告读取失败、不记已处理，恢复后能读到',
   await chmod(path, 0o000)
   try {
     const r1 = await ex.readNew('posts')
-    assert.deepEqual(r1, { items: [], skipped: [{ file: 'locked.json', why: '读取失败' }] })
+    assert.deepEqual(plain(r1), { items: [], skipped: [{ file: 'locked.json', why: '读取失败' }] })
   } finally {
     await chmod(path, 0o644)
   }

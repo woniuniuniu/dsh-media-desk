@@ -14,7 +14,7 @@ test('初始状态是空的第 2 版结构', () => {
   for (const key of ['watch', 'posts', 'notes', 'candidates', 'rules']) assert.deepEqual(s[key], [])
   assert.equal(s.voice.core, null)
   assert.deepEqual(s.voice.types.map(t => [t.id, t.name]), [['t_product', '产品'], ['t_model', '模型'], ['t_tech', '技术底层'], ['t_society', '社会']])
-  assert.deepEqual(s.runs, { lastComposeDay: null, lastComposeError: null, notices: [] })
+  assert.deepEqual(s.runs, { lastComposeDay: null, lastComposeError: null, notices: [], imagesDay: null, imagesCount: 0 })
 })
 test('旧版数据不迁移，直接从空状态开始', () => {
   assert.deepEqual(migrateState({ version: 1, items: [{ id: 'a' }] }), emptyState())

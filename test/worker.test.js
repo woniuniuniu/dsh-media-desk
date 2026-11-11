@@ -10,7 +10,7 @@ import { Exchange } from '../src/exchange.js'
 import { Lock } from '../src/lock.js'
 import { Settings } from '../src/settings.js'
 import { Store } from '../src/store.js'
-import { Worker, addNotice, imagesToday, resolveExchangeDir } from '../src/worker.js'
+import { Worker, addNotice, countImage, imagesUsedToday, resolveExchangeDir } from '../src/worker.js'
 
 const SAMPLES = fileURLToPath(new URL('../scripts/sample-exchange/posts/', import.meta.url))
 const SAMPLE_FILES = ['01-karpathy-evals', '02-sama-release', '03-simonw-release', '04-simonw-tool', '05-karpathy-agents', '06-sama-repost'].map(n => `${n}.json`)
@@ -24,7 +24,7 @@ const TOPICS = JSON.stringify([
   { title: '新版发布', postIds: [ID2], fun: 1, info: 2, resonance: 1, form: 'post', reason: 'r2' },
 ])
 
-async function setup({ now = NOW, samples = true, failTopicsOnce = false, exchangeFor, exchangeNow } = {}) {
+async function setup({ now = NOW, samples = true, failTopicsOnce = false, exchangeFor, exchangeNow, gate } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'worker-'))
   const clock = { t: now }
   const store = new Store(root)
@@ -42,6 +42,10 @@ async function setup({ now = NOW, samples = true, failTopicsOnce = false, exchan
         throw new Error('假模型选题失败')
       }
       return { text: TOPICS, model: 'fake' }
+    }
+    if (gate) {
+      gate.hit = true
+      await gate.promise
     }
     return { text: '一条改好的推文。', model: 'fake' }
   }
@@ -245,19 +249,82 @@ test('提示：相同文字不连续重复，最多保留 50 条', () => {
   assert.equal(s.runs.notices.at(-1).text, 'n59')
 })
 
-test('imagesToday：只数当天生成过图片的候选稿', () => {
-  const state = {
-    candidates: [
-      candidate('c_1', { image: 'a.png', imageAt: '2026-11-11T01:00:00.000Z' }),
-      candidate('c_2', { image: 'b.png', imageAt: '2026-11-10T01:00:00.000Z' }),
-      candidate('c_3', { image: 'c.png' }),
-      candidate('c_4', { imageAt: '2026-11-11T01:00:00.000Z' }),
-    ],
-  }
-  assert.equal(imagesToday(state, NOW), 1)
+test('图片额度按生成次数计，跨天归零', () => {
+  const state = { runs: { imagesDay: null, imagesCount: 0 } }
+  assert.equal(imagesUsedToday(state, NOW), 0)
+  countImage(state, NOW)
+  countImage(state, NOW)
+  assert.equal(imagesUsedToday(state, NOW), 2)
+  assert.equal(imagesUsedToday(state, new Date('2026-11-12T08:00:00+08:00')), 0)
+  countImage(state, new Date('2026-11-12T08:00:00+08:00'))
+  assert.equal(state.runs.imagesCount, 1)
 })
 
 test('resolveExchangeDir：留空用数据目录下的 exchange，绝对路径原样使用', () => {
   assert.equal(resolveExchangeDir({ exchangeDir: '' }, '/data/x-desk'), '/data/x-desk/exchange')
   assert.equal(resolveExchangeDir({ exchangeDir: '/Users/me/sync' }, '/data/x-desk'), '/Users/me/sync')
+})
+
+test('后台改稿期间用户自己的撤销记录不会被动：后台没有新增、用户的还在', async () => {
+  let release
+  const gate = { hit: false, promise: new Promise(r => { release = r }) }
+  const { worker, store, ex } = await setup({ samples: false, gate })
+  await store.mutate('seed', s => {
+    s.candidates.push(candidate('c_real1'))
+    s.runs.lastComposeDay = TODAY
+  }, { undoable: false })
+  await decisionFile(ex, 'v.json', { candidateId: 'c_real1', action: 'view', text: '我的看法' })
+  const running = worker.tick()
+  while (!gate.hit) await new Promise(r => setTimeout(r, 5))
+  await store.mutate('改稿', s => { s.notes.push({ id: 'n_1', text: 'x', used: false }) })
+  release()
+  await running
+  assert.equal(store.undo.length, 1)
+  assert.equal(store.undo[0].label, '改稿')
+  assert.equal((await store.read()).candidates[0].revision, 1)
+})
+
+test('续锁失败：本轮立即停止，不再写出 drafts，记一条提示', async () => {
+  const { worker, store, ex } = await setup({ samples: false })
+  await store.mutate('seed', s => {
+    s.candidates.push(candidate('c_real1'))
+    s.runs.lastComposeDay = TODAY
+  }, { undoable: false })
+  let n = 0
+  worker.lock = { acquire: async () => (n += 1) === 1, release: async () => {} }
+  assert.deepEqual(await worker.tick(), { ran: true, aborted: true })
+  assert.deepEqual(await readdir(join(ex.root, 'drafts')), [])
+  assert.ok((await store.read()).runs.notices.some(x => x.text === '后台处理被另一个进程接管，本轮已停止'))
+})
+
+test('合并失败时文件不算处理过，下一轮重新读入', async () => {
+  const { worker, store, ex } = await setup()
+  const original = store.mutate.bind(store)
+  let failed = false
+  store.mutate = (label, fn, opts) => {
+    if (!failed && label === '后台处理') {
+      failed = true
+      return Promise.reject(new Error('写盘失败'))
+    }
+    return original(label, fn, opts)
+  }
+  await assert.rejects(worker.tick(), /写盘失败/)
+  assert.equal((await store.read()).posts.length, 0)
+  assert.ok(ex)
+  await worker.tick()
+  assert.equal((await store.read()).posts.length, 6)
+})
+
+test('停止函数等进行中的这一轮结束后才释放锁', async () => {
+  const { worker, root } = await setup()
+  const stop = worker.start()
+  await stop()
+  assert.equal(await readdir(root).then(f => f.includes('worker.lock')), false)
+})
+
+test('手动成稿记录尝试时间：30 分钟内后台不再自动成稿', async () => {
+  const { worker, composeCalls } = await setup()
+  worker.noteAttempt()
+  await worker.tick()
+  assert.equal(composeCalls(), 0)
 })

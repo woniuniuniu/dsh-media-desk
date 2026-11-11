@@ -9,8 +9,7 @@ const TICK_MS = 60_000
 const RETRY_MS = 30 * 60_000
 const KEEP_POSTS_MS = 14 * 24 * 3600e3
 const MAX_NOTICES = 50
-// 成稿流程里用默认可撤销方式写入的标签；后台触发的这几类不应占用户的撤销位
-const QUIET_LABELS = new Set(['每日选题', '改稿', '笔记成稿'])
+const TAKEN_NOTICE = '后台处理被另一个进程接管，本轮已停止'
 
 const pad = n => String(n).padStart(2, '0')
 export const localDay = date => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
@@ -22,10 +21,16 @@ export function resolveExchangeDir(settings, storeRoot) {
   return dir && isAbsolute(dir) ? dir : join(storeRoot, 'exchange')
 }
 
-/** 当天（本地日）已生成过图片的候选稿数。 */
-export function imagesToday(state, now) {
-  const day = localDay(now)
-  return state.candidates.filter(c => c.image && c.imageAt && localDay(new Date(c.imageAt)) === day).length
+/** 当天（本地日）已生成的图片张数。 */
+export function imagesUsedToday(state, now) {
+  return state.runs.imagesDay === localDay(now) ? state.runs.imagesCount : 0
+}
+
+/** 记一张新生成的图片；跨天自动归零。 */
+export function countImage(state, now) {
+  const used = imagesUsedToday(state, now)
+  state.runs.imagesDay = localDay(now)
+  state.runs.imagesCount = used + 1
 }
 
 /** 在 state.runs.notices 末尾追加一条提示；与上一条相同则不重复，最多留 50 条。 */
@@ -49,14 +54,9 @@ export class Worker {
     this.inflight = null
   }
 
-  /** 后台调用的成稿/改稿会用默认可撤销方式写入；这里把它们从撤销栈里去掉。 */
-  async #quiet(fn) {
-    const before = new Set(this.store.undo)
-    try {
-      return await fn()
-    } finally {
-      this.store.undo = this.store.undo.filter(entry => before.has(entry) || !QUIET_LABELS.has(entry.label))
-    }
+  /** 记下一次成稿尝试（手动成稿也算），30 分钟内后台不再重试。 */
+  noteAttempt() {
+    this.lastAttemptAt = this.now().getTime()
   }
 
   async tick() {
@@ -69,6 +69,10 @@ export class Worker {
     const posts = await exchange.readNew('posts')
     const decisions = await exchange.readNew('decisions')
     const pendingModel = []
+    const abort = async () => {
+      await this.#notice(TAKEN_NOTICE)
+      return { ran: true, aborted: true }
+    }
 
     await this.store.mutate('后台处理', s => {
       const notice = text => addNotice(s, text, now)
@@ -96,18 +100,28 @@ export class Worker {
       }
       expire(s, now)
     }, { undoable: false })
+    // 落库之后才算处理过；改稿失败只记提示，不会反复重试
+    await posts.commit()
+    await decisions.commit()
 
     for (const decision of pendingModel) {
+      if (!(await this.lock.acquire())) return abort()
       try {
         if (!decision.text) throw new Error('没有附带文字')
         const input = decision.action === 'view' ? { view: decision.text } : { instruction: decision.text }
-        await this.#quiet(() => this.composer.revise(decision.candidateId, input))
+        await this.composer.revise(decision.candidateId, input, { undoable: false })
       } catch (err) {
         await this.#notice(`手机端对候选稿 ${decision.candidateId} 的${decision.action === 'view' ? '看法' : '修改要求'}没能处理：${err.message}`)
       }
     }
 
-    await this.#composeIfDue(settings, now)
+    if (!(await this.lock.acquire())) return abort()
+    try {
+      await this.#composeIfDue(settings, now)
+    } catch (err) {
+      await this.#notice(`每日成稿出错：${err.message}`)
+    }
+    if (!(await this.lock.acquire())) return abort()
     await this.#exportAll(exchange)
     return { ran: true }
   }
@@ -121,7 +135,7 @@ export class Worker {
     if (state.runs.lastComposeDay === localDay(now) || localTime(now) < settings.composeAt) return
     if (this.lastAttemptAt !== null && now.getTime() - this.lastAttemptAt < RETRY_MS) return
     this.lastAttemptAt = now.getTime()
-    await this.#quiet(() => this.composer.composeDaily())
+    await this.composer.composeDaily({ undoable: false, beforeCall: () => this.lock.acquire() })
   }
 
   async #exportAll(exchange) {
@@ -153,7 +167,7 @@ export class Worker {
     timer.unref?.()
     return () => {
       clearInterval(timer)
-      Promise.resolve(this.lock.release()).catch(() => {})
+      return Promise.resolve(this.inflight).catch(() => {}).then(() => this.lock.release()).catch(() => {})
     }
   }
 }

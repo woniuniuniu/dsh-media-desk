@@ -11,7 +11,7 @@ export function emptyState() {
     candidates: [],
     voice: { core: null, types: defaultTypes() },
     rules: [],
-    runs: { lastComposeDay: null, lastComposeError: null, notices: [] },
+    runs: { lastComposeDay: null, lastComposeError: null, notices: [], imagesDay: null, imagesCount: 0 },
   }
 }
 
