@@ -92,3 +92,22 @@ export function extractJson(text) {
   if (start < 0 || end < start) throw new Error(tr('模型没有返回 JSON'))
   return JSON.parse(body.slice(start, end + 1))
 }
+
+const MATERIAL_TAG = /<\s*\/?\s*material\b[^>]*>/gi
+
+/**
+ * 把不可信素材包进 <material> 标签。素材里的 material 标签会被反复删到没有，防止提前闭合。
+ * @param {unknown} text - 素材。
+ * @param {number} [max] - 最多保留的字符数，先截断再清理。
+ * @returns {string} 包好的素材。
+ */
+export function wrapMaterial(text, max) {
+  let body = String(text ?? '')
+  if (max !== undefined) body = body.slice(0, max)
+  let prev
+  do {
+    prev = body
+    body = body.replace(MATERIAL_TAG, '')
+  } while (body !== prev)
+  return `<material>${body}</material>`
+}
