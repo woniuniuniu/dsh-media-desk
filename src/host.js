@@ -6,7 +6,7 @@ import { Composer } from './compose.js'
 import { Exchange } from './exchange.js'
 import { Lock } from './lock.js'
 import { Worker, countImage, imagesUsedToday, localDay, resolveExchangeDir } from './worker.js'
-import { callModel, assistantModelOverride, defaultSelection, extractJson, modelInfo, modelStatus, setAssistantModel } from './ai.js'
+import { callModel, assistantModelOverride, defaultSelection, extractJson, modelInfo, modelStatus, setAssistantModel, withTimeout } from './ai.js'
 import { generateImage } from './images.js'
 import { generateToolImage, imageTool } from './image-tool.js'
 import { applyOps, newId } from './ops.js'
@@ -17,9 +17,7 @@ import { Store } from './store.js'
 import { tr } from './i18n.js'
 
 const MAX_JSON = 4_000_000
-const MAX_UPLOAD = 25_000_000
 const MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' }
-const UPLOAD_EXT = Object.fromEntries(Object.entries(MIME).filter(([ext]) => ext !== '.jpeg').map(([ext, type]) => [type, ext]))
 
 function json(res, status, body) {
   res.statusCode = status
@@ -42,14 +40,27 @@ async function readBuffer(req, limit) {
 async function readJson(req) {
   const raw = await readBuffer(req, MAX_JSON)
   if (!raw.length) return {}
+  let body
   try {
-    return JSON.parse(raw.toString('utf8'))
+    body = JSON.parse(raw.toString('utf8'))
   } catch {
     throw Object.assign(new Error(tr('请求不是有效的 JSON')), { status: 400 })
   }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw Object.assign(new Error(tr('请求内容要是一个 JSON 对象')), { status: 400 })
+  return body
 }
 
-/** 支持 Range，视频才能正常拖动和循环。 */
+/** 外部服务（文字模型、生图）的失败带上 502，错误文字原样给界面看；其余没有状态码的错误一律按内部错误处理。 */
+async function upstream(promise) {
+  try {
+    return await promise
+  } catch (err) {
+    if (!err.status) err.status = 502
+    throw err
+  }
+}
+
+/** 图片文件，支持按字节范围读取。 */
 async function sendFile(req, res, file) {
   const type = MIME[extname(file).toLowerCase()]
   if (!type) return json(res, 404, { error: tr('不支持的文件类型') })
@@ -89,18 +100,7 @@ function engineLabel(ctx) {
   return info ? info.label : null
 }
 
-async function handleUpload(req, store, res) {
-  const type = (req.headers['content-type'] || '').split(';')[0].trim().toLowerCase()
-  const ext = UPLOAD_EXT[type]
-  if (!ext) return json(res, 415, { error: tr('不支持这种文件：{type}', { type: type || tr('未知') }) })
-  const buffer = await readBuffer(req, MAX_UPLOAD)
-  await store.read()
-  const name = `${newId('f')}${ext}`
-  await writeFile(join(store.filesDir, name), buffer)
-  return json(res, 200, { src: `x-desk/files/${name}` })
-}
-
-async function route(ctx, store, desk, req, res) {
+async function route({ ctx, store, desk, callText }, req, res) {
   const url = new URL(req.url || '/', 'http://local')
   const path = url.pathname.replace(/^\/x-desk\/?/, '')
   const method = req.method || 'GET'
@@ -140,7 +140,6 @@ async function route(ctx, store, desk, req, res) {
   const site = req.headers['sec-fetch-site']
   if (site && site !== 'same-origin' && site !== 'none') return json(res, 403, { error: tr('拒绝跨站请求') })
 
-  if (path === 'upload') return handleUpload(req, store, res)
   const body = await readJson(req)
   switch (path) {
     case 'ops': {
@@ -153,8 +152,8 @@ async function route(ctx, store, desk, req, res) {
       return json(res, 200, result)
     }
     case 'voice/import': {
-      const callText = async prompts => (await callModel(ctx, { ...prompts, maxTokens: 1500, light: true })).text
-      return json(res, 200, { state: await importVoice({ store, callText }, body) })
+      const condense = async prompts => (await callText({ ...prompts, maxTokens: 1500, light: true })).text
+      return json(res, 200, { state: await importVoice({ store, callText: condense }, body) })
     }
     case 'voice/condensed': return json(res, 200, { state: await setCondensed({ store }, body) })
     case 'style/extract': {
@@ -162,7 +161,7 @@ async function route(ctx, store, desk, req, res) {
       if (!text) return json(res, 400, { error: tr('先贴入要提炼的文字') })
       let reply
       try {
-        reply = await callModel(ctx, { ...stylePrompts(text, typeof body.name === 'string' ? body.name : ''), maxTokens: 1500, light: true })
+        reply = await callText({ ...stylePrompts(text, typeof body.name === 'string' ? body.name : ''), maxTokens: 1500, light: true })
         return json(res, 200, { style: normalizeStyle(extractJson(reply.text), body.name) })
       } catch (err) {
         return json(res, 502, { error: tr('提炼风格失败：{reason}', { reason: err.message }) })
@@ -186,7 +185,7 @@ async function route(ctx, store, desk, req, res) {
       if (!imageReady(settings, Boolean(imageTool(ctx)))) return json(res, 400, { error: tr(settings.image.source === 'tool' ? '未找到订阅生图工具，或默认执行器不支持直接调用；请检查插件和执行器后刷新工作台' : '先填好接口地址、模型和密钥') })
       await store.read()
       const prompt = 'A single paper boat on calm water, black and white pencil line art sketch, plain white paper background, no text.'
-      const { buffer, ext } = await (settings.image.source === 'tool' ? generateToolImage(ctx, settings.image, prompt) : generateImage(settings.image, prompt))
+      const { buffer, ext } = await upstream(settings.image.source === 'tool' ? generateToolImage(ctx, settings.image, prompt) : generateImage(settings.image, prompt))
       const name = `${newId('t')}${ext}`
       await writeFile(join(store.filesDir, name), buffer)
       return json(res, 200, { src: `x-desk/files/${name}` })
@@ -215,14 +214,15 @@ async function route(ctx, store, desk, req, res) {
       if (!imageReady(settings, Boolean(imageTool(ctx)))) return json(res, 400, { error: tr('还没有配置生图：请先在设置里填好生图接口或选择订阅生图工具') })
       if (imagesUsedToday(state, new Date()) >= settings.dailyImages) return json(res, 429, { error: tr('今天的配图数量已达上限（{n} 张）', { n: settings.dailyImages }) })
       const prompt = `${candidate.text}\n\n为这条推文配一张简洁的横版插图，不要出现文字`
-      const { buffer, ext } = await (settings.image.source === 'tool' ? generateToolImage(ctx, settings.image, prompt) : generateImage(settings.image, prompt))
+      const { buffer, ext } = await upstream(settings.image.source === 'tool' ? generateToolImage(ctx, settings.image, prompt) : generateImage(settings.image, prompt))
       const name = `${newId('i')}${ext}`
       await writeFile(join(store.filesDir, name), buffer)
+      // 配图额度不能被撤销退回，也不占用户的撤销位
       await store.mutate('配图', s => {
         const row = s.candidates.find(c => c.id === body.id)
         if (row) row.image = name
         countImage(s, new Date())
-      })
+      }, { undoable: false })
       return json(res, 200, { state: await store.read() })
     }
     default: return json(res, 404, { error: tr('接口不存在') })
@@ -242,6 +242,30 @@ export function requestRejection(ctx, req) {
   return connection.requestRejection({ headers: req.headers })
 }
 
+/**
+ * /x-desk/* 的请求处理函数：先鉴权，再路由；出错时有状态码的错误原样返回，其余只回"内部错误"，不把本机路径等细节给浏览器。
+ * @param {{ctx: object, store: object, desk: {settings: object, composer: object, worker: object}, callText: Function}} deps
+ * @returns {(req: object, res: object) => Promise<void>}
+ */
+export function createHandler(deps) {
+  return async (req, res) => {
+    try {
+      const rejection = requestRejection(deps.ctx, req)
+      if (rejection) {
+        json(res, rejection, { error: tr('未授权') })
+        return
+      }
+      await route(deps, req, res)
+    } catch (err) {
+      if (res.headersSent) {
+        res.end()
+        return
+      }
+      json(res, err.status || 500, { error: err.status ? err.message : tr('内部错误') })
+    }
+  }
+}
+
 export const name = 'dsh-x-desk'
 
 export default {
@@ -250,7 +274,10 @@ export default {
     const store = new Store()
     const settings = new Settings(store.root)
     const desk = { settings }
-    const composer = new Composer({ store, settings, callText: options => callModel(ctx, options) })
+    // 文字模型调用统一限时 2 分钟，失败带 502
+    const timed = withTimeout(options => callModel(ctx, options))
+    const callText = options => upstream(timed(options))
+    const composer = new Composer({ store, settings, callText })
     desk.composer = composer
     const worker = new Worker({
       store, settings, composer,
@@ -264,22 +291,7 @@ export default {
     ctx.effect(() => ctx.webServer.register({
       kind: 'prefix',
       path: '/x-desk',
-      handler: async (req, res) => {
-        try {
-          const rejection = requestRejection(ctx, req)
-          if (rejection) {
-            json(res, rejection, { error: tr('未授权') })
-            return
-          }
-          await route(ctx, store, desk, req, res)
-        } catch (err) {
-          if (res.headersSent) {
-            res.end()
-            return
-          }
-          json(res, err.status || 500, { error: err.message })
-        }
-      },
+      handler: createHandler({ ctx, store, desk, callText }),
     }), 'dsh-x-desk: /x-desk routes')
   },
 }

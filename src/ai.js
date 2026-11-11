@@ -83,6 +83,32 @@ export async function callModel(ctx, { system, user, maxTokens = 4000, signal, o
   }
 }
 
+export const MODEL_TIMEOUT_MS = 120_000
+
+/**
+ * 给一次文字模型调用加时限：超时就中止（signal 传给调用方）并按普通错误报告，后台不会被一次挂起的调用卡住。
+ * 调用方自己带的 signal 照样生效。
+ * @param {(request: object) => Promise<any>} call - 原始调用。
+ * @param {number} [ms] - 时限，默认 2 分钟。
+ * @returns {(request: object) => Promise<any>} 带时限的调用。
+ */
+export function withTimeout(call, ms = MODEL_TIMEOUT_MS) {
+  return async (request = {}) => {
+    const timeout = AbortSignal.timeout(ms)
+    const signal = request.signal ? AbortSignal.any([request.signal, timeout]) : timeout
+    let onAbort
+    const aborted = new Promise((_, reject) => {
+      onAbort = () => reject(timeout.aborted ? new Error(tr('模型超过 2 分钟没有响应')) : signal.reason)
+      signal.addEventListener('abort', onAbort, { once: true })
+    })
+    try {
+      return await Promise.race([call({ ...request, signal }), aborted])
+    } finally {
+      signal.removeEventListener('abort', onAbort)
+    }
+  }
+}
+
 /** 从模型输出里取出 JSON，容忍外面包了代码块或前后有说明文字。 */
 export function extractJson(text) {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text)

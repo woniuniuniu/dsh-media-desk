@@ -156,7 +156,7 @@ function findLayer(state, layer) {
 }
 
 /**
- * 引入 skill 作为某一层的风格来源：读入、让模型精简、存入。
+ * 引入 skill 作为某一层的风格来源：读入、让模型精简、存入。模型产出的引入结果不进撤销栈。
  * @param {{store: object, callText: (prompts: {system: string, user: string}) => Promise<string>}} deps - callText 失败或为空时用截取版。
  * @param {{layer: string, path?: string, text?: string}} input - layer 是 'core' 或类型 id。
  * @param {{home?: string}} [options] - 透传给 loadSkillInput。
@@ -182,10 +182,10 @@ export async function importVoice({ store, callText }, { layer, path, text }, op
     if (layer === 'core') state.voice.core = next
     else Object.assign(old, next)
     return state
-  })
+  }, { undoable: false })
 }
 
-/** 负责人手改精简版。 */
+/** 负责人手改精简版。和引入 skill 一样不进撤销栈（界面上没有对应的撤销入口）。 */
 export async function setCondensed({ store }, { layer, condensed }) {
   if (typeof condensed !== 'string' || !condensed.trim()) throw fail(tr('精简版不能为空'))
   if (condensed.length > MAX_CONDENSED) throw fail(tr('精简版太长（{n} 字），上限 {max} 字', { n: condensed.length, max: MAX_CONDENSED }))
@@ -196,5 +196,5 @@ export async function setCondensed({ store }, { layer, condensed }) {
     row.condensed = condensed.trim()
     row.updatedAt = new Date().toISOString()
     return state
-  })
+  }, { undoable: false })
 }

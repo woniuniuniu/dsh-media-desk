@@ -167,3 +167,9 @@ test('引入 skill：以 .. 开头的合法文件名不被误拒；核心层保�
   state = await importVoice({ store, callText: async () => { throw new Error('x') } }, { layer: 'core', text: 'abc' })
   assert.equal(state.voice.core.condensedBy, 'fallback')
 })
+test('引入 skill 和手改精简版都不占撤销位', async () => {
+  const store = await freshStore()
+  await importVoice({ store, callText: async () => '精简' }, { layer: 'core', text: 'abc' })
+  await setCondensed({ store }, { layer: 'core', condensed: '手改' })
+  assert.equal(store.undo.length, 0)
+})
