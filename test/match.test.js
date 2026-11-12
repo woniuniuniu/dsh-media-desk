@@ -1,7 +1,7 @@
 process.env.TZ = 'Asia/Shanghai'
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizeText, similarity, matchSent, editPairs, STRONG, MIN, GAP, SHORT } from '../src/match.js'
+import { normalizeText, similarity, matchSent, editPairs, STRONG, MIN, GAP, SHORT, REPLY_PAIR_MIN } from '../src/match.js'
 
 const A = '今天聊聊模型评测：榜单分数越来越高，但真实任务里的表现差距并没有那么大，关键是看你自己的场景。'
 const A_SMALL = '今天聊聊模型评测：榜单分数越来越高，但真实任务里的表现差距并没有那么大，关键看自己的场景。'
@@ -334,4 +334,82 @@ test('两条实发内容抢同一条候选稿：第二名按最初的候选集�
   assert.equal(b.r.changed, 1)
   assert.equal(b.s.candidates[1].status, 'pending')
   assert.equal(b.s.mine[1].candidateId, null)
+})
+
+// ---- 第一名与第二名按窗口内全部候选稿算，分配时才只看还能配的 ----
+const P_TEXT = withTail(100, 9)
+const twins = (bExtra = {}) => st({
+  candidates: [cand('c_a', withTail(200, 9), '2026-11-12T09:00:00+08:00'), cand('c_b', withTail(300, 9), '2026-11-12T09:05:00+08:00', bExtra)],
+  mine: [mine('m1', P_TEXT, '2026-11-12T10:00:00+08:00')],
+})
+
+test('两条分不清的候选稿：之后其中一条过期，另一条仍不配', () => {
+  const s = twins()
+  const sims = s.candidates.map(c => similarity(P_TEXT, c.text))
+  assert.ok(sims.every(v => v >= MIN && v < STRONG) && Math.abs(sims[0] - sims[1]) < GAP, sims.join())
+  assert.equal(matchSent(s, { now: NOW }).changed, 0)
+  s.candidates[1].status = 'expired'
+  assert.equal(matchSent(s, { now: NOW }).changed, 0)
+  assert.equal(s.candidates[0].status, 'pending')
+  assert.equal(s.candidates[0].sentText, null)
+  assert.equal(s.mine[0].candidateId, null)
+})
+
+test('两条分不清的候选稿：之后其中一条被丢弃，另一条仍不配', () => {
+  const s = twins()
+  assert.equal(matchSent(s, { now: NOW }).changed, 0)
+  s.candidates[1].status = 'discarded'
+  assert.equal(matchSent(s, { now: NOW }).changed, 0)
+  assert.equal(s.candidates[0].sentPostId, null)
+})
+
+test('两条分不清的候选稿：其中一条已配给别的实发内容，这一条实发仍不配', () => {
+  const s = twins({ status: 'sent', sentText: 'x', sentPostId: 'm_other', sentAt: iso('2026-11-12T09:30:00+08:00') })
+  assert.equal(matchSent(s, { now: NOW }).changed, 0)
+  assert.equal(s.candidates[0].status, 'pending')
+  assert.equal(s.mine[0].candidateId, null)
+})
+
+test('最像的那条已丢弃：即使第二像的也够分，也不配', () => {
+  const s = st({
+    candidates: [cand('c_d', withTail(200, 3), '2026-11-12T09:00:00+08:00', { status: 'discarded' }), cand('c_p', withTail(400, 12), '2026-11-12T09:00:00+08:00')],
+    mine: [mine('m1', P_TEXT, '2026-11-12T10:00:00+08:00')],
+  })
+  const [sd, sp] = s.candidates.map(c => similarity(P_TEXT, c.text))
+  assert.ok(sd - sp >= GAP && sp < STRONG && sp >= MIN, `${sd} ${sp}`)
+  assert.equal(matchSent(s, { now: NOW }).changed, 0)
+  assert.equal(s.candidates[1].status, 'pending')
+})
+
+test('STRONG 钉在 0.8：0.76 的最高分、第二名在 0.1 以内，不配', () => {
+  // 如果把 STRONG 改成 0.7，这里会配上而失败
+  const p = withTail(100, 3)
+  const s = st({
+    candidates: [cand('c_1', withTail(200, 6), '2026-11-12T09:00:00+08:00'), cand('c_2', withTail(300, 9), '2026-11-12T09:00:00+08:00')],
+    mine: [mine('m1', p, '2026-11-12T10:00:00+08:00')],
+  })
+  const [s1, s2] = s.candidates.map(c => similarity(p, c.text))
+  assert.ok(s1 > 0.75 && s1 < 0.8 && s2 >= 0.7 && s1 - s2 < GAP, `${s1} ${s2}`)
+  assert.equal(matchSent(s, { now: NOW }).changed, 0)
+  assert.ok(s.candidates.every(c => c.status === 'pending'))
+})
+
+// ---- 回复改稿对子：与草稿毫不相干的自写回复只记已发，不算改稿 ----
+test('editPairs：自己另写的回复已关联但不成对子；轻改草稿成对子', () => {
+  assert.equal(REPLY_PAIR_MIN, 0.3)
+  const draft = '这个观点我同意，评测确实要看场景'
+  const s = st({
+    replyDrafts: [
+      { id: 'r_own', toHandle: 'k', toPostId: '10', drafts: [draft], notifiedAt: iso('2026-11-12T08:00:00+08:00'), sentText: null, sentAt: null },
+      { id: 'r_edit', toHandle: 'k', toPostId: '11', drafts: [draft], notifiedAt: iso('2026-11-12T08:00:00+08:00'), sentText: null, sentAt: null },
+    ],
+    mine: [
+      mine('m_own', '周末去爬山了，风景很好', '2026-11-12T09:00:00+08:00', { kind: 'reply', inReplyTo: { handle: 'k', postId: '10' } }),
+      mine('m_edit', '这个观点我同意，评测确实要看自己的场景', '2026-11-12T09:10:00+08:00', { kind: 'reply', inReplyTo: { handle: 'k', postId: '11' } }),
+    ],
+  })
+  assert.equal(matchSent(s, { now: NOW }).changed, 2)
+  assert.equal(s.replyDrafts[0].sentText, '周末去爬山了，风景很好')
+  assert.equal(s.mine[0].replyId, 'r_own')
+  assert.deepEqual(editPairs(s), [{ aiText: draft, sentText: '这个观点我同意，评测确实要看自己的场景', kind: 'reply' }])
 })

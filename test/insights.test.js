@@ -94,7 +94,8 @@ test('手工数据集：每个数字的精确值，且不改动 state', () => {
     ],
     replies: { drafted: 2, sent: 1, sentRate: 0.5, avgEngagement: 5 },
     funnel: { drafted: 8, approved: 1, sent: 3, discarded: 2, expired: 1, discardReasons: { not_interested: 0, not_me: 1, stale: 0, none: 1 } },
-    edits: { pairs: 5, medianLengthRatio: 1.25 },
+    // 两条回复（'好的'→'好'、'x'/'y'→'旧'）与草稿毫不相干，只记已发、不算改稿对子
+    edits: { pairs: 3, medianLengthRatio: 1.25 },
   })
   assertFinite(r)
 })

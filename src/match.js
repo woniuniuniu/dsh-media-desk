@@ -5,6 +5,7 @@ export const STRONG = 0.8
 export const MIN = 0.55
 export const GAP = 0.1
 export const SHORT = 12
+export const REPLY_PAIR_MIN = 0.3
 const WINDOW_MS = 96 * 3600 * 1000
 const SKEW_MS = 5 * 60 * 1000
 const EDIT_SAME = 0.98
@@ -53,10 +54,12 @@ export function matchSent(state, { now } = {}) {
   let changed = 0
   const mine = Array.isArray(state.mine) ? state.mine : []
 
-  // 帖子 / 引用：与候选稿贪心配对
+  // 帖子 / 引用：与候选稿贪心配对。
+  // 第一名和第二名按时间窗内的全部候选稿算（不管状态、是否已配过），只有分配时才限于还能配的；
+  // 否则竞争的那条过期、丢弃或配给别人之后，原先分不清的一对就会被配上。
+  const matchable = c => ['pending', 'approved', 'sent'].includes(c.status) && !c.sentPostId
   const cands = (state.candidates || [])
-    .filter(c => ['pending', 'approved', 'sent'].includes(c.status) && !c.sentPostId)
-    .map(c => ({ c, t: ms(c.createdAt), grams: gramSet(c.text), len: Array.from(normalizeText(c.text)).length }))
+    .map(c => ({ c, t: ms(c.createdAt), grams: gramSet(c.text), len: Array.from(normalizeText(c.text)).length, open: matchable(c) }))
     .filter(x => x.t !== null)
   const posts = mine
     .filter(m => (m.kind === 'post' || m.kind === 'quote') && !m.candidateId)
@@ -64,16 +67,19 @@ export function matchSent(state, { now } = {}) {
     .filter(x => x.t !== null)
   const pairs = []
   for (const p of posts) {
-    const eligible = []
+    const scored = []
     for (const k of cands) {
       if (k.t > p.t + SKEW_MS || k.t < p.t - WINDOW_MS) continue
-      eligible.push({ p, k, sim: jaccard(p.grams, k.grams) })
+      scored.push({ p, k, sim: jaccard(p.grams, k.grams) })
     }
     // 该条实发内容的第一名与第二名（在配对分配之前算好，结果与遍历顺序无关）
-    const sims = eligible.map(e => e.sim).sort((a, b) => b - a)
+    const sims = scored.map(e => e.sim).sort((a, b) => b - a)
     const top = sims[0] ?? 0
     const second = sims[1] ?? 0
-    for (const e of eligible) {
+    // 最像的那条（并列时任一条）已不能配：这条实发内容什么都不配
+    if (scored.some(e => e.sim === top && !e.k.open)) continue
+    for (const e of scored) {
+      if (!e.k.open) continue
       const short = p.len < SHORT || e.k.len < SHORT
       const ok = e.sim >= STRONG
         || (!short && e.sim >= MIN && e.sim === top && top - second >= GAP)
@@ -140,7 +146,8 @@ export function editPairs(state) {
       const s = jaccard(gramSet(d), sentGrams)
       if (s > bestSim) { bestSim = s; bestText = d }
     }
-    if (bestText !== null && bestSim < EDIT_SAME) {
+    // 回复只按帖子关联、不看相似度；与所有草稿都不像的（自己另写的）不算改稿
+    if (bestText !== null && bestSim >= REPLY_PAIR_MIN && bestSim < EDIT_SAME) {
       out.push({ aiText: bestText, sentText: r.sentText, kind: 'reply', at: ms(r.sentAt) ?? 0 })
     }
   }
