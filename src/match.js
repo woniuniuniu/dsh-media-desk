@@ -46,7 +46,7 @@ function ms(iso) {
 
 const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0)
 
-export function matchSent(state, { now } = {}) { // eslint-disable-line no-unused-vars
+export function matchSent(state, { now } = {}) {
   let changed = 0
   const mine = Array.isArray(state.mine) ? state.mine : []
 
