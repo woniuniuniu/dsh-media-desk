@@ -1,26 +1,30 @@
 // 排期：月历 + 右侧「接下来要发的」。已通过的稿子按排期时间落在日历上，已发的灰显在发出那天。
 import React from 'react'
 import { dispatchOps, fileUrl, makeImage, useDesk } from './desk.js'
+import { SentComparison } from './inbox.jsx'
 import { Dialog, Empty, IconButton } from './ui.jsx'
 import { dayKey, fmtTime, intentUrl, isDue, moveToDay, relativeDay, t, toLocalInput, upcomingList } from './util.js'
 
 const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 const DRAG_TYPE = 'text/x-desk-candidate'
 
-const calendarDay = row => (row.status === 'sent' ? (row.decidedAt ?? row.scheduledAt) : row.scheduledAt)
+const calendarDay = row => (row.status === 'sent' ? (row.sentAt ?? row.decidedAt) : row.scheduledAt)
 
 function Chip({ row }) {
   const sent = row.status === 'sent'
   const due = isDue(row)
   return (
-    <span
-      className={`md-cal-chip ${sent ? 'is-sent' : ''} ${due ? 'is-due' : ''}`}
-      draggable={!sent}
-      title={`${fmtTime(calendarDay(row))} ${row.title || row.text}`}
-      onDragStart={(event) => { event.dataTransfer.setData(DRAG_TYPE, row.id); event.dataTransfer.effectAllowed = 'move' }}
-    >
-      <span className="md-cal-chip-text"><time>{fmtTime(calendarDay(row))}</time><span>{row.title || row.text}</span></span>
-    </span>
+    <div>
+      <span
+        className={`md-cal-chip ${sent ? 'is-sent' : ''} ${due ? 'is-due' : ''}`}
+        draggable={!sent}
+        title={`${fmtTime(calendarDay(row))} ${row.title || row.text}`}
+        onDragStart={(event) => { event.dataTransfer.setData(DRAG_TYPE, row.id); event.dataTransfer.effectAllowed = 'move' }}
+      >
+        <span className="md-cal-chip-text"><time>{fmtTime(calendarDay(row))}</time>{sent ? <span className="md-inbox-tag">{t('已发')}</span> : null}<span>{row.title || row.text}</span></span>
+      </span>
+      {sent ? <SentComparison row={row} /> : null}
+    </div>
   )
 }
 
@@ -163,6 +167,7 @@ function UpcomingCard({ row }) {
 
 function Rail({ rows }) {
   const list = upcomingList(rows)
+  const sent = rows.filter(row => row.status === 'sent').sort((a, b) => Date.parse(calendarDay(b)) - Date.parse(calendarDay(a)))
   const now = new Date()
   // 该发了的排最前，其余按时间升序
   const ordered = [...list.filter(row => isDue(row, now)), ...list.filter(row => !isDue(row, now))]
@@ -170,6 +175,14 @@ function Rail({ rows }) {
     <aside className="md-panel md-sched-rail" aria-label={t('接下来要发的')}>
       <header><h2>{t('接下来要发的')}</h2><span className="md-tile-meta md-muted">{t('拖日历上的条目可改日期')}</span></header>
       {ordered.length ? <ul className="md-sched-list">{ordered.map(row => <UpcomingCard key={row.id} row={row} />)}</ul> : <Empty title={t('还没有排期')} hint={t('在收件箱通过稿子后，会出现在这里。')} />}
+      {sent.length ? <section aria-label={t('已发')}>
+        <h3>{t('已发')}</h3>
+        <ul className="md-sched-list">{sent.map(row => <li key={row.id} className="md-sched-card">
+          <div className="md-sched-when"><span className="md-inbox-tag">{t('已发')}</span><time>{relativeDay(calendarDay(row))} {fmtTime(row.sentAt ?? row.decidedAt)}</time></div>
+          <p className="md-sched-text">{row.text}</p>
+          <SentComparison row={row} />
+        </li>)}</ul>
+      </section> : null}
     </aside>
   )
 }

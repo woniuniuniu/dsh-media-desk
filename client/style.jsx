@@ -1,6 +1,6 @@
 // 风格：核心风格 + 内容类型 + 写作规则，另有「账号名单」标签页。
 import React from 'react'
-import { dispatchOps, extractStyle, importVoice, saveCondensed, toast, useDesk } from './desk.js'
+import { dispatchOps, extractOwnVoice, extractStyle, importVoice, saveCondensed, toast, useDesk } from './desk.js'
 import { cardToForm, formToCard, t } from './util.js'
 import { Empty, Icon, Segmented } from './ui.jsx'
 import { WatchView } from './watch.jsx'
@@ -175,6 +175,79 @@ function CoreBlock() {
   )
 }
 
+function ProposalRow({ row }) {
+  const [busy, setBusy] = React.useState(false)
+  const decide = async (op, label) => {
+    setBusy(true)
+    await dispatchOps([{ op, id: row.id }], { label: t(label) })
+    setBusy(false)
+  }
+  return (
+    <li className="md-style-rule">
+      <div className="md-style-rule-text"><b>{row.name}</b><p>{row.rule}</p><small className="md-muted">{row.evidence}</small></div>
+      <button type="button" className="md-btn is-small" disabled={busy} onClick={() => decide('accept_proposal', '采纳了一条规则')}>{t('采纳')}</button>
+      <button type="button" className="md-btn is-small" disabled={busy} onClick={() => decide('dismiss_proposal', '忽略了一条建议')}>{t('忽略')}</button>
+    </li>
+  )
+}
+
+function ProposalsBlock() {
+  const proposals = useDesk(s => s.state.proposals) ?? []
+  if (!proposals.length) return null
+  return (
+    <section className="md-panel md-style-block" aria-label={t('规则建议')}>
+      <header><h2>{t('规则建议')}</h2></header>
+      <p className="md-muted">{t('这些是从你改稿的习惯里总结出来的，采纳后以后每篇都会遵守。')}</p>
+      <ul className="md-style-rules">{proposals.map(row => <ProposalRow key={row.id} row={row} />)}</ul>
+    </section>
+  )
+}
+
+function OwnVoiceBlock() {
+  const core = useDesk(s => s.state.voice?.core)
+  const [card, setCard] = React.useState(null)
+  const [form, setForm] = React.useState(null)
+  const [busy, setBusy] = React.useState('')
+  const extract = async () => {
+    setBusy('extract')
+    const next = await extractOwnVoice()
+    setBusy('')
+    if (next) { setCard(next); setForm(null) }
+  }
+  const save = async (next) => {
+    if (!next.name) { toast(t('先给风格起个名字'), { error: true }); return }
+    setBusy('save')
+    const data = await dispatchOps([{ op: 'set_core', source: 'card', card: next }], { label: t('换成了我自己的风格') })
+    setBusy('')
+    if (data && !data.errors?.length) { setCard(null); setForm(null) }
+  }
+  return (
+    <section className="md-panel md-style-block" aria-label={t('提炼我自己的风格')}>
+      <header><h2>{t('提炼我自己的风格')}</h2></header>
+      <div className="md-style-actions"><button type="button" className="md-btn" disabled={busy} onClick={extract}>{busy === 'extract' ? t('正在提炼…') : t('用我发过的内容提炼')}</button></div>
+      {card ? <>
+        <div className="md-voice-comparison">
+          <div><h3>{t('现在的核心风格')}</h3>{core ? <>
+            <span className="md-inbox-tag">{core.name} · {sourceLabel(core)}</span>
+            <p>{core.source === 'skill' ? core.condensed : core.card?.summary}</p>
+            {core.source === 'skill' ? <p className="md-muted">{t('现在用的是引入的 skill，替换后会改成卡片形式。')}</p> : null}
+          </> : <p className="md-muted">{t('还没有设置')}</p>}</div>
+          <div><h3>{t('从你的内容提炼的')}</h3><dl className="md-voice-card">{CARD_FIELDS.map(field => <div key={field.key}><dt>{t(field.label)}</dt><dd>{field.list ? (card[field.key] ?? []).join('\n') : card[field.key]}</dd></div>)}</dl></div>
+        </div>
+        <div className="md-style-actions">
+          <button type="button" className="md-btn is-primary" disabled={busy} onClick={() => save(card)}>{t('替换')}</button>
+          <button type="button" className="md-btn" disabled={busy} onClick={() => { setCard(null); setForm(null) }}>{t('不动')}</button>
+          <button type="button" className="md-btn" disabled={busy} onClick={() => setForm(cardToForm(card))}>{t('手动合并后保存')}</button>
+        </div>
+        {form ? <div className="md-style-edit">
+          <CardEditor form={form} onChange={setForm} />
+          <div className="md-form-foot"><span style={{ flex: 1 }} /><button type="button" className="md-btn" disabled={busy} onClick={() => setForm(null)}>{t('取消')}</button><button type="button" className="md-btn is-primary" disabled={busy} onClick={() => save(formToCard(form))}>{t('保存')}</button></div>
+        </div> : null}
+      </> : null}
+    </section>
+  )
+}
+
 function TypeRow({ row, onlyOne }) {
   const [mode, setMode] = React.useState(null) // null | 'edit' | 'skill'
   const [name, setName] = React.useState(row.name)
@@ -311,6 +384,8 @@ export function StyleView() {
           <>
             <p className="md-muted">{t('口吻以核心风格为准，结构以内容类型为准。')}</p>
             <CoreBlock />
+            <ProposalsBlock />
+            <OwnVoiceBlock />
             <TypesBlock />
             <RulesBlock />
           </>

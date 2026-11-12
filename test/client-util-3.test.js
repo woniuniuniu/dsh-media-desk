@@ -17,12 +17,13 @@ test('opsToast：成功取 applied 第一条并带撤销；有错误显示第一
 })
 
 test('deskFromState / sameDesk：只在内容变化时才需要更新界面', () => {
-  const data = { state: { candidates: [{ id: 'c_1', text: 'a' }] }, model: 'm', modelOk: true, modelError: null, canUndo: false, exchangeDir: '/x', composing: true }
+  const data = { state: { candidates: [{ id: 'c_1', text: 'a' }] }, model: 'm', modelOk: true, modelError: null, canUndo: false, exchangeDir: '/x', composing: true, ownHandle: 'me' }
   const patch = deskFromState(data)
-  assert.deepEqual(patch, { state: data.state, model: 'm', modelOk: true, modelError: null, canUndo: false, exchangeDir: '/x', composing: true })
-  assert.deepEqual(deskFromState({ state: {} }), { state: {}, model: null, modelOk: null, modelError: null, canUndo: false, exchangeDir: null, composing: false })
+  assert.deepEqual(patch, { state: data.state, model: 'm', modelOk: true, modelError: null, canUndo: false, exchangeDir: '/x', composing: true, ownHandle: 'me' })
+  assert.deepEqual(deskFromState({ state: {} }), { state: {}, model: null, modelOk: null, modelError: null, canUndo: false, exchangeDir: null, composing: false, ownHandle: '' })
   const snapshot = { ...structuredClone(patch), view: 'inbox', toast: { text: 't' } }
   assert.equal(sameDesk(snapshot, deskFromState(structuredClone(data))), true)
+  assert.equal(sameDesk(snapshot, deskFromState({ ...data, ownHandle: 'other' })), false)
   assert.equal(sameDesk(snapshot, deskFromState({ ...data, composing: false })), false)
   assert.equal(sameDesk(snapshot, deskFromState({ ...data, state: { candidates: [{ id: 'c_1', text: 'b' }] } })), false)
 })

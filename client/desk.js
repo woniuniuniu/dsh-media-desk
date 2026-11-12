@@ -5,7 +5,7 @@ import { deskFromState, opsToast, sameDesk, t } from './util.js'
 const BASE = 'x-desk/'
 
 let snapshot = {
-  state: null, model: null, modelOk: null, modelError: null, canUndo: false, error: null, exchangeDir: null, composing: false,
+  state: null, model: null, modelOk: null, modelError: null, canUndo: false, error: null, exchangeDir: null, composing: false, ownHandle: '',
   view: 'inbox', settings: null, settingsOpen: false, modelPickOpen: false, toast: null, dialog: null,
 }
 const listeners = new Set()
@@ -109,9 +109,9 @@ export async function undo() {
 export async function saveSettings(payload) {
   try {
     const settings = await api('settings', payload)
-    setDesk({ settings })
+    setDesk({ settings, ownHandle: settings.ownHandle ?? '' })
     toast(t('设置已保存'))
-    api('state').then(data => setDesk({ exchangeDir: data.exchangeDir ?? null })).catch(() => {})
+    api('state').then(data => setDesk({ exchangeDir: data.exchangeDir ?? null, ownHandle: data.ownHandle ?? '' })).catch(() => {})
     return true
   } catch (err) {
     report(err)
@@ -139,7 +139,7 @@ export async function saveAssistant(assistant) {
 export async function testImage(payload) {
   try {
     const settings = await api('settings', payload)
-    setDesk({ settings })
+    setDesk({ settings, ownHandle: settings.ownHandle ?? '' })
     const { src } = await api('settings/test', {})
     return src
   } catch (err) {

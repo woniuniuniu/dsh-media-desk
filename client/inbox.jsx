@@ -5,7 +5,7 @@ import { PLACEHOLDER, compact, composeStatus, dayKey, fmtDate, fmtTime, needsSto
 import { Dialog, Empty, Icon } from './ui.jsx'
 
 const MAX_TWEET = 280
-const STATUS_LABEL = { approved: '已通过', discarded: '已丢掉', sent: '已发出', expired: '已过期' }
+const STATUS_LABEL = { approved: '已通过', discarded: '已丢掉', sent: '已发', expired: '已过期' }
 const DISCARD_REASONS = [
   { reason: 'not_interested', label: '不感兴趣' },
   { reason: 'not_me', label: '写得不像我' },
@@ -218,6 +218,17 @@ function Card({ candidate }) {
   )
 }
 
+export function SentComparison({ row }) {
+  const [open, setOpen] = React.useState(false)
+  if (row.status !== 'sent' || typeof row.sentText !== 'string' || !row.sentText || row.sentText === row.text) return null
+  return (
+    <div className="md-sent-comparison">
+      <button type="button" className="md-btn is-small" aria-expanded={open} onClick={() => setOpen(!open)}>{t('看实发内容')}</button>
+      {open ? <div className="md-sent-columns"><div><b>{t('草稿')}</b><p>{row.text}</p></div><div><b>{t('实发')}</b><p>{row.sentText}</p></div></div> : null}
+    </div>
+  )
+}
+
 function Handled() {
   const candidates = useDesk(s => s.state.candidates)
   const today = dayKey(new Date())
@@ -227,7 +238,10 @@ function Handled() {
     <details className="md-inbox-fold md-inbox-handled">
       <summary>{t('已处理（{n}）', { n: rows.length })}</summary>
       <ul>
-        {rows.map(row => <li key={row.id}><span className="md-inbox-tag">{t(STATUS_LABEL[row.status] ?? row.status)}</span>{row.title}</li>)}
+        {rows.map(row => <li key={row.id}>
+          <span className="md-inbox-tag">{t(STATUS_LABEL[row.status] ?? row.status)}</span>{row.title}
+          {row.status === 'sent' ? <><time>{fmtTime(row.sentAt ?? row.decidedAt)}</time><SentComparison row={row} /></> : null}
+        </li>)}
       </ul>
     </details>
   )

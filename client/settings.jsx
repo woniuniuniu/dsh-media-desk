@@ -18,6 +18,7 @@ export function SettingsDialog() {
   const open = useDesk(s => s.settingsOpen)
   const settings = useDesk(s => s.settings)
   const exchangeDir = useDesk(s => s.exchangeDir)
+  const ownHandle = useDesk(s => s.ownHandle)
   const [form, setForm] = React.useState(null)
   const [testing, setTesting] = React.useState(false)
   const [sample, setSample] = React.useState(null)
@@ -25,14 +26,15 @@ export function SettingsDialog() {
   React.useEffect(() => {
     if (!open || !settings) return
     const { image } = settings
-    setForm({ composeAt: settings.composeAt ?? '07:00', slots: settings.slots?.length ? [...settings.slots] : ['09:00'], dailyCandidates: settings.dailyCandidates ?? 6, dailyImages: settings.dailyImages ?? 3, exchangeDir: settings.exchangeDir ?? '', source: image.source ?? 'http', baseUrl: image.baseUrl, model: image.model, apiKey: '', size: image.size, quality: image.quality, toolSize: image.toolSize ?? '1536x1024', toolQuality: image.toolQuality ?? '', extra: image.extra })
+    setForm({ ownHandle: ownHandle ?? '', composeAt: settings.composeAt ?? '07:00', slots: settings.slots?.length ? [...settings.slots] : ['09:00'], dailyCandidates: settings.dailyCandidates ?? 6, dailyImages: settings.dailyImages ?? 3, exchangeDir: settings.exchangeDir ?? '', source: image.source ?? 'http', baseUrl: image.baseUrl, model: image.model, apiKey: '', size: image.size, quality: image.quality, toolSize: image.toolSize ?? '1536x1024', toolQuality: image.toolQuality ?? '', extra: image.extra })
     setSample(null)
-  }, [open, settings])
+  }, [open, settings, ownHandle])
   if (!open || !form) return null
   const close = () => setDesk({ settingsOpen: false })
   const set = (key, value) => setForm(f => ({ ...f, [key]: value }))
   const setSlot = (index, value) => setForm(f => ({ ...f, slots: f.slots.map((slot, i) => (i === index ? value : slot)) }))
   const payload = () => ({
+    ownHandle: form.ownHandle,
     composeAt: form.composeAt,
     slots: form.slots,
     dailyCandidates: Number(form.dailyCandidates),
@@ -47,6 +49,11 @@ export function SettingsDialog() {
         event.preventDefault()
         if (await saveSettings(payload())) close()
       }}>
+        <label className="md-field">
+          <span>{t('我的账号名')}</span>
+          <input placeholder={t('例如 yourname，不带 @')} value={form.ownHandle} onChange={e => set('ownHandle', e.target.value)} />
+          <small>{t('用来生成你自己帖子的链接；Grok Bot 读到的内容也按这个账号对应。')}</small>
+        </label>
         <fieldset className="md-field md-settings-group">
           <legend>{t('成稿与排期')}</legend>
           <label className="md-field">

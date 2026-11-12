@@ -280,3 +280,41 @@ body[data-ds-dark-theme] .md-root { color-scheme: dark; }
 .md-slots li { display: inline-flex; align-items: center; gap: 2px; }
 .md-root .md-slots input { width: 120px; }
 .md-slots-add { align-self: flex-start; }
+
+/* 长文、复盘与实发对照，沿用宿主颜色和页面容器断点。 */
+.md-longform { display: grid; grid-template-columns: 300px minmax(0, 1fr); align-items: start; gap: 16px; max-width: 1200px; margin: 0 auto; }
+.md-longform-list, .md-longform-editor, .md-insights, .md-insights-section { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.md-longform-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; width: 100%; padding: 10px 8px; border-radius: var(--r-sm); }
+.md-longform-row span { min-width: 0; overflow-wrap: anywhere; }
+.md-longform-row time { flex: none; color: var(--ink3); font-size: 12px; }
+.md-longform-row:hover { background: var(--hover); }
+.md-longform-row.is-on { background: var(--active); }
+.md-longform-editor > .md-btn, .md-longform-editor > .md-inbox-tag { align-self: flex-start; }
+.md-longform-editor > p, .md-longform-placeholders p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.md-root .md-longform-body { min-height: 420px; line-height: 1.7; resize: vertical; }
+.md-longform-placeholders { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--r-md); background: var(--hover); }
+.md-insights { max-width: 960px; margin: 0 auto; }
+.md-insights-number { font-family: var(--latin-serif); font-size: 40px; line-height: 1.2; }
+.md-insights-chart { width: 100%; height: 120px; }
+.md-insights-totals, .md-voice-comparison, .md-sent-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.md-insights-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.md-insights-metrics dt, .md-voice-card dt { color: var(--ink3); font-size: 12px; }
+.md-insights-metrics dd { font-size: 20px; line-height: 1.4; }
+.md-insights-table { overflow-x: auto; }
+.md-insights-table table { width: 100%; border-collapse: collapse; text-align: left; }
+.md-insights-table th, .md-insights-table td { padding: 8px; border-bottom: .5px solid var(--line); }
+.md-insights-top { display: flex; flex-direction: column; gap: 12px; }
+.md-insights-top p, .md-voice-card dd, .md-voice-comparison p, .md-sent-columns p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.md-insights-top a { color: var(--accent); }
+.md-voice-comparison > div { min-width: 0; padding: 12px; background: var(--hover); border-radius: var(--r-md); }
+.md-voice-comparison h3 { margin-bottom: 8px; }
+.md-voice-card { display: flex; flex-direction: column; gap: 8px; }
+.md-sent-comparison { min-width: 0; flex-basis: 100%; }
+.md-sent-columns { margin-top: 8px; padding: 8px; background: var(--card); border-radius: var(--r-sm); }
+.md-inbox-handled li:has(.md-sent-comparison) { flex-wrap: wrap; }
+.md-cal-posts .md-sent-comparison > button { max-width: 100%; height: auto; padding: 2px; white-space: normal; font-size: 10px; }
+.md-cal-posts .md-sent-columns { gap: 4px; padding: 4px; font-size: 11px; line-height: 1.4; }
+@container md-root (max-width: 860px) { .md-longform { grid-template-columns: minmax(0, 1fr); } }
+@container md-root (max-width: 560px) {
+  .md-insights-totals, .md-voice-comparison { grid-template-columns: minmax(0, 1fr); }
+}

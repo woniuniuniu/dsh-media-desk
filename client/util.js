@@ -185,13 +185,13 @@ export function opsToast(data, { undoable = true, silent = false } = {}) {
   return null
 }
 
-const DESK_KEYS = ['state', 'model', 'modelOk', 'modelError', 'canUndo', 'exchangeDir', 'composing']
+const DESK_KEYS = ['state', 'model', 'modelOk', 'modelError', 'canUndo', 'exchangeDir', 'composing', 'ownHandle']
 
 /** GET state 的返回 → 界面状态里对应的几个字段。 */
 export function deskFromState(data) {
   return {
     state: data.state, model: data.model ?? null, modelOk: data.modelOk ?? null, modelError: data.modelError ?? null,
-    canUndo: data.canUndo === true, exchangeDir: data.exchangeDir ?? null, composing: data.composing === true,
+    canUndo: data.canUndo === true, exchangeDir: data.exchangeDir ?? null, composing: data.composing === true, ownHandle: data.ownHandle ?? '',
   }
 }
 
@@ -252,6 +252,12 @@ export function mineLink(mine, ownHandle) {
 
 export function pct(n) {
   return Number.isFinite(n) ? `${Math.round(n * 100)}%` : '—'
+}
+
+/** 复盘只链接到重新构造的 X 帖子地址，不透传外部 URL。 */
+export function insightLink(url) {
+  const match = typeof url === 'string' && /^https:\/\/x\.com\/([A-Za-z0-9_]{1,15})\/status\/(\d{5,25})(?:[?#].*)?$/.exec(url)
+  return match ? mineLink({ id: match[2] }, match[1]) : null
 }
 
 export function signed(n) {

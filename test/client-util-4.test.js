@@ -2,7 +2,7 @@ process.env.TZ = 'Asia/Shanghai'
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PLACEHOLDER, linePath, groupLongforms, splitPlaceholder, mineLink, pct, signed } from '../client/util.js'
+import { PLACEHOLDER, linePath, groupLongforms, splitPlaceholder, mineLink, pct, signed, insightLink } from '../client/util.js'
 
 test('linePath：按日期排序、均匀横坐标、纵轴映射和一位小数', () => {
   const series = [{ day: '2026-11-03', count: 30 }, { day: '2026-11-01', count: 10 }, { day: '2026-11-02', count: 20 }]
@@ -66,4 +66,9 @@ test('pct：百分比四舍五入，非有限数显示破折号', () => {
 test('signed：正数带加号、负数和零保留，空或非有限数显示破折号', () => {
   for (const [value, expected] of [[12, '+12'], [-3, '-3'], [0, '0'], [-0, '0']]) assert.equal(signed(value), expected)
   for (const value of [null, undefined, NaN, Infinity, -Infinity, '12']) assert.equal(signed(value), '—')
+})
+
+test('insightLink：只重建合法 X 帖子链接，不透传外部地址或查询参数', () => {
+  assert.equal(insightLink('https://x.com/a_B9/status/12345?s=20#reply'), 'https://x.com/a_B9/status/12345')
+  for (const value of [null, 12, 'javascript:alert(1)', 'https://x.com.evil/a/status/12345', 'https://x.com@evil/a/status/12345', 'https://x.com/a/status/12345/evil', 'https://x.com/a/status/1234', 'https://x.com/a/status/12345\n', 'http://x.com/a/status/12345']) assert.equal(insightLink(value), null)
 })

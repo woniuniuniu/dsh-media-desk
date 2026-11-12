@@ -1,6 +1,8 @@
 // dsh-x-desk 浏览器半片：侧栏入口 + main 全局面板。
 import React from 'react'
 import { InboxView } from './inbox.jsx'
+import { InsightsView } from './insights.jsx'
+import { LongformView } from './longform.jsx'
 import { loadDesk, setDesk, startAutoRefresh, undo, useDesk } from './desk.js'
 import { ModelButton, ModelPicker } from './modelpick.jsx'
 import { ScheduleView } from './schedule.jsx'
@@ -14,11 +16,13 @@ const PANEL_ID = 'x-desk'
 
 const NAV = [
   { id: 'inbox', label: '收件箱' },
+  { id: 'longform', label: '长文' },
   { id: 'schedule', label: '排期' },
+  { id: 'insights', label: '复盘' },
   { id: 'style', label: '风格' },
 ]
 
-const VIEWS = { inbox: InboxView, schedule: ScheduleView, style: StyleView }
+const VIEWS = { inbox: InboxView, longform: LongformView, schedule: ScheduleView, insights: InsightsView, style: StyleView }
 
 function Desk() {
   const ready = useDesk(s => Boolean(s.state))
