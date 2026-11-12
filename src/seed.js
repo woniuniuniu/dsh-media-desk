@@ -16,6 +16,7 @@ export function emptyState() {
     followers: [], // {day:'YYYY-MM-DD', count, at}：每天一条，at 是该值的读取时间（用来判断同一天哪个更晚）
     proposals: [],
     dismissedRules: [],
+    dismissedNames: [], // 忽略过的长度建议的名字（长度建议的字数会变，所以按名字去重）
     longforms: [],
     runs: {
       lastComposeDay: null,

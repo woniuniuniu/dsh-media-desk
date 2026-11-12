@@ -165,7 +165,7 @@ const HANDLERS = {
   accept_proposal(state, op) {
     const row = need(state.proposals, op.id, tr('规则建议'))
     // 清理规则文字之前创建的旧建议可能带换行
-    const name = oneLine(row.name, 60)
+    const name = oneLine(row.name, 60) || tr('规则建议')
     const rule = oneLine(row.rule, 500)
     state.rules.push({ id: newId('r'), name, rule, status: 'active', evidence: row.evidence })
     state.proposals = state.proposals.filter(entry => entry.id !== op.id)
@@ -179,6 +179,13 @@ const HANDLERS = {
     const kept = (state.dismissedRules ?? []).filter(rule => rule !== key)
     kept.push(key)
     state.dismissedRules = kept.slice(-MAX_DISMISSED)
+    // 长度建议的字数会变，另记名字，同名的以后都不再提
+    if (row.source === 'length') {
+      const name = String(row.name).trim()
+      const names = (state.dismissedNames ?? []).filter(entry => entry !== name)
+      names.push(name)
+      state.dismissedNames = names.slice(-MAX_DISMISSED)
+    }
     return tr('已忽略这条建议')
   },
   add_longform(state, op, ctx) {

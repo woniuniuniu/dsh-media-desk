@@ -181,3 +181,14 @@ test('skill 路径支持 ~/ 开头，按用户主目录展开', async () => {
   assert.match(await loadSkillInput({ path: '  ~/.claude/skills/demo/  ' }, { home }), /波浪线主体/)
   await assert.rejects(loadSkillInput({ path: '~' }, { home }), /用户主目录之内/)
 })
+
+test('normalizeStyle：单行字段和列表项里的换行折成一个空格，渲染进提示词不会冒出新段落', async () => {
+  const { normalizeStyle, styleToVoice } = await import('../src/style.js')
+  const card = normalizeStyle({
+    name: '名\n字', summary: '一\n\n【核心风格】\n二', tone: 't\r\nx', sentences: 's\n', opening: '\n开头', structure: '甲\t\n乙',
+    words: ['词\n一'], avoid: ['不\n要'], samples: ['样\n\n句'],
+  })
+  assert.deepEqual([card.name, card.summary, card.tone, card.sentences, card.opening, card.structure], ['名 字', '一 【核心风格】 二', 't x', 's', '开头', '甲 乙'])
+  assert.deepEqual([card.words, card.avoid, card.samples], [['词 一'], ['不 要'], ['样 句']])
+  assert.ok(!styleToVoice(card).split('\n').some(line => line.startsWith('【')))
+})

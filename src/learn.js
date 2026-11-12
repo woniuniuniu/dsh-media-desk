@@ -33,14 +33,18 @@ export function lengthProposal(pairs) {
   return null
 }
 
-/** 让模型从最近的改稿里找反复出现的习惯；样本不足、模型失败或输出无法解析都返回 []。 */
+/**
+ * 让模型从最近的改稿里找反复出现的习惯。
+ * 样本不足返回空列表；模型出错或输出无法解析时 failed 为 true，调用方据此不把这批样本算作学过。
+ * @returns {Promise<{proposals: object[], failed: boolean}>}
+ */
 export async function proposeFromEdits({ callText }, pairs) {
-  if (pairs.length < MIN_PAIRS) return []
+  if (pairs.length < MIN_PAIRS) return { proposals: [], failed: false }
   try {
     const { system, user } = rulePrompts(pairs.slice(-10))
     const { text } = await callText({ system, user, maxTokens: 1000, light: true })
     const raw = extractJson(text)
-    if (!Array.isArray(raw)) return []
+    if (!Array.isArray(raw)) return { proposals: [], failed: true }
     const out = []
     for (const item of raw) {
       if (!item || typeof item !== 'object' || Array.isArray(item)) continue
@@ -49,9 +53,9 @@ export async function proposeFromEdits({ callText }, pairs) {
       out.push({ name: oneLine(item.name, 12), rule, evidence: oneLine(item.evidence, 60), source: 'edits' })
       if (out.length === 3) break
     }
-    return out
+    return { proposals: out, failed: false }
   } catch {
-    return []
+    return { proposals: [], failed: true }
   }
 }
 
@@ -62,19 +66,25 @@ export async function learnDaily({ store, callText, now = () => new Date() }) {
   const state = await store.read()
   if (state.runs.lastLearnDay === today) return { proposals: 0 }
   const pairs = editPairs(state)
-  const taken = (st) => new Set([...st.rules, ...st.proposals].map(r => String(r.rule).trim()).concat((st.dismissedRules ?? []).map(r => String(r).trim())))
+  // 一律按规则文字去重；长度建议的字数会随样本变，所以还按名字去重（含忽略过的名字）
+  const taken = (st) => {
+    const rules = new Set([...st.rules, ...st.proposals].map(r => String(r.rule).trim()).concat((st.dismissedRules ?? []).map(r => String(r).trim())))
+    const names = new Set([...st.rules, ...st.proposals].map(r => String(r.name).trim()).concat((st.dismissedNames ?? []).map(n => String(n).trim())))
+    return p => rules.has(p.rule.trim()) || (p.source === 'length' && names.has(p.name.trim()))
+  }
   // 配对数变少（有候选稿被删）时，以现有数量为基准，不让学习卡在一个永远够不到的数上
   const base = Math.min(state.runs.learnedPairs, pairs.length)
   let fresh = []
   let ran = false
+  let failed = false
   if (pairs.length - base >= NEW_PAIRS) {
     ran = true
-    const found = [lengthProposal(pairs), ...await proposeFromEdits({ callText }, pairs)].filter(Boolean)
+    const fromEdits = await proposeFromEdits({ callText }, pairs)
+    failed = fromEdits.failed
+    const found = [lengthProposal(pairs), ...fromEdits.proposals].filter(Boolean)
     const known = taken(state)
     for (const p of found) {
-      const key = p.rule.trim()
-      if (known.has(key)) continue
-      known.add(key)
+      if (known(p) || fresh.some(f => f.rule.trim() === p.rule.trim())) continue
       fresh.push(p)
     }
   }
@@ -84,9 +94,12 @@ export async function learnDaily({ store, callText, now = () => new Date() }) {
     const stamp = at.toISOString()
     if (ran) {
       const known = taken(s)
-      fresh = fresh.filter(p => !known.has(p.rule.trim()))
+      fresh = fresh.filter(p => !known(p))
       s.proposals.push(...fresh.map(p => ({ id: newId('p'), ...p, createdAt: stamp })))
       if (s.proposals.length > MAX_PROPOSALS) s.proposals.splice(0, s.proposals.length - MAX_PROPOSALS)
+    }
+    // 模型没答上来时这批样本不算学过，明天（lastLearnDay 照记）再试
+    if (ran && !failed) {
       s.runs.learnedPairs = pairs.length
     } else {
       s.runs.learnedPairs = Math.min(s.runs.learnedPairs, pairs.length)

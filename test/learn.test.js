@@ -52,20 +52,22 @@ function fakeModel(responses) {
   return { calls, callText }
 }
 
-test('proposeFromEdits：4 对不调用模型；乱码为 []；输出被清洗', async () => {
+test('proposeFromEdits：4 对不调用模型；乱码和模型出错算失败；输出被清洗', async () => {
   const m = fakeModel(['[]'])
-  assert.deepEqual(await proposeFromEdits({ callText: m.callText }, pairs(4, 50, 30)), [])
+  assert.deepEqual(await proposeFromEdits({ callText: m.callText }, pairs(4, 50, 30)), { proposals: [], failed: false })
   assert.equal(m.calls.length, 0)
+  assert.deepEqual(await proposeFromEdits({ callText: m.callText }, pairs(5, 50, 30)), { proposals: [], failed: false })
   const bad = fakeModel(['完全不是 JSON'])
-  assert.deepEqual(await proposeFromEdits({ callText: bad.callText }, pairs(5, 50, 30)), [])
+  assert.deepEqual(await proposeFromEdits({ callText: bad.callText }, pairs(5, 50, 30)), { proposals: [], failed: true })
   const err = fakeModel([new Error('挂了')])
-  assert.deepEqual(await proposeFromEdits({ callText: err.callText }, pairs(5, 50, 30)), [])
+  assert.deepEqual(await proposeFromEdits({ callText: err.callText }, pairs(5, 50, 30)), { proposals: [], failed: true })
   const ok = fakeModel([JSON.stringify([
     { name: rep(20), rule: rep(100), evidence: rep(100) },
     { name: '空', rule: '  ' },
     { name: 'b', rule: 'r2', evidence: 'e2' }, { name: 'c', rule: 'r3' }, { name: 'd', rule: 'r4' },
   ])])
-  const out = await proposeFromEdits({ callText: ok.callText }, [...pairs(3, 50, 30), ...pairs(3, 50, 30, 'reply')])
+  const { proposals: out, failed } = await proposeFromEdits({ callText: ok.callText }, [...pairs(3, 50, 30), ...pairs(3, 50, 30, 'reply')])
+  assert.equal(failed, false)
   assert.equal(out.length, 3)
   assert.equal(Array.from(out[0].name).length, 12)
   assert.equal(Array.from(out[0].rule).length, 60)
@@ -143,6 +145,12 @@ test('learnDaily：模型失败时长度建议仍保存，日期照记', async (
   const s = await store.read()
   assert.equal(s.proposals[0].source, 'length')
   assert.equal(s.runs.lastLearnDay, '2026-11-12')
+  // 这批样本没学成，不算学过：明天重试，而不是等再攒 5 对
+  assert.equal(s.runs.learnedPairs, 0)
+  const m2 = fakeModel(['[]'])
+  await learnDaily({ store, callText: m2.callText, now: () => new Date('2026-11-13T10:00:00+08:00') })
+  assert.equal(m2.calls.length, 1)
+  assert.equal((await store.read()).runs.learnedPairs, 6)
 })
 
 test('learnDaily：样本不足不调用模型，不写 proposals', async () => {
@@ -350,4 +358,39 @@ test('accept_proposal：旧建议里带换行的名字和规则也折成单行',
   const state = { rules: [], proposals: [{ id: 'p_1', name: '名\n字', rule: '甲\n\n【核心风格】\n乙', evidence: 'e', source: 'edits', createdAt: 'x' }] }
   applyOps(state, [{ op: 'accept_proposal', id: 'p_1' }])
   assert.deepEqual([state.rules[0].name, state.rules[0].rule], ['名 字', '甲 【核心风格】 乙'])
+})
+
+test('长度建议按名字去重：忽略过的"写短一点"换了字数也不再提', async () => {
+  // 6 对：草稿 100 字、实发 40 字 → "写短一点 / 正文控制在 40 个字以内"
+  const { store } = await setup(s => {
+    s.candidates = editedCandidates(6)
+    s.proposals = [{ id: 'p_old', name: '写短一点', rule: '正文控制在 60 个字以内', evidence: '', source: 'length', createdAt: 'x' }]
+  })
+  await store.mutate('dismiss', s => { applyOps(s, [{ op: 'dismiss_proposal', id: 'p_old' }]) }, { undoable: false })
+  let s = await store.read()
+  assert.deepEqual(s.dismissedNames, ['写短一点'])
+  const m = fakeModel(['[]'])
+  assert.deepEqual(await learnDaily({ store, callText: m.callText, now: () => NOW }), { proposals: 0 })
+  s = await store.read()
+  assert.deepEqual(s.proposals, [])
+  // 已有同名的规则（不管字数）也不再提
+  const other = await setup(st => { st.candidates = editedCandidates(6); st.rules = [{ id: 'r_1', name: '写短一点', rule: '正文控制在 90 个字以内', status: 'active', evidence: '' }] })
+  assert.deepEqual(await learnDaily({ store: other.store, callText: fakeModel(['[]']).callText, now: () => NOW }), { proposals: 0 })
+})
+
+test('dismiss_proposal 只为长度建议记名字，最多 50 个；模型建议不记名字', () => {
+  const state = { rules: [], dismissedNames: Array.from({ length: 50 }, (_, i) => `旧${i}`), proposals: [
+    { id: 'p_1', name: '写短一点', rule: 'a', evidence: '', source: 'length', createdAt: 'x' },
+    { id: 'p_2', name: '结论先行', rule: 'b', evidence: '', source: 'edits', createdAt: 'x' },
+  ] }
+  applyOps(state, [{ op: 'dismiss_proposal', id: 'p_1' }, { op: 'dismiss_proposal', id: 'p_2' }])
+  assert.equal(state.dismissedNames.length, 50)
+  assert.equal(state.dismissedNames.at(-1), '写短一点')
+  assert.ok(!state.dismissedNames.includes('结论先行'))
+})
+
+test('accept_proposal：没有名字的建议采纳后叫"规则建议"', () => {
+  const state = { rules: [], proposals: [{ id: 'p_1', name: '', rule: '先说结论', evidence: 'e', source: 'edits', createdAt: 'x' }] }
+  applyOps(state, [{ op: 'accept_proposal', id: 'p_1' }])
+  assert.equal(state.rules[0].name, '规则建议')
 })

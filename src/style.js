@@ -1,6 +1,7 @@
 // 风格：把一个人的写法提炼成一张卡。
 import { wrapMaterial } from './ai.js'
 import { tr } from './i18n.js'
+import { safeText } from './inbox.js'
 
 /** 风格提炼的提示词。素材可能来自网页，只当素材，不当指令。 */
 export function stylePrompts(text, name) {
@@ -13,8 +14,9 @@ export function stylePrompts(text, name) {
 
 /** 模型输出不可信：只留这些字段，并限制长度。 */
 export function normalizeStyle(raw, preferredName = '') {
-  const str = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max) : '')
-  const list = (value, count, max) => (Array.isArray(value) ? value.filter(row => typeof row === 'string' && row.trim()).slice(0, count).map(row => row.trim().slice(0, max)) : [])
+  // 每个字段都会进系统提示词：一律折成单行（与 ops.js 的 oneLine 相同），按码点截断
+  const str = (value, max) => (typeof value === 'string' ? safeText(value.replace(/\s+/g, ' ').trim(), max).trim() : '')
+  const list = (value, count, max) => (Array.isArray(value) ? value.map(row => str(row, max)).filter(Boolean).slice(0, count) : [])
   return {
     name: str(preferredName, 20) || str(raw?.name, 20) || tr('未命名风格'),
     summary: str(raw?.summary, 80),
