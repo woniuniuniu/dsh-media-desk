@@ -41,8 +41,9 @@ export function emptyState() {
 export function migrateState(raw) {
   if (!raw || typeof raw !== 'object' || raw.version !== 2) return emptyState()
   const base = emptyState()
+  const appliedDecisions = Array.isArray(raw.appliedDecisions) ? raw.appliedDecisions.filter(key => typeof key === 'string') : []
   const candidates = Array.isArray(raw.candidates)
     ? raw.candidates.map(c => (c && typeof c === 'object' ? { sentText: null, sentPostId: null, sentAt: null, ...c } : c))
     : raw.candidates
-  return { ...base, ...raw, candidates, runs: { ...base.runs, ...(raw.runs ?? {}) }, voice: { ...base.voice, ...(raw.voice ?? {}) } }
+  return { ...base, ...raw, candidates, appliedDecisions, runs: { ...base.runs, ...(raw.runs ?? {}) }, voice: { ...base.voice, ...(raw.voice ?? {}) } }
 }

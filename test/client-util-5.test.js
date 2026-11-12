@@ -44,6 +44,17 @@ test('syncAdvice：覆盖源码所有 refused 原因，未知原因使用搭建�
   for (const reason of ['未知原因', 'toString', '__proto__', '', null, undefined]) assert.equal(syncAdvice(reason), fallback)
 })
 
+test('Final fix2: syncAdvice explains merge failures caused by local changes', () => {
+  const advice = '交换文件夹里有你自己放进去、还没提交的文件，挡住了同步。请把那个文件移出交换文件夹后再试。'
+  for (const detail of [
+    'error: Your local changes to the following files would be overwritten by merge:\n notes.txt\nPlease commit your changes or stash them before you merge.',
+    '错误：您对下列文件的本地修改将被合并操作覆盖：\n notes.txt',
+  ]) assert.equal(syncAdvice(`和远端合并失败：${detail}`), advice)
+  for (const reason of ['和远端合并失败：CONFLICT in drafts/a.json', '拉取失败：local changes', 'local changes', '本地修改', '和远端合并失败', 42, {}]) {
+    assert.equal(syncAdvice(reason), '请按 docs/grok-bot/README.md 的搭建步骤检查')
+  }
+})
+
 test('Final I3: loading is silent and either unsaved toggle shows save-first status', () => {
   assert.deepEqual(syncLine(null, now, { loaded: false }), { tone: 'off', text: '' })
   for (const enabled of [false, true]) {

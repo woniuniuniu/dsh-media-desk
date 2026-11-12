@@ -81,3 +81,13 @@ test('Final I1: appliedDecisions starts empty and survives v2 migration', () => 
   const keys = ['c_1234|view|2026-11-12T00:00:00.000Z']
   assert.deepEqual(migrateState({ version: 2, appliedDecisions: keys }).appliedDecisions, keys)
 })
+
+test('Final fix2: appliedDecisions migration accepts only an array of strings', () => {
+  for (const appliedDecisions of [undefined, null, 'key', 42, true, {}]) {
+    assert.deepEqual(migrateState({ version: 2, appliedDecisions }).appliedDecisions, [])
+  }
+  const key = 'c_1234|revise|2026-11-11T00:00:00.000Z'
+  const mixed = [null, key, 42, {}, false, [], '']
+  assert.deepEqual(migrateState({ version: 2, appliedDecisions: mixed }).appliedDecisions, [key, ''])
+  assert.equal(mixed.length, 7)
+})

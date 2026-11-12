@@ -183,6 +183,14 @@ test('搭建说明覆盖同步固定原因、动态原因和模板字符串错�
   }
 })
 
+test('Final fix2: merge troubleshooting explains owner files blocking sync', async () => {
+  const text = await readDoc('README.md')
+  const entry = text.split('\n').find(line => line.startsWith('- 「和远端合并失败：」'))
+  assert.ok(entry.includes('local changes'))
+  assert.ok(entry.includes('本地修改'))
+  assert.ok(entry.includes('交换文件夹里有你自己放进去、还没提交的文件，挡住了同步。请把那个文件移出交换文件夹后再试。'))
+})
+
 test('Final I1/M8: recovery includes hidden seen files, Finder merge and quoted paths', async () => {
   const text = await readDoc('README.md')
   const recovery = text.split('4. 将备份')[1].split('\n5.')[0]

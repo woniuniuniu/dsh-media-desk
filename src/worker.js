@@ -13,6 +13,7 @@ const TICK_MS = 60_000
 const RETRY_MS = 30 * 60_000
 const KEEP_POSTS_MS = 14 * 24 * 3600e3
 const DAY_MS = 24 * 3600e3
+const KEEP_DECISIONS_MS = 60 * DAY_MS
 const KEEP_MINE_MS = 180 * DAY_MS
 const KEEP_REPLIES_MS = 90 * DAY_MS
 const KEEP_FOLLOWERS_MS = 400 * DAY_MS
@@ -153,7 +154,9 @@ export class Worker {
       s.posts = s.posts.filter(p => Date.parse(p.postedAt) >= cutoff)
 
       const known = new Set(s.appliedDecisions)
+      const decisionCutoff = now.getTime() - KEEP_DECISIONS_MS
       for (const decision of decisions.items) {
+        if (Date.parse(decision.at) < decisionCutoff) continue
         const key = `${decision.candidateId}|${decision.action}|${decision.at}`
         if (known.has(key)) continue
         const result = applyDecision(s, decision, { now, slots: settings.slots })
@@ -163,7 +166,7 @@ export class Worker {
         s.appliedDecisions.push(key)
       }
       const at = key => Date.parse(key.slice(key.lastIndexOf('|') + 1))
-      s.appliedDecisions = s.appliedDecisions.filter(key => at(key) >= now.getTime() - 60 * DAY_MS)
+      s.appliedDecisions = s.appliedDecisions.filter(key => at(key) >= decisionCutoff)
         .sort((a, b) => at(a) - at(b)).slice(-5000)
     }, { undoable: false })
     // 落库之后才算处理过；改稿失败只记提示，不会反复重试

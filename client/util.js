@@ -36,6 +36,9 @@ export function syncLine(status, now, { loaded = true, pending = false } = {}) {
 }
 
 export function syncAdvice(reason) {
+  if (typeof reason === 'string' && reason.startsWith('和远端合并失败：') && /local changes|本地修改/.test(reason)) {
+    return '交换文件夹里有你自己放进去、还没提交的文件，挡住了同步。请把那个文件移出交换文件夹后再试。'
+  }
   switch (reason) {
     case '交换文件夹还不存在': return '先打开一次工作台，等它创建交换文件夹（设置里能看到路径）'
     case '交换文件夹在代码仓库里面，不能同步': return '请把交换文件夹放到代码仓库外，并在设置里更新路径。'

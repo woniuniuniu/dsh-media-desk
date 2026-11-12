@@ -409,6 +409,27 @@ for (const action of ['approve', 'discard', 'sent', 'revise', 'view', 'missing']
   assert.equal(calls, ['revise', 'view'].includes(action) ? 1 : 0)
 })
 
+for (const days of [61, 60, 59]) test(`Final fix2: ${days}-day-old revise uses the decision retention window`, async () => {
+  const { worker, store, ex } = await setup({ samples: false })
+  await store.mutate('seed', s => {
+    s.candidates.push(candidate('c_real1', { status: 'approved', revision: 3 }))
+    s.runs.lastComposeDay = TODAY
+  }, { undoable: false })
+  const model = mock.method(worker.composer, 'callText')
+  const at = new Date(NOW.getTime() - days * 86400e3).toISOString()
+  await decisionFile(ex, 'old.json', { candidateId: 'c_real1', action: 'revise', text: '修改要求', at })
+  assert.equal((await ex.readNew('decisions')).items.length, 1)
+  await worker.tick()
+  const state = await store.read()
+  assert.equal(model.mock.callCount(), days > 60 ? 0 : 1)
+  assert.equal(state.candidates[0].text, days > 60 ? '旧稿' : '一条改好的推文。')
+  assert.equal(state.candidates[0].revision, days > 60 ? 3 : 4)
+  assert.deepEqual(state.runs.notices, [])
+  assert.deepEqual(state.appliedDecisions, days > 60 ? [] : [`c_real1|revise|${at}`])
+  assert.deepEqual(JSON.parse(await readFile(join(ex.root, '.seen-decisions.json'), 'utf8')), ['old.json'])
+  assert.deepEqual((await new Exchange(ex.root).readNew('decisions')).items, [])
+})
+
 test('Final I1: decision keys prune at 60 days and retain the newest 5000 in time order', async () => {
   const { worker, store } = await setup({ samples: false })
   const key = ms => `c_real1|view|${new Date(ms).toISOString()}`
