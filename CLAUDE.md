@@ -28,6 +28,7 @@
 | `docs/superpowers/plans/` | 实施计划，命名 `YYYY-MM-DD-<主题>-plan.md` | |
 | `docs/spikes/` | 验证性试验和联调的结论，命名 `YYYY-MM-DD-<问题>.md`，只写结论和数据 | 试验代码 |
 | `docs/grok-bot/` | 给 Grok Bot 的定时任务指令，一份指令一个文件 | 任何密钥、账号信息 |
+| `docs/acceptance/` | 交给负责人的验收说明，命名 `YYYY-MM-DD-<主题>-acceptance.md`：做了什么、替他做了哪些决定、需要他亲自做的事、待他决定的事 | 过程记录（放 `.superpowers/`，不提交） |
 
 命名：文件名用英文小写加连字符；代码、变量、命令用英文；注释和文档用中文。
 
