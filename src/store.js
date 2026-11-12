@@ -1,8 +1,10 @@
 // 持久化：$DSH_HOME/media-desk/state.json。桌面端和 Web 端读同一份数据。
 // 两个 Host 进程可能同时运行，所以每次写入前都按 mtime 判断是否需要重读。
+import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { CREATIVE_FIELDS } from './versions.js'
 import { assertAccountTransition } from './accounts.js'
 import { buildSeed, migrateState } from './seed.js'
 
@@ -25,7 +27,7 @@ function revertList(before, after, current) {
   const now = new Map(after.map(row => [row.id, row]))
   // 这一步新增的行撤掉，两边都有的行逐字段撤回，其余（之后才加的）原样保留
   const result = current
-    .filter(row => !(now.has(row.id) && !was.has(row.id)))
+    .filter(row => !(now.has(row.id) && !was.has(row.id) && !row.contentVersions?.length))
     .map(row => (was.has(row.id) && now.has(row.id) ? revertChange(was.get(row.id), now.get(row.id), row) : row))
   // 这一步删掉的行放回原来的位置
   const present = new Set(result.map(row => row.id))
@@ -47,11 +49,12 @@ function revertList(before, after, current) {
  */
 export function revertChange(before, after, current) {
   if (same(before, after)) return current
-  if (same(current, after)) return before === undefined ? undefined : structuredClone(before)
+  if (same(current, after) && !current?.items && !current?.contentVersions && !current?.contentRevision && !(Array.isArray(current) && current.some(row => row?.contentVersions || row?.contentRevision))) return before === undefined ? undefined : structuredClone(before)
   if (isObject(before) && isObject(after) && isObject(current)) {
     const result = { ...current }
     for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
-      const value = key === 'production' && differentProduction(after[key], current[key])
+      const preserveCreative = current.contentRevision && current.contentRevision !== after.contentRevision
+      const value = ['contentVersions', 'contentVersionExports', 'contentRevision'].includes(key) || (preserveCreative && CREATIVE_FIELDS.includes(key)) ? current[key] : key === 'production' && differentProduction(after[key], current[key])
         ? current[key] : revertChange(before[key], after[key], current[key])
       if (value === undefined) delete result[key]
       else result[key] = value
@@ -149,7 +152,16 @@ export class Store {
       const entry = this.undo.at(-1)
       if (!entry) return null
       await this.refresh()
-      const next = revertChange(JSON.parse(entry.before), JSON.parse(entry.after), this.state)
+      const before = JSON.parse(entry.before), after = JSON.parse(entry.after)
+      const next = revertChange(before, after, this.state)
+      // Undoing a restore is itself a new creative identity; older Undo must not own it.
+      for (const item of next.items) {
+        const was = before.items.find(row => row.id === item.id), changed = after.items.find(row => row.id === item.id), current = this.state.items.find(row => row.id === item.id)
+        if (changed?.contentRevision && was?.contentRevision !== changed.contentRevision && current?.contentRevision === changed.contentRevision) {
+          item.contentRevision = randomUUID()
+          if (item.production) item.production.generationId = randomUUID()
+        }
+      }
       assertAccountTransition(this.state,next)
       this.undo.pop()
       this.state = next

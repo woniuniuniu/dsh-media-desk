@@ -581,16 +581,18 @@ test('saveProduction 写出文章、脚本和素材，标题里的路径字符�
     p.shots[0].src = 'media-desk/assets/../../secret.jpg'
     p.shots[0].voice = '带|竖线'
     const saved = await saveProduction(p, { filesDir, exportDir: join(dir, 'out'), videoCover: Buffer.from([0xff, 0xd8, 0xff]) })
-    assert.equal(saved.path, join(dir, 'out', '危险 标题 测试'))
+    assert.ok(saved.path.startsWith(join(dir, 'out', '危险 标题 测试--unversioned--')))
     const names = await readdir(saved.path)
-    assert.deepEqual(names.sort(), ['分镜脚本.md', '封面原图.jpg', '视频封面.jpg', '脚本.md', '配图1.jpg'].sort())
+    assert.deepEqual(names.sort(), ['manifest.json', '分镜脚本.md', '封面原图.jpg', '视频封面.jpg', '脚本.md', '配图1.jpg'].sort())
     const article = await readFile(join(saved.path, '脚本.md'), 'utf8')
     assert.match(article, /^# \.\.\/危险/)
         assert.match(article, /这里要改。\n\n!\[图\]\(配图1\.jpg\)/)
     assert.match(await readFile(join(saved.path, '分镜脚本.md'), 'utf8'), /带｜竖线/)
-    // 再存一次写回同一个文件夹
+    // 每次保存都创建新目录，保留旧目录中的用户修改。
     p.savedPath = saved.path
-    assert.equal((await saveProduction({ ...p, title: '改名了' }, { filesDir, exportDir: join(dir, 'out') })).path, saved.path)
+    await writeFile(join(saved.path, '脚本.md'), 'USER EDIT')
+    assert.notEqual((await saveProduction({ ...p, title: '改名了' }, { filesDir, exportDir: join(dir, 'out') })).path, saved.path)
+    assert.equal(await readFile(join(saved.path, '脚本.md'), 'utf8'), 'USER EDIT')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

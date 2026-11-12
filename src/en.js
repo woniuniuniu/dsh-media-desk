@@ -1,5 +1,14 @@
 // Host 英文词典：key 是中文原文，{name} 是占位符。
 export const EN = {
+  '导出文件已保留，但保存记录未能确认。请检查文件和当前内容后再操作。': 'Export files were retained, but the saved record could not be confirmed. Inspect the output before acting again.',
+  '已保存版本 V{n}': 'Saved version V{n}',
+  '已恢复版本，当前内容已备份为 V{n}': 'Restored version; previous content saved as V{n}',
+  '请等待成稿和图片任务结束后再操作版本。': 'Wait for production and image tasks to finish before using versions.',
+  '找不到这个历史版本。': 'Historical version not found.',
+  '历史版本校验失败，当前内容未更改。': 'Version integrity validation failed. Current content was not changed.',
+  '版本名称最多 80 个字符。': 'Version names may contain at most 80 characters.',
+  '历史版本目录无效，当前内容未更改。': 'Version history is invalid. Current content was not changed.',
+  '版本编号超出范围。': 'Version number is out of range.',
   '已分配 1 条内容': 'Assigned 1 item.',
   '已分配 {n} 条内容': 'Assigned {n} items.',
   // 请求与文件

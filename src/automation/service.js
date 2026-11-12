@@ -5,10 +5,13 @@ import { catalog, PLUGIN_VERSION, PROTOCOL_VERSION } from './catalog.js'
 import { failure, invalid } from './errors.js'
 import { MutationJournal } from './journal.js'
 import { automationDirectory } from './paths.js'
+import { randomUUID } from 'node:crypto'
+import { assertVersionIdle, backupMeaningful, selectedVersion, versionMetadata } from '../versions.js'
 import { applyOps } from '../ops.js'
 import { computeInsights } from '../learn.js'
 import { PLATFORMS } from '../platforms.js'
 import { collectionTimestamp } from '../metrics.js'
+import { sealExport, verifyExportTarget, recordExport } from '../export-state.js'
 import { saveProduction, resolveExportDir } from '../export.js'
 import { importLocalFile } from './import-file.js'
 
@@ -63,7 +66,15 @@ export function createAutomationService({ store, settings, producer, assist, mod
       case 'media_desk_get_item': {
         const row = await find(input.id,input.accountId); const result = { ...metadata(row), truncated: {} }; const limit = input.maxChars ?? 8000
         for (const field of input.fields ?? []) {
-          if (field === 'media') {
+          if (field === 'versions') {
+            const history = row.contentVersions ?? [], offset = input.versionOffset ?? 0, count = input.versionLimit ?? 20
+            result.versions = { items: history.slice(offset, offset + count).map(versionMetadata), total: history.length, offset, nextOffset: offset + count < history.length ? offset + count : null }
+            if (input.versionId) {
+              const v = selectedVersion(row, input.versionId), json = JSON.stringify(v.content)
+              result.version = { ...versionMetadata(v), content: json.length > limit ? { preview: json.slice(0, limit), encoding: 'json-fragment' } : structuredClone(v.content) }
+              result.truncated.version = json.length > limit
+            }
+          } else if (field === 'media') {
             result.media = mediaMetadata(row.media)
           } else if (field === 'production') {
             const p = row.production
@@ -115,7 +126,7 @@ export function createAutomationService({ store, settings, producer, assist, mod
         })
       }
       case 'media_desk_apply_ops': {
-        const result = await store.mutate(input.label || '本地自动化', state => applyOps(state, input.ops, {accountId:input.accountId}))
+        const result = await store.mutate(input.label || '本地自动化', state => applyOps(state, input.ops, {accountId:input.accountId, isBusy: id => producer.isRunning(id) || producer.anyAssetActive(id)}))
         const compact = { receipts: result.receipts.map(r => ({ ...r, text: clipped(r.text, 500) })), errors: result.errors.map(e => clipped(e, 500)) }
         if (compact.errors.length) return failure('PARTIAL_FAILURE', 'Some operations failed. Successful receipts are retained; do not repeat the batch.', compact)
         return compact
@@ -146,11 +157,16 @@ export function createAutomationService({ store, settings, producer, assist, mod
         await store.mutate('保存外部草稿', state => {
           const item = requireMembership(state,input.id,input.accountId)
           if (!item) throw Object.assign(new Error('Item not found.'), { code: 'NOT_FOUND' })
+          assertVersionIdle(item, id => producer.isRunning(id) || producer.anyAssetActive(id))
+          backupMeaningful(item, 'before_write_draft')
           const previous = item.production ?? {}
           const p = { ...previous, status: 'done', stage: 'done', format: input.format ?? previous.format ?? draftFormat(scopeState(state, normalizedAccountId(item)).draftFormat), title: input.title ?? previous.title ?? item.title, article: input.article ?? previous.article ?? '', coverText: input.coverText ?? previous.coverText ?? input.title ?? item.title, finishedAt: new Date().toISOString(), images: previous.images ?? [], cover: previous.cover ?? null, shots: previous.shots ?? [] }
           for (const key of ['characters', 'facts', 'outline']) if (input[key] !== undefined) p[key] = input[key]
           if (input.shots) p.shots = input.shots.map((shot, index) => ({ ...previous.shots?.[index], ...shot, no: index + 1 }))
           delete p.error
+          for (const key of ['savedPath', 'savedAt', 'savedAccountId']) delete p[key]
+          p.generationId = randomUUID()
+          item.contentRevision = randomUUID()
           item.production = p
           if (input.title !== undefined) item.title = input.title
           if (item.status !== 'published') item.status = item.scheduledAt ? 'ready' : 'draft'
@@ -162,18 +178,15 @@ export function createAutomationService({ store, settings, producer, assist, mod
       case 'media_desk_cancel_production': await find(input.id,input.accountId); await producer.cancel(input.id); return { id: input.id, cancellationRequested: true }
       case 'media_desk_regenerate_asset': await find(input.id,input.accountId); await producer.regenerate(input.id, input.target,input.accountId); return { id: input.id, target: input.target, requested: true }
       case 'media_desk_export': {
-        const row = structuredClone(await find(input.id,input.accountId))
-        const originAccountId=normalizedAccountId(row)
-        if (!row.production?.article) throw invalid('No article is available to export.')
-        if (producer.isRunning(input.id) || producer.anyAssetActive(input.id)) throw Object.assign(new Error('Production is active.'), { code: 'BUSY' })
+        const sealed = await sealExport(store, producer, input.id, input.accountId)
         const { renderProductionCover, validateProductionAssets } = await import('./cover.js')
-        await validateProductionAssets(row.production, store.filesDir)
-        const videoCover = await renderProductionCover(row.production, { filesDir: store.filesDir })
-        const exportDir=resolveExportDir((await settings.read()).exportDir)
-        requireMembership(await store.read(),input.id,originAccountId)
-        const saved = await saveProduction(row.production, { filesDir: store.filesDir, exportDir, videoCover, accountId:originAccountId })
-        await store.mutate('保存成稿', state => { const p = requireMembership(state,input.id,originAccountId).production; if (p) { p.savedPath = saved.path; p.savedAccountId = originAccountId; p.savedAt = new Date().toISOString() } }, { undoable: false })
-        return saved
+        await validateProductionAssets(sealed.production, store.filesDir)
+        const videoCover = await renderProductionCover(sealed.production, { filesDir: store.filesDir })
+        const exportDir = resolveExportDir((await settings.read()).exportDir)
+        await verifyExportTarget(store, producer, sealed)
+        const saved = await saveProduction(sealed.production, { filesDir: store.filesDir, exportDir, videoCover, accountId: sealed.accountId, itemId: sealed.itemId, version: sealed.version })
+        const outcome = await recordExport(store, sealed, saved)
+        return { ...saved, ...outcome }
       }
       case 'media_desk_get_insights': {
         const all = computeInsights(scopeState(await store.read(),input.accountId), { platform: input.platform })
@@ -214,6 +227,7 @@ export function createAutomationService({ store, settings, producer, assist, mod
       const invoke = async () => {
         try { const result = await dispatch(tool, args, requestId); return result?.ok === false ? result : { ok: true, result } } catch (e) {
           // Provider details/settings never leave this boundary. Known validation errors are safe.
+          if (e.exportEvidence) return failure('OUTCOME_UNKNOWN', e.message, { export: e.exportEvidence })
           return failure(e.code === 'NOT_FOUND' || e.code === 'BUSY' || e.code === 'INVALID_ARGUMENT' || e.code === 'ASSET_ERROR' ? e.code : def.mutation ? 'OUTCOME_UNKNOWN' : 'OPERATION_FAILED', ['NOT_FOUND', 'BUSY', 'INVALID_ARGUMENT', 'ASSET_ERROR'].includes(e.code) ? e.message : 'Operation outcome is uncertain; inspect request status and workbench state before acting.')
         }
       }

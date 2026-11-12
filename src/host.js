@@ -6,6 +6,8 @@ import { stat, writeFile } from 'node:fs/promises'
 import { dirname, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { assistantModelOverride, callModel, chatPrompts, defaultSelection, extractJson, modelInfo, modelStatus, setAssistantModel } from './ai.js'
+import { boundedExportEvidence } from './export-evidence.js'
+import { sealExport, readSealedExport, verifyExportTarget, recordExport } from './export-state.js'
 import { defaultExportDir, resolveExportDir, saveProduction } from './export.js'
 import { harvest, harvestText } from './harvest.js'
 import { generateImage } from './images.js'
@@ -143,7 +145,7 @@ export async function chatTurn(ctx, store, desk, body) {
       return op
     })
     const allowed = accountId === undefined ? ops : ops.filter(op=>['add_item','update_item','delete_item','schedule_item','set_status','save_draft','update_production','set_style','set_format','add_skill','update_skill','delete_skill','add_metric'].includes(op?.op))
-    const { receipts, errors } = applyOps(draft, allowed,{accountId})
+    const { receipts, errors } = applyOps(draft, allowed,{accountId, isBusy: id => desk.producer.isRunning(id) || desk.producer.anyAssetActive(id)})
     if(allowed.length!==ops.length) errors.push('An operation outside this account scope was blocked.')
     let targets = []
     if (production && plan.revise) {
@@ -352,7 +354,7 @@ async function route(ctx, store, desk, req, res) {
     case 'ops': {
       const label = typeof body.label === 'string' ? body.label : tr('操作')
       const result = await store.mutate(label, (draft) => {
-        const applied = applyOps(draft, body.ops,{accountId:body.accountId})
+        const applied = applyOps(draft, body.ops,{accountId:body.accountId, isBusy: id => desk.producer.isRunning(id) || desk.producer.anyAssetActive(id)})
         return { ...applied, state: draft }
       }, { undoable: body.undoable !== false })
       return json(res, 200, result)
@@ -378,28 +380,23 @@ async function route(ctx, store, desk, req, res) {
     case 'produce/regen':
       await desk.producer.regenerate(String(body.id), body.target,body.accountId)
       return json(res, 200, { state: await store.read() })
+    case 'produce/seal': {
+      const sealed = await sealExport(store, desk.producer, body.id, body.accountId)
+      return json(res, 200, { versionId: sealed.version.id, production: sealed.production })
+    }
     case 'produce/save': {
-      const state = await store.read()
-      const item = structuredClone(requireMembership(state,body.id,body.accountId))
-      const originAccountId=normalizedAccountId(item)
+      const sealed = body.versionId
+        ? await readSealedExport(store, desk.producer, body.id, body.accountId, body.versionId)
+        : await sealExport(store, desk.producer, body.id, body.accountId)
       const settings = await desk.settings.read()
-      if (!item?.production?.article) return json(res, 400, { error: tr('还没有可以保存的成稿') })
-      requireMembership(await store.read(),body.id,originAccountId)
-      // 视频封面由浏览器合成（画面叠大字），这里只接受 JPEG
+      // The browser composes this exact sealed production using the existing painter.
       const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(body.videoCover ?? '')
       const videoCover = match ? Buffer.from(match[1], 'base64') : null
       if (videoCover && !(videoCover[0] === 0xff && videoCover[1] === 0xd8)) return json(res, 400, { error: tr('封面不是有效的图片') })
-      const saved = await saveProduction(item.production, { filesDir: store.filesDir, exportDir: resolveExportDir(settings.exportDir), videoCover, accountId:originAccountId })
-      const next = await store.mutate('保存成稿', (draft) => {
-        const target = requireMembership(draft,body.id,originAccountId)
-        if (target?.production) {
-          target.production.savedPath = saved.path
-          target.production.savedAccountId = originAccountId
-          target.production.savedAt = new Date().toISOString()
-        }
-        return draft
-      }, { undoable: false })
-      return json(res, 200, { ...saved, state: next })
+      await verifyExportTarget(store, desk.producer, sealed)
+      const saved = await saveProduction(sealed.production, { filesDir: store.filesDir, exportDir: resolveExportDir(settings.exportDir), videoCover, accountId: sealed.accountId, itemId: sealed.itemId, version: sealed.version })
+      const outcome = await recordExport(store, sealed, saved)
+      return json(res, 200, { ...saved, ...outcome, state: await store.read() })
     }
     case 'produce/reveal': {
       // 路径只取自保存记录，不接受请求里传来的路径
@@ -525,6 +522,9 @@ export default {
             res.end()
             return
           }
+          if (err.code === 'ASSET_ERROR') return json(res, err.status || 400, { error: err.message, code: 'ASSET_ERROR' })
+          const evidence = err.code === 'OUTCOME_UNKNOWN' ? boundedExportEvidence(err.exportEvidence) : null
+          if (evidence) return json(res, 500, { error: tr('导出文件已保留，但保存记录未能确认。请检查文件和当前内容后再操作。'), code: 'OUTCOME_UNKNOWN', details: { export: evidence } })
           json(res, err.status || 500, { error: err.message })
         }
       },

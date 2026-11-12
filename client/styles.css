@@ -885,3 +885,16 @@ button.md-receipt:hover { transform: translateX(2px); }
   .md-account-avatar-editor { align-items: flex-start; gap: 12px; }
   .md-account-identity { gap: 8px; }
 }
+
+.md-versions { margin: 12px 20px; padding: 10px 14px; border: 1px solid var(--md-line, #ddd); border-radius: 12px; font-size: 13px; }
+.md-versions summary { cursor: pointer; font-weight: 600; }
+.md-version-save { display: flex; gap: 8px; margin-top: 12px; }
+.md-version-save input { min-width: 0; flex: 1; border: 1px solid var(--md-line, #ddd); border-radius: 6px; padding: 7px 10px; background: transparent; color: inherit; }
+.md-version-list { max-height: 160px; overflow: auto; list-style: none; padding: 0; }
+.md-version-list button { width: 100%; text-align: left; border: 0; background: transparent; color: inherit; padding: 7px 0; cursor: pointer; }
+.md-version-list time { opacity: .6; margin-left: 8px; font-size: 11px; }
+.md-version-preview { border-top: 1px solid var(--md-line, #ddd); padding-top: 8px; }
+.md-version-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 260px; overflow: auto; }
+.md-version-preview h4 { margin-bottom: 5px; }
+.md-export-recovery pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.md-article-save-notice { padding: 0 20px; font-size: 12px; opacity: .75; }

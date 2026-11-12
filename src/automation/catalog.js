@@ -2,7 +2,7 @@
 import { AVATAR_LOCAL_PATTERN, AVATAR_MAX_LENGTH } from '../avatar.js'
 import { PLATFORMS } from '../platforms.js'
 export const PROTOCOL_VERSION = 1
-export const PLUGIN_VERSION = '2.7.0-accounts.3'
+export const PLUGIN_VERSION = '2.7.0-accounts.4'
 const str = (maxLength = 40000) => ({ type: 'string', maxLength })
 const id = { type: 'string', minLength: 1, maxLength: 200 }
 const nullable = schema => ({ anyOf: [schema, { type: 'null' }] })
@@ -28,6 +28,8 @@ op('set_status', { id, status }, ['id', 'status'])
 op('schedule_item', { id, scheduledAt: itemFields.scheduledAt, platform }, ['id', 'scheduledAt'])
 op('save_draft', { id, format: { enum: ['article', 'script'] }, text: str(200000), by: { enum: ['user', 'ai'] }, engine: str(200) }, ['id', 'text'])
 op('update_production', { id, accountId, title: str(200), article: str(200000), coverText: str(40) }, ['id'])
+op('save_version', { id, name: str(80) }, ['id'])
+op('restore_version', { id, versionId: id }, ['id', 'versionId'])
 op('add_style', styleFields, ['name'])
 op('update_style', { id, ...styleFields }, ['id'])
 op('set_style', { id: nullable(id), accountId }, ['id'])
@@ -52,7 +54,8 @@ tool('list_accounts','Search account profiles and counts; no credentials.',{quer
 tool('get_account','Get one account profile, defaults and content counts.',{id},['id'])
 tool('status', 'Local workbench availability and protocol version.')
 tool('list_items', 'Compact item metadata; no body, chat or settings.', { accountId, query: str(500), status, platform, limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 }, offset: { type: 'integer', minimum: 0, maximum: 1000000, default: 0 } })
-tool('get_item', 'Get one item. Opt into bounded body/article/production or compact media fields.', { id, accountId, fields: { type: 'array', items: { enum: ['body', 'article', 'production', 'media'] }, uniqueItems: true, maxItems: 4 }, maxChars: { type: 'integer', minimum: 1, maximum: 200000, default: 8000 } }, ['id'])
+tool('get_item', 'Get one item. Opt into bounded body/article/production, compact media, or paged version metadata; versionId with versions opts into one bounded historical snapshot.', { id, accountId, fields: { type: 'array', items: { enum: ['body', 'article', 'production', 'media', 'versions'] }, uniqueItems: true, maxItems: 5 }, versionId: id, versionOffset: { type: 'integer', minimum: 0, maximum: 1000000 }, versionLimit: { type: 'integer', minimum: 1, maximum: 100 }, maxChars: { type: 'integer', minimum: 1, maximum: 200000, default: 8000 } }, ['id'])
+tools.at(-1).inputSchema.allOf = [{ if: { required: ['versionId'] }, then: { required: ['fields'], properties: { fields: { contains: { const: 'versions' } } } } }]
 tool('import_file', 'Import one host-local JPEG/PNG/WebP/GIF (25 MB) or MP4/MOV/WebM (250 MB), preserving exact bytes without model calls. Default destination item creates one idea, Unassigned when accountId is omitted. Destination avatar requires a concrete accountId, accepts images only and forbids title/body/tags. Returns metadata only.', { path: { type: 'string', minLength: 1, maxLength: 4096, pattern: '^/' }, destination: { enum: ['item', 'avatar'], default: 'item' }, accountId, title: str(300), body: str(40000), tags: { type: 'array', items: str(100), maxItems: 24 } }, ['path'], true)
 tools.at(-1).inputSchema.allOf = [{ if: { properties: { destination: { const: 'avatar' } }, required: ['destination'] }, then: { properties: { accountId: id }, required: ['accountId'], not: { anyOf: ['title', 'body', 'tags'].map(field => ({ required: [field] })) } } }]
 tool('apply_ops', 'Apply up to 100 whitelisted operations. Returns receipts and partial failures. scheduledAt requires an ISO8601 timezone; null cancels.', { accountId, ops: { type: 'array', items: { oneOf: operations }, minItems: 1, maxItems: 100 }, label: str(100) }, ['ops'], true)
@@ -63,7 +66,7 @@ tool('produce', 'Start the existing Producer once. May call configured models an
 tool('production_status', 'Compact production/job status for one item.', item, ['id'])
 tool('cancel_production', 'Ask the existing Producer to cancel one job.', item, ['id'], true)
 tool('regenerate_asset', 'Regenerate one existing asset once using configured image provider.', { id, accountId, target: { type: 'string', pattern: '^(cover|(image|shot):[0-9]{1,2})$' } }, ['id', 'target'], true)
-tool('export', 'Save article, storyboard, assets and composited JPEG cover to the configured export location.', item, ['id'], true)
+tool('export', 'Seal a content version and export article, storyboard, assets and composited JPEG cover into a new non-overwriting folder with a traceable manifest.', item, ['id'], true)
 tool('get_insights', 'Cumulative work/platform snapshots with coverage, nullable observed growth and field provenance. Arrays are limited to 30 with per-path total/truncation metadata. Optional account/platform filters; unidentified records excluded from work totals. No model or Monid call.', { accountId, platform: { enum: PLATFORMS } })
 tool('list_styles', 'Bounded style cards and active style.', { accountId, limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 }, offset: { type: 'integer', minimum: 0, maximum: 1000000, default: 0 } })
 tool('models', 'Configured provider and model identifiers; no credentials.')

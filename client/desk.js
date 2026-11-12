@@ -1,6 +1,7 @@
 import { createAccountProjection, enterAccountWorkspace, leaveAccountWorkspace, matchesWorkspace, originScope, reconcileAccountWorkspace, workspaceOrigin } from '../src/accounts.js'
 // 浏览器侧的状态：Host 状态的本地镜像，加上只属于界面的选中、视图等。
 import React from 'react'
+import { boundedExportEvidence } from '../src/export-evidence.js'
 import { coverDataUrl } from './cover.js'
 import { lang, plural, setLanguagePreference, t } from './i18n.js'
 
@@ -9,7 +10,7 @@ const BASE = 'media-desk/'
 let snapshot = {
   state: null, model: null, modelOk: null, modelError: null, canUndo: false, error: null,
   accountId: undefined, workspaceEntered: false, workspaceRevision: 0, view: 'accounts', mode: 'scatter', focusId: null, sheetOrigin: null, dockOpen: true, studioDock: false, chatQuote: null, query: '', kindFilter: 'all', related: null,
-  live: {}, settings: null, settingsOpen: false, modelPickOpen: false, thinking: false, toast: null, capture: null, dialog: null,
+  live: {}, articleEditing: {}, exportRecoveries: {}, studioRevision: 0, settings: null, settingsOpen: false, modelPickOpen: false, thinking: false, toast: null, capture: null, dialog: null,
 }
 const listeners = new Set()
 
@@ -18,12 +19,17 @@ export function getDesk() {
 }
 
 export function setDesk(patch) {
+  const previous = snapshot
   const next = typeof patch === 'function' ? patch(snapshot) : patch
   if(next.capture) next.capture={...next.capture,accountId:snapshot.accountId}
   snapshot = { ...snapshot, ...next }
   snapshot = reconcileAccountWorkspace(snapshot)
   if (!snapshot.workspaceEntered && snapshot.view !== 'accounts') snapshot = { ...snapshot, view: 'accounts' }
   if(snapshot.focusId && snapshot.accountId!==undefined && snapshot.state && !snapshot.state.items.some(i=>i.id===snapshot.focusId&&(i.accountId??null)===snapshot.accountId)) snapshot={...snapshot,focusId:null,sheetOrigin:null,studioDock:false,chatQuote:null}
+  if (snapshot.accountId !== previous.accountId || snapshot.workspaceRevision !== previous.workspaceRevision || snapshot.focusId !== previous.focusId || snapshot.studioRevision !== previous.studioRevision) {
+    invalidateArticleEditors()
+    snapshot = { ...snapshot, articleEditing: {}, studioRevision: (previous.studioRevision ?? 0) + 1 }
+  }
   listeners.forEach(fn => fn())
 }
 
@@ -33,18 +39,22 @@ function subscribe(fn) {
 }
 
 const project = createAccountProjection()
-export function selectAccount(accountId) { snapshot=enterAccountWorkspace(snapshot,accountId);listeners.forEach(fn=>fn()) }
-export function leaveAccounts() { snapshot=leaveAccountWorkspace(snapshot);listeners.forEach(fn=>fn()) }
+export function selectAccount(accountId) { invalidateArticleEditors();snapshot={...enterAccountWorkspace(snapshot,accountId),articleEditing:{},studioRevision:(snapshot.studioRevision??0)+1};listeners.forEach(fn=>fn()) }
+export function leaveAccounts() { invalidateArticleEditors();snapshot={...leaveAccountWorkspace(snapshot),articleEditing:{},studioRevision:(snapshot.studioRevision??0)+1};listeners.forEach(fn=>fn()) }
 export function useDesk(selector) {
   return React.useSyncExternalStore(subscribe, () => selector(project(snapshot)))
 }
 
-async function request(path, body) {
+async function request(path, body, { mutationOwned = false } = {}) {
+  if (body !== undefined && !mutationOwned) {
+    clientMutationEpoch += 1
+    if (typeof body.id === 'string') itemWriteEpoch.set(body.id, (itemWriteEpoch.get(body.id) ?? 0) + 1)
+  }
   const res = await fetch(BASE + path, body === undefined ? { headers: { 'x-media-desk-lang': lang() } } : {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-media-desk-lang': lang() }, body: JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || t('请求失败（{status}）', { status: res.status }))
+  if (!res.ok) throw Object.assign(new Error(data.error || t('请求失败（{status}）', { status: res.status })), data.code === 'OUTCOME_UNKNOWN' ? { code: data.code, exportEvidence: boundedExportEvidence(data.details?.export) } : {})
   return data
 }
 
@@ -71,19 +81,143 @@ export async function loadDesk() {
   }
 }
 
-export async function dispatchOps(ops, options = {}) {
-  const {label=t('操作'),undoable=true,silent=false}=options
-  const accountId = Object.hasOwn(options,'accountId') ? options.accountId : snapshot.accountId
-  try {
-    const data = await request('ops', { ops, label, undoable, accountId })
-    setDesk({ state: data.state, canUndo: undoable || snapshot.canUndo })
-    if (data.errors?.length) toast(data.errors[0], { error: true })
-    else if (!silent && data.receipts?.[0]) toast(data.receipts[0].text, { undo: undoable })
-    return data
-  } catch (err) {
-    report(err)
-    return null
+const failedCreative = new Map(), latestCreative = new Map(), creativeQueues = new Map(), articleEditors = new Map(), reconcileCreative = new Map(), itemWriteEpoch = new Map()
+let writeSequence = 0, editorSequence = 0, reconcileSequence = 0, clientMutationEpoch = 0
+const originNow = () => ({ ...workspaceOrigin(snapshot), entered: snapshot.workspaceEntered })
+const sameOrigin = origin => snapshot.accountId === origin.accountId && snapshot.workspaceRevision === origin.workspaceRevision && snapshot.workspaceEntered === origin.entered
+const writeKey = (id, origin) => JSON.stringify([id, origin.accountId, origin.workspaceRevision])
+function invalidateEditorWrites(owner) {
+  const key = writeKey(owner.id, owner.origin), fields = latestCreative.get(key), failures = failedCreative.get(key)
+  for (const [field, entry] of fields ?? []) if (entry.owner === owner) {
+    fields.set(field, { token: ++writeSequence })
   }
+  for (const [field, failure] of failures ?? []) if (failure.owner === owner) failures.delete(field)
+  if (!failures?.size) failedCreative.delete(key)
+}
+function invalidateArticleEditors() {
+  for (const owner of articleEditors.values()) invalidateEditorWrites(owner)
+  articleEditors.clear()
+}
+export function isCurrentArticleEditor(owner) {
+  return Boolean(owner && articleEditors.get(owner.id) === owner && sameOrigin(owner.origin) && snapshot.focusId === owner.id && snapshot.studioRevision === owner.studioRevision)
+}
+export function releaseArticleEditor(owner) {
+  if (!owner) return false
+  invalidateEditorWrites(owner)
+  if (articleEditors.get(owner.id) !== owner) return false
+  articleEditors.delete(owner.id)
+  const articleEditing = { ...snapshot.articleEditing }
+  if (articleEditing[owner.id] === owner.token) delete articleEditing[owner.id]
+  setDesk({ articleEditing })
+  return true
+}
+export function setArticleEditing(id, editing) {
+  if (!editing) return releaseArticleEditor(articleEditors.get(id))
+  releaseArticleEditor(articleEditors.get(id))
+  const owner = { id, token: `article_${++editorSequence}`, origin: originNow(), studioRevision: snapshot.studioRevision, revision: 0, acknowledgedRevision: 0, pending: null, pendingRevision: null }
+  articleEditors.set(id, owner)
+  setDesk({ articleEditing: { ...snapshot.articleEditing, [id]: owner.token } })
+  return owner
+}
+export function touchArticleEditor(owner) { if (isCurrentArticleEditor(owner)) owner.revision += 1 }
+export function cancelArticleEditing(id, owner = articleEditors.get(id)) {
+  return isCurrentArticleEditor(owner) && releaseArticleEditor(owner)
+}
+export async function dispatchOps(ops, options = {}) {
+  const { label = t('操作'), undoable = true, silent = false } = options
+  const origin = originNow()
+  const accountId = Object.hasOwn(options, 'accountId') ? options.accountId : snapshot.accountId
+  const creative = ops.filter(op => ['save_draft', 'update_production'].includes(op.op) || op.op === 'update_item' && ['title', 'body', 'media', 'tags'].some(key => op[key] !== undefined))
+  const versionMutation = ops.some(op => ['save_version', 'restore_version'].includes(op.op))
+  const itemOps = new Set(['update_item', 'delete_item', 'schedule_item', 'set_status', 'save_draft', 'update_production', 'save_version', 'restore_version'])
+  const ids = [...new Set(ops.flatMap(op => op.op === 'assign_items' ? op.ids ?? [] : itemOps.has(op.op) ? [op.id] : []).filter(id => typeof id === 'string'))]
+  const mutationEpoch = ++clientMutationEpoch
+  const studioRevision = snapshot.studioRevision, epochs = new Map()
+  for (const id of ids) { const epoch = (itemWriteEpoch.get(id) ?? 0) + 1; itemWriteEpoch.set(id, epoch); epochs.set(id, epoch) }
+  const entryMap = new Map()
+  for (const op of creative) {
+    const key = writeKey(op.id, origin), fields = latestCreative.get(key) ?? new Map()
+    for (const field of Object.keys(op).filter(field => !['op', 'id', 'accountId'].includes(field))) {
+      const name = `${op.op === 'update_production' ? 'production' : op.op}.${field}`
+      const owner = name === 'production.article' ? options.editorOwner ?? articleEditors.get(op.id) : undefined
+      const entry = { key, field: name, token: ++writeSequence, owner }
+      fields.set(name, entry); entryMap.set(JSON.stringify([key, name]), entry)
+    }
+    latestCreative.set(key, fields)
+  }
+  const entries = [...entryMap.values()]
+  const current = () => entries.every(entry => latestCreative.get(entry.key)?.get(entry.field)?.token === entry.token) && ids.every(id => itemWriteEpoch.get(id) === epochs.get(id))
+  const studioCurrent = () => !ids.length || snapshot.studioRevision === studioRevision
+  const mark = failed => {
+    for (const entry of entries) {
+      if (latestCreative.get(entry.key)?.get(entry.field)?.token !== entry.token) continue
+      const fields = failedCreative.get(entry.key) ?? new Map()
+      if (failed) fields.set(entry.field, entry); else fields.delete(entry.field)
+      if (fields.size) failedCreative.set(entry.key, fields); else failedCreative.delete(entry.key)
+    }
+  }
+  // Order actual UI requests by item across close/reopen and account navigation.
+  // Tokens also prevent an already superseded intent from replacing newer local text.
+  const dependencies = [...new Set(ids.map(id => creativeQueues.get(id)).filter(Boolean))]
+  const task = (async () => {
+    if (dependencies.length) await Promise.all(dependencies)
+    try {
+      const data = await request('ops', { ops, label, undoable, accountId }, { mutationOwned: true })
+      mark(Boolean(data.errors?.length))
+      const responseCurrent = current() && studioCurrent() && (!versionMutation || clientMutationEpoch === mutationEpoch) && (!options.editorOwner || isCurrentArticleEditor(options.editorOwner))
+      if (sameOrigin(origin) && responseCurrent) {
+        setDesk({ state: data.state, canUndo: undoable || snapshot.canUndo })
+        for (const id of ids) reconcileCreative.delete(id)
+        if (data.errors?.length) toast(data.errors[0], { error: true })
+        else if (!silent && data.receipts?.[0]) toast(data.receipts[0].text, { undo: undoable })
+      }
+      if (!sameOrigin(origin) || !responseCurrent) for (const id of ids) reconcileCreative.set(id, ++reconcileSequence)
+      return { ...data, creativeWriteCurrent: responseCurrent }
+    } catch (err) {
+      mark(true)
+      for (const id of ids) reconcileCreative.set(id, ++reconcileSequence)
+      if (sameOrigin(origin) && current() && studioCurrent() && (!options.editorOwner || isCurrentArticleEditor(options.editorOwner))) report(err)
+      return null
+    }
+  })()
+  const settled = task.finally(() => {
+    for (const id of ids) if (creativeQueues.get(id) === settled) creativeQueues.delete(id)
+  })
+  for (const id of ids) creativeQueues.set(id, settled)
+  return settled
+}
+async function readyForVersion(id, origin, accountId) {
+  const studioRevision = snapshot.studioRevision
+  const scopeCurrent = () => sameOrigin(origin) && snapshot.focusId === id && snapshot.studioRevision === studioRevision && (snapshot.state?.items.find(item => item.id === id)?.accountId ?? null) === accountId
+  const key = writeKey(id, origin)
+  for (;;) {
+    if (snapshot.articleEditing[id]) { toast(t('请先完成或取消文章编辑，再操作版本。'), { error: true }); return false }
+    while (creativeQueues.get(id)) await creativeQueues.get(id)
+    if (!scopeCurrent() || snapshot.articleEditing[id]) return false
+    if (failedCreative.has(key)) { toast(t('最近的内容修改未保存成功，请重新保存后再操作版本。'), { error: true }); return false }
+    const needed = reconcileCreative.get(id)
+    if (!needed) return true
+    const epoch = itemWriteEpoch.get(id), mutationEpoch = clientMutationEpoch
+    try {
+      // Retiring an editor never cancels an already dispatched HTTP write.
+      // Re-read after the queue settles before capturing or exporting any content.
+      const data = await request('state')
+      if (!scopeCurrent() || snapshot.articleEditing[id]) return false
+      if (creativeQueues.get(id) || itemWriteEpoch.get(id) !== epoch || clientMutationEpoch !== mutationEpoch || reconcileCreative.get(id) !== needed) continue
+      const refreshed = data.state?.items?.find(item => item.id === id)
+      if (!refreshed || (refreshed.accountId ?? null) !== accountId) return false
+      setDesk({ state: data.state, ...(typeof data.canUndo === 'boolean' ? { canUndo: data.canUndo } : {}) })
+      reconcileCreative.delete(id)
+    } catch (err) {
+      if (scopeCurrent()) report(err)
+      return false
+    }
+  }
+}
+export async function runVersionOperation(id, operation) {
+  const origin = originNow(), item = snapshot.state?.items.find(item => item.id === id), accountId = item?.accountId ?? null
+  if (!item || !await readyForVersion(id, origin, accountId)) return null
+  return dispatchOps([{ ...operation, id }], { accountId, label: t(operation.op === 'restore_version' ? '恢复版本' : '保存版本') })
 }
 
 export async function undo() {
@@ -101,7 +235,7 @@ export function openItem(id, origin = null) {
 }
 
 export function closeItem() {
-  setDesk({ focusId: null, sheetOrigin: null, studioDock: false, chatQuote: null })
+  setDesk({ focusId: null, sheetOrigin: null, studioDock: false, chatQuote: null, studioRevision: (snapshot.studioRevision ?? 0) + 1 })
 }
 
 /** 一键成稿。任务在 Host 里跑，这里只负责启动和看进度。 */
@@ -236,18 +370,32 @@ export async function sendChat(text) {
 }
 
 export async function saveProduced(id) {
+  const origin = originNow(), studioRevision = snapshot.studioRevision, item = snapshot.state?.items.find(row => row.id === id), accountId = item?.accountId ?? null
+  let epoch = null
   try {
-    const item = snapshot.state.items.find(row => row.id === id)
-    const accountId=item?.accountId??null
-    const production = item?.production
-    // 视频封面在浏览器里合成，一起存进文件夹
+    if (!item || !await readyForVersion(id, origin, accountId)) return
+    epoch = (itemWriteEpoch.get(id) ?? 0) + 1
+    itemWriteEpoch.set(id, epoch)
+    const mutationEpoch = ++clientMutationEpoch
+    // Only short item mutations are queued. Frozen export work never blocks typing.
+    const sealed = await request('produce/seal', { id, accountId }, { mutationOwned: true })
+    const production = sealed.production
     const videoCover = await coverDataUrl({ src: production.cover?.src, text: production.coverText || production.title }).catch(() => undefined)
-    const data = await request('produce/save', { id, videoCover, accountId })
-    setDesk({ state: data.state })
-    toast(t('已保存到 {path}', { path: data.path }))
+    const data = await request('produce/save', { id, videoCover, accountId, versionId: sealed.versionId }, { mutationOwned: true })
+    const scopeCurrent = sameOrigin(origin) && snapshot.focusId === id && snapshot.studioRevision === studioRevision
+    const responseCurrent = scopeCurrent && itemWriteEpoch.get(id) === epoch && clientMutationEpoch === mutationEpoch
+    if (responseCurrent) { setDesk({ state: data.state }); reconcileCreative.delete(id) }
+    else reconcileCreative.set(id, ++reconcileSequence)
+    if (scopeCurrent) toast(!responseCurrent || data.currentMatches === false ? t('历史版本已导出，当前内容未标记为已保存。') : t('已保存到 {path}', { path: data.path }))
   } catch (err) {
-    report(err)
+    if (epoch !== null) reconcileCreative.set(id, ++reconcileSequence)
+    if (err.exportEvidence) setDesk({ exportRecoveries: { ...snapshot.exportRecoveries, [id]: { ...err.exportEvidence, accountId } } })
+    if (sameOrigin(origin) && snapshot.studioRevision === studioRevision) report(err)
   }
+}
+
+export function dismissExportRecovery(id) {
+  const exportRecoveries = { ...snapshot.exportRecoveries }; delete exportRecoveries[id]; setDesk({ exportRecoveries })
 }
 
 export async function revealSaved(id) {

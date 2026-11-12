@@ -318,3 +318,35 @@ test('CLI and official MCP transport preserve scoped 2.7 format and image option
   assert.equal((await store.read()).draftFormat, undefined)
   assert.equal((await store.read()).accounts.find(a => a.id === accountId).draftFormat, 'article')
 })
+
+test('official CLI and SDK save, page, bound, restore and replay named versions without new tools or models', async t => {
+  const { home, store } = await fixture(t)
+  const accountId = (await store.read()).accounts[0].id
+  const added = JSON.parse((await cli(['--home', home, 'call', 'media_desk_apply_ops', '--input', JSON.stringify({ accountId, ops: [{ op: 'add_item', title: 'versioned work', body: 'ORIGINAL BODY' }] }), '--request-id', 'version-add'])).stdout)
+  assert.equal(added.ok, true); const id = added.result.receipts[0].target
+  const input = { accountId, ops: [{ op: 'save_version', id, name: 'CLI initial' }] }
+  const saved = JSON.parse((await cli(['--home', home, 'call', 'media_desk_apply_ops', '--input', JSON.stringify(input), '--request-id', 'cli-save-version'])).stdout)
+  assert.equal(saved.ok, true); const versionId = saved.result.receipts[0].versionId
+  const replay = JSON.parse((await cli(['--home', home, 'call', 'media_desk_apply_ops', '--input', JSON.stringify(input), '--request-id', 'cli-save-version'])).stdout)
+  assert.equal(replay.cached, true)
+  const conflict = JSON.parse((await cli(['--home', home, 'call', 'media_desk_apply_ops', '--input', JSON.stringify({ ...input, ops: [{ op: 'save_version', id, name: 'different' }] }), '--request-id', 'cli-save-version'])).stdout)
+  assert.equal(conflict.error.code, 'REQUEST_ID_CONFLICT')
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
+  const sdk = new Client({ name: 'versions-test', version: '1' }); t.after(() => sdk.close())
+  await sdk.connect(new StdioClientTransport({ command: process.execPath, args: [join(process.cwd(), 'bin/media-desk.js'), '--home', home, 'mcp'], stderr: 'pipe' }))
+  assert.equal((await sdk.listTools()).tools.length, 18)
+  const invoke = async (suffix, args) => (await sdk.callTool({ name: `media_desk_${suffix}`, arguments: args })).structuredContent
+  const history = await invoke('get_item', { id, accountId, fields: ['versions'], versionLimit: 1 })
+  assert.equal(history.result.versions.total, 1); assert.equal(history.result.versions.items[0].name, 'CLI initial')
+  const preview = await invoke('get_item', { id, accountId, fields: ['versions'], versionId, maxChars: 20 })
+  assert.equal(preview.result.truncated.version, true); assert.equal(preview.result.version.content.preview.length, 20)
+  assert.equal((await invoke('apply_ops', { requestId: 'sdk-edit', accountId, ops: [{ op: 'update_item', id, body: 'NEW BODY' }] })).ok, true)
+  const restore = { requestId: 'sdk-restore', accountId, ops: [{ op: 'restore_version', id, versionId }] }
+  assert.equal((await invoke('apply_ops', restore)).ok, true); assert.equal((await invoke('apply_ops', restore)).cached, true)
+  const fresh = (await new Store(store.root).read()).items.find(row => row.id === id)
+  assert.equal(fresh.body, 'ORIGINAL BODY'); assert.equal(fresh.contentVersions.length, 2); assert.equal(fresh.contentVersions[1].content.body, 'NEW BODY')
+  assert.equal((await invoke('get_item', { id, accountId: null, fields: ['versions'] })).ok, false)
+  const denied = JSON.parse((await cli(['--home', home, '--read-only', 'call', 'media_desk_apply_ops', '--input', JSON.stringify(input), '--request-id', 'readonly-version'])).stdout)
+  assert.equal(denied.error.code, 'READ_ONLY')
+})

@@ -1,5 +1,23 @@
 // 英文词典（studio）。key 是中文原文，value 是英文。
 export const STUDIO = {
+  '保存请求仍在处理中；取消编辑不会撤回已发送的保存。': 'Saving is still in progress. Cancelling editing does not withdraw a save already sent.',
+  '导出结果待核对': 'Export needs verification',
+  '文件已保留，保存记录尚未确认。请先检查导出文件，不要重复导出。': 'Files were retained, but the saved record is uncertain. Inspect the output before exporting again.',
+  '关闭提示': 'Dismiss notice',
+  '内容版本': 'Content versions',
+  '版本名称（可选）': 'Version name (optional)',
+  '保存版本': 'Save version',
+  '恢复版本': 'Restore version',
+  '历史版本预览': 'Version preview',
+  '恢复这个版本': 'Restore this version',
+  '恢复前会先保存当前内容，所有历史版本都会保留。': 'Your current content is saved first. All historical versions are retained.',
+  '保存后可查看并恢复历史内容。': 'Save a version to view and restore it later.',
+  '请先完成或取消文章编辑，再操作版本。': 'Finish or cancel article editing before using versions.',
+  '最近的内容修改未保存成功，请重新保存后再操作版本。': 'Your latest edit was not saved. Save it again before using versions.',
+  '历史版本已导出，当前内容未标记为已保存。': 'The historical version was exported. Your current content has not been marked as saved.',
+  '脚本草稿': 'Script draft',
+  '文章草稿': 'Article draft',
+
   // 状态和类型（util.js 里的 STATUS_LABEL、KIND_LABEL）
   '大纲': 'Outline',
   '草稿': 'Draft',

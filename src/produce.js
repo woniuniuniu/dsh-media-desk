@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { articlePrompts, extractJson, fallbackArticle, fallbackPlan, planPrompts, shortCoverText } from './ai.js'
 import { tr } from './i18n.js'
 import { coverPrompt, figurePrompt, shotPrompt } from './images.js'
+import { backupMeaningful } from './versions.js'
 import { newId } from './ops.js'
 import { imageReady } from './settings.js'
 import { draftFormat } from './style.js'
@@ -199,6 +200,8 @@ export class Producer {
       job.controller.signal.throwIfAborted()
       await this.store.mutate('开始成稿', draft => {
         const target = requireMembership(draft, id, originAccountId)
+        backupMeaningful(target, 'before_produce')
+        target.contentRevision = randomUUID()
         target.production = { generationId: randomUUID(), status: 'running', stage: 'brief', withImages: job.withImages, format, startedAt: new Date().toISOString(), title: target.title, article: '', cover: null, images: [], shots: [] }
         return draft
       }, { undoable: false })

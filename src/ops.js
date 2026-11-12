@@ -1,6 +1,7 @@
 // 工作台的唯一写入口：对话、界面操作都走这里，统一校验字段并产出回执。
 // 模型输出也是不可信输入，所以这里只放行白名单字段。
 import { accountError, detachAccounts, hasActiveProduction, normalizedAccountId, requireAccount, requireMembership, requireStyle } from './accounts.js'
+import { assertVersionIdle, restoreVersion, saveVersion } from './versions.js'
 import { normalizeAccountAvatar } from './avatar.js'
 import { currentLang, platformName, tr } from './i18n.js'
 import { draftFormat } from './style.js'
@@ -124,6 +125,18 @@ function applySchedule(item, when) {
 }
 
 const handlers = {
+  save_version(state, op, now, { isBusy } = {}) {
+    const item = findById(state.items, op.id)
+    assertVersionIdle(item, isBusy)
+    const version = saveVersion(item, { name: op.name })
+    return { text: tr('已保存版本 V{n}', { n: version.number }), target: item.id, kind: 'version', versionId: version.id, number: version.number }
+  },
+  restore_version(state, op, now, { isBusy } = {}) {
+    const item = findById(state.items, op.id)
+    assertVersionIdle(item, isBusy)
+    const backup = restoreVersion(item, op.versionId)
+    return { text: tr('已恢复版本，当前内容已备份为 V{n}', { n: backup.number }), target: item.id, kind: 'version', backupVersionId: backup.id }
+  },
   add_item(state, op, now) {
     requireAccount(state,op.accountId)
     const fields = pick(ITEM_FIELDS, op)
@@ -376,7 +389,7 @@ const handlers = {
  * @param {Array<object>} ops - 操作列表。
  * @returns {{receipts: Array<object>, errors: string[]}} 面向用户的回执。
  */
-export function applyOps(state, ops, { accountId } = {}) {
+export function applyOps(state, ops, { accountId, isBusy } = {}) {
   const receipts = []
   const errors = []
   const now = new Date().toISOString()
@@ -390,7 +403,7 @@ export function applyOps(state, ops, { accountId } = {}) {
       const scoped = { ...op }
       requireAccount(state,accountId)
       if (accountId !== undefined) {
-        const itemOps = ['update_item','delete_item','schedule_item','set_status','save_draft','update_production']
+        const itemOps = ['update_item','delete_item','schedule_item','set_status','save_draft','update_production','save_version','restore_version']
         if (itemOps.includes(op.op)) requireMembership(state,op.id,accountId)
         if (op.op === 'assign_items') for (const id of op.ids ?? []) requireMembership(state,id,accountId)
         if (['add_item','add_metric','add_skill','set_style','set_format'].includes(op.op)) { if (op.accountId !== undefined && op.accountId !== accountId) throw accountError('Operation belongs to another account.'); scoped.accountId = accountId }
@@ -399,7 +412,7 @@ export function applyOps(state, ops, { accountId } = {}) {
         if (['add_account','clear_samples','delete_style','update_style','add_person','update_person','delete_person','add_angle','update_angle','delete_angle'].includes(op.op)) throw accountError('Global operation is unavailable in account scope.')
         if (['update_skill','delete_skill'].includes(op.op) && normalizedAccountId(findById(state.skills,op.id)) !== accountId) throw accountError('Rule belongs to another account.')
       }
-      const receipt = handler(state, scoped, now, { accountId })
+      const receipt = handler(state, scoped, now, { accountId, isBusy })
       if (receipt) receipts.push(receipt)
     } catch (err) {
       errors.push(err.message)

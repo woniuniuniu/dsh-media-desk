@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { paintCover, WIDTH, HEIGHT } from '../cover-painter.js'
 const ASSETS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../assets')
 const TRUSTED_FONTS = ['/System/Library/Fonts/Supplemental/Songti.ttc', '/System/Library/Fonts/PingFang.ttc', '/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc', '/usr/share/fonts/truetype/noto/NotoSerifCJK-Regular.ttc']
-const assetError = message => Object.assign(new Error(message), { code: 'ASSET_ERROR' })
-async function assetFile(src, filesDir) {
+const assetError = message => Object.assign(new Error(message), { code: 'ASSET_ERROR', status: 400 })
+export async function resolveProductionAsset(src, filesDir) {
   const match = /^media-desk\/(files|assets)\/([\w.-]+)$/.exec(src ?? '')
   if (!match || match[2] === '.' || match[2] === '..') throw assetError('Cover/asset must be a plugin-owned local image.')
   const root = match[1] === 'files' ? filesDir : ASSETS_DIR
@@ -19,7 +19,9 @@ async function assetFile(src, filesDir) {
   } catch { throw assetError('Local asset is missing, unsafe or too large.') }
 }
 export async function validateProductionAssets(production, filesDir) {
-  for (const asset of [production.cover, ...production.images ?? [], ...production.shots ?? []]) if (asset?.src) await assetFile(asset.src, filesDir)
+  const sources = new Map()
+  for (const asset of [production.cover, ...production.images ?? [], ...production.shots ?? []]) if (asset?.src && !sources.has(asset.src)) sources.set(asset.src, await resolveProductionAsset(asset.src, filesDir))
+  return sources
 }
 let renderer
 async function nativeRenderer() {
@@ -32,7 +34,7 @@ async function nativeRenderer() {
 export async function renderProductionCover(production, { filesDir }) {
   try {
     const { createCanvas, loadImage } = await nativeRenderer()
-    const image = production.cover?.src ? await loadImage(await readFile(await assetFile(production.cover.src, filesDir))) : undefined
+    const image = production.cover?.src ? await loadImage(await readFile(await resolveProductionAsset(production.cover.src, filesDir))) : undefined
     const canvas = paintCover(createCanvas(WIDTH, HEIGHT), { image, text: production.coverText || production.title || '' })
     return canvas.toBuffer('image/jpeg', 90)
   } catch (e) { if (e.code === 'ASSET_ERROR') throw e; throw assetError('Cover image could not be read or rendered.') }
