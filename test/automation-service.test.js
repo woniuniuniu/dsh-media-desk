@@ -18,6 +18,26 @@ async function fixture(t) {
 }
 const call = (service, tool, input = {}, requestId) => service.call({ tool: `media_desk_${tool}`, input, requestId })
 
+test('cumulative metrics API validates counters and collection times and bounds coverage with truncation metadata', async t => {
+  const { service, store } = await fixture(t)
+  await store.mutate('coverage', s => { s.items = Array.from({ length: 35 }, (_, i) => ({ id: `work${i}`, title: `Work ${i}`, platform: '抖音', status: 'published' })); s.metrics = []; s.accounts = [] })
+  const saved = await call(service, 'apply_ops', { ops: [{ op: 'add_metric', itemId: 'work0', platform: '抖音', views: 0, likes: null, source: 'manual', collectedAt: '2026-01-01T08:00:00+08:00' }] }, 'metric')
+  assert.equal(saved.ok, true)
+  assert.equal((await store.read()).metrics[0].likes, null)
+  for (const [i, op] of [{ views: -1 }, { views: 1.5 }, { views: 9007199254740992 }, { collectedAt: '2026-01-01T08:00:00' }].entries()) {
+    const result = await call(service, 'apply_ops', { ops: [{ op: 'add_metric', platform: '抖音', ...op }] }, `invalid-metric-${i}`)
+    assert.equal(result.ok, false)
+  }
+  const { result } = await call(service, 'get_insights')
+  assert.equal(result.coverage.rawRecords, 1)
+  assert.equal(result.coverage.withData, 1)
+  assert.equal(result.coverage.missingWorksCount, 35)
+  assert.equal(result.coverage.missingWorks.length, 30)
+  assert.equal(result.collections['coverage.missingWorks'].total, 35)
+  assert.equal(result.collections['coverage.missingWorks'].truncated, true)
+  assert.equal(result.collections['coverage.missingWorks'].limit, 30)
+})
+
 test('compact list pagination and explicit bounded item fields never return chat/settings', async t => {
   const { service, store } = await fixture(t)
   const add = await call(service, 'apply_ops', { ops: Array.from({ length: 4 }, (_, i) => ({ op: 'add_item', title: `Title ${i}`, body: 'x'.repeat(1000) })) }, 'add')

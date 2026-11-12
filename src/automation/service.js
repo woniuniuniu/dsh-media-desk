@@ -8,6 +8,7 @@ import { automationDirectory } from './paths.js'
 import { applyOps } from '../ops.js'
 import { computeInsights } from '../learn.js'
 import { PLATFORMS } from '../platforms.js'
+import { collectionTimestamp } from '../metrics.js'
 import { saveProduction, resolveExportDir } from '../export.js'
 import { importLocalFile } from './import-file.js'
 
@@ -34,6 +35,7 @@ function productionStatus(item, producer) {
 }
 function validateSchedule(input) {
   for (const op of input.ops ?? []) {
+    if (op.op === 'add_metric' && op.collectedAt != null && !collectionTimestamp(op.collectedAt)) throw invalid('collectedAt must be a calendar-valid timezone-qualified ISO8601 timestamp, or null for unknown.')
     if (typeof op.scheduledAt === 'string') {
       const [year, month, day] = op.scheduledAt.slice(0, 10).split('-').map(Number)
       const last = new Date(0); last.setUTCFullYear(year, month, 0)
@@ -175,8 +177,16 @@ export function createAutomationService({ store, settings, producer, assist, mod
       }
       case 'media_desk_get_insights': {
         const all = computeInsights(scopeState(await store.read(),input.accountId), { platform: input.platform })
-        // Bound every collection and strip verbose edit source material.
-        return JSON.parse(JSON.stringify(all, (key, value) => Array.isArray(value) ? value.slice(0, 30) : typeof value === 'string' ? value.slice(0, 500) : value))
+        const collections = {}, limit = 30
+        const bound = (value, path = '') => {
+          if (Array.isArray(value)) {
+            collections[path] = { total: value.length, returned: Math.min(value.length, limit), limit, truncated: value.length > limit }
+            return value.slice(0, limit).map((row, i) => bound(row, `${path}[${i}]`))
+          }
+          if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, row]) => [key, bound(row, path ? `${path}.${key}` : key)]))
+          return typeof value === 'string' ? value.slice(0, 500) : value
+        }
+        return { ...bound(all), collections }
       }
       case 'media_desk_list_styles': {
         const s = scopeState(await store.read(),input.accountId); const offset = input.offset ?? 0; const limit = input.limit ?? 20

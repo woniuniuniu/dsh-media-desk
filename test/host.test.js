@@ -155,10 +155,13 @@ test('proposeRules 没有数据时不提案', () => {
   assert.equal(proposeRules(state).length, 0)
 })
 
-test('computeInsights 汇总与逐日数据一致', () => {
+test('computeInsights 演示累计快照与独立平台汇总一致，跨日差值不冒充每日新增', () => {
   const state = seed()
   const data = computeInsights(state)
-  assert.equal(data.daily.reduce((a, b) => a + b.views, 0), data.views)
+  assert.equal(data.top.reduce((a, b) => a + b.views, 0), data.views)
+  assert.ok(data.daily.every(row => row.views === null && row.partial))
+  assert.ok(data.timeline.reasons['cross-day'] > 0)
+  assert.ok(state.metrics.every(row => row.semantics === 'cumulative' && row.source === 'demo'))
   assert.equal(data.platforms.reduce((a, b) => a + b.views, 0), data.views)
 })
 
@@ -803,21 +806,21 @@ test('Monid：花费累加，资料失败不影响内容，预算拦截和没装
   assert.deepEqual(await monidStatus(async () => ({ balance: { value: 1.5, currency: 'USD' } })), { state: 'ready', balance: { value: 1.5, currency: 'USD' } })
 })
 
-test('Monid：重复导入只更新数字，示例数据退出统计，没有播放量时按互动排序', async () => {
+test('Monid：重复导入保留累计快照，示例数据退出统计，没有播放量时按互动排序', async () => {
   const { importPosts, normalizePosts, postsToMaterial } = await import('../src/monid.js')
   const { computeInsights } = await import('../src/learn.js')
   const posts = normalizePosts('小红书', xhsOutput)
   const draft = { items: [{ id: 's', title: '示例', status: 'published', sample: true }], metrics: [{ id: 'sm', itemId: 's', platform: '抖音', date: '2026-01-01T00:00:00Z', views: 9999, likes: 1, sample: true }], accounts: [{ id: 'sa', followers: 500, sample: true }] }
   const account = { platform: '小红书', id: 'x', url: 'https://www.xiaohongshu.com/user/profile/x' }
-  const first = importPosts(draft, { account, profile: { nickname: '我', followers: 100 }, posts })
+  const first = importPosts(draft, { account, profile: { nickname: '我', followers: 100 }, posts, now: '2026-01-01T08:00:00Z' })
   assert.deepEqual(first, { added: 1, updated: 0 })
   const item = draft.items.find(row => row.imported)
   item.title = '我改过的标题'
-  const second = importPosts(draft, { account, profile: { nickname: '我', followers: 120 }, posts: [{ ...posts[0], likes: 50 }] })
+  const second = importPosts(draft, { account, profile: { nickname: '我', followers: 120 }, posts: [{ ...posts[0], likes: 50 }], now: '2026-01-01T09:00:00Z' })
   assert.deepEqual(second, { added: 0, updated: 1 })
   assert.equal(draft.items.filter(row => row.imported).length, 1)
   assert.equal(item.title, '我改过的标题')
-  assert.equal(draft.metrics.filter(row => row.externalId).length, 1)
+  assert.equal(draft.metrics.filter(row => row.externalId).length, 2)
   assert.equal(draft.accounts.filter(row => row.externalId).length, 1)
   const insights = computeInsights(draft)
   assert.equal(insights.hasSample, false)

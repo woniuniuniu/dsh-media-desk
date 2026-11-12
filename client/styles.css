@@ -702,8 +702,12 @@ button.md-receipt:hover { transform: translateX(2px); }
 .md-tray-item > span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* 复盘 */
-.md-insights { min-height: 100%; display: grid; gap: 10px; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); grid-template-rows: auto minmax(240px, 1fr) minmax(250px, 1fr); grid-template-areas: "hero hero" "trend platforms" "top advice"; }
-@container (max-width: 760px) { .md-insights { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: "hero" "trend" "platforms" "top" "advice"; } .md-i-trend { height: 300px; } }
+.md-insights { min-height: 100%; display: grid; gap: 10px; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); grid-template-rows: auto auto minmax(240px, 1fr) minmax(250px, 1fr); grid-template-areas: "hero hero" "coverage coverage" "trend platforms" "top advice"; }
+@container (max-width: 760px) { .md-insights { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: "hero" "coverage" "trend" "platforms" "top" "advice"; } .md-i-trend { height: 300px; } }
+.md-i-coverage { grid-area: coverage; padding: 16px 18px; overflow-wrap: anywhere; }
+.md-i-coverage p, .md-i-coverage li { font-size: 13px; line-height: 1.6; }
+.md-i-coverage ul { max-height: 320px; overflow-y: auto; padding-left: 20px; }
+.md-i-top details { padding: 4px 18px 10px; font-size: 12px; overflow-wrap: anywhere; }
 .md-insights .md-i-hero { grid-area: hero; }
 .md-i-trend { grid-area: trend; }
 .md-i-platforms { grid-area: platforms; }

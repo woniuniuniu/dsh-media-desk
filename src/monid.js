@@ -8,6 +8,7 @@ import { delimiter, dirname, join } from 'node:path'
 import { assertPublicUrl } from './harvest.js'
 import { newId } from './ops.js'
 import { platformName, tr } from './i18n.js'
+import { collectionTimestamp, COUNTERS, validCounter } from './metrics.js'
 
 const POST_COUNT = 20
 const RUN_WAIT_SECONDS = 120
@@ -148,11 +149,12 @@ function text(value, max) {
 }
 
 function count(value) {
-  return Number.isFinite(value) && value > 0 ? Math.round(value) : 0
+  return validCounter(value) ? value : null
 }
 
 function isoFromSeconds(value) {
-  return Number.isFinite(value) && value > 0 ? new Date(value * 1000).toISOString() : new Date().toISOString()
+  const date = Number.isFinite(value) && value > 0 ? new Date(value * 1000) : null
+  return date && Number.isFinite(date.getTime()) ? date.toISOString() : null
 }
 
 function httpsUrl(value) {
@@ -216,7 +218,7 @@ export function normalizePosts(platform, output) {
       return {
         id: row.code, title: firstLine(body, tr('无标题')), body, publishedAt: isoFromSeconds(row.taken_at),
         url: `https://www.instagram.com/p/${row.code}/`, cover: httpsUrl(row.image_versions2?.candidates?.[0]?.url ?? row.carousel_media?.[0]?.image_versions2?.candidates?.[0]?.url),
-        views: count(row.ig_play_count ?? row.play_count ?? row.view_count), likes: count(row.like_count), comments: count(row.comment_count), saves: 0, shares: 0,
+        views: count(row.ig_play_count ?? row.play_count ?? row.view_count), likes: count(row.like_count), comments: count(row.comment_count), saves: null, shares: null,
       }
     })
   }
@@ -227,16 +229,16 @@ export function normalizePosts(platform, output) {
       const at = Date.parse(row.created_at)
       const photo = (Array.isArray(row.media) ? row.media : []).map(m => m?.media_url_https ?? m?.url).find(Boolean)
       return {
-        id: row.tweet_id, title: firstLine(body, tr('无标题')), body, publishedAt: Number.isFinite(at) ? new Date(at).toISOString() : new Date().toISOString(),
+        id: row.tweet_id, title: firstLine(body, tr('无标题')), body, publishedAt: Number.isFinite(at) ? new Date(at).toISOString() : null,
         url: `https://x.com/${screen}/status/${row.tweet_id}`, cover: httpsUrl(photo),
-        views: count(Number(row.views)), likes: count(row.favorites), comments: count(row.replies), saves: count(row.bookmarks), shares: count(row.retweets) + count(row.quotes),
+        views: count(typeof row.views === 'string' && /^\d+$/.test(row.views) ? Number(row.views) : row.views), likes: count(row.favorites), comments: count(row.replies), saves: count(row.bookmarks), shares: count(row.retweets) !== null && count(row.quotes) !== null ? count(count(row.retweets) + count(row.quotes)) : null,
       }
     })
   }
   return (output?.data?.list?.vlist ?? []).filter(row => /^BV\w+$/.test(row?.bvid ?? '')).map(row => ({
     id: row.bvid, title: text(row.title, 80) || tr('无标题'), body: text(row.description, 2000), publishedAt: isoFromSeconds(row.created),
     url: `https://www.bilibili.com/video/${row.bvid}`, cover: httpsUrl(row.pic),
-    views: count(row.play), likes: 0, comments: count(row.comment), saves: 0, shares: 0,
+    views: count(row.play), likes: null, comments: count(row.comment), saves: null, shares: null,
   }))
 }
 
@@ -415,6 +417,8 @@ export async function fetchAccount(account, run) {
     cost += first.cost
   }
   const posts = await runEndpoint(run, source.calls.posts, source.query(account.id, 'posts', extras.profile))
+  // This is when this process observed the posts response, not a provider refresh guarantee.
+  const collectedAt = new Date().toISOString()
   cost += posts.cost
   const list = normalizePosts(account.platform, posts.output)
   if (!list.length) throw Object.assign(new Error(tr('没抓到内容，账号可能是私密的或者还没发过内容。')), { status: 404, cost })
@@ -428,7 +432,7 @@ export async function fetchAccount(account, run) {
       cost += result.cost
     } catch { /* 资料读不到也不影响内容 */ }
   }
-  return { posts: list, profile: normalizeProfile(account.platform, extras), cost }
+  return { posts: list, profile: normalizeProfile(account.platform, extras), cost, collectedAt }
 }
 
 function sniffImage(buffer) {
@@ -478,32 +482,34 @@ export async function saveCovers(posts, platform, state, filesDir, fetchImpl = f
   return saved
 }
 
-/** 把自己账号的内容写进内容库和复盘。再抓一次只更新数字，不会重复，也不改用户动过的文字。 */
-export function importPosts(draft, { account, profile, posts, accountId, covers = new Map(), now = new Date().toISOString() }) {
+/** Reimports retain authored content and append immutable cumulative observations. */
+export function importPosts(draft, { account, profile, posts, accountId, collectedAt = null, covers = new Map(), now = new Date().toISOString() }) {
+  if (!collectionTimestamp(now)) throw new Error('Import save time must include a valid timezone.')
+  if (collectedAt !== null && !collectionTimestamp(collectedAt)) throw new Error('Import collection time must include a valid timezone.')
   const { platform } = account
   const nickname = profile.nickname || platformName(platform)
   const key = `${platform}:${account.id}`
   let row = validateImportTarget(draft,account,accountId) ?? draft.accounts.find(entry=>entry.externalId===key)
   if (!row) { row = {id:newId('ac'),createdAt:now,group:'',positioning:'',audience:'',defaultStyleId:null,archived:false}; draft.accounts.push(row) }
-  Object.assign(row,{externalId:key,platform,handle:nickname,url:account.url,followers:profile.followers||null,description:profile.description,fetchedAt:now,fetchError:null})
+  Object.assign(row,{externalId:key,platform,handle:nickname,url:account.url,followers:profile.followers??null,description:profile.description,fetchedAt:now,fetchError:null})
   let added = 0
   for (const post of posts) {
     const externalId = `${platform}:${post.id}`
+    const publishedAt = collectionTimestamp(post.publishedAt)
     let item = draft.items.find(row => row.externalId === externalId)
     if (!item) {
       item = {
         id: newId('it'), accountId: row.id, kind: 'web', title: post.title, body: post.body, tags: [], status: 'published', personaIds: [], drafts: {},
-        createdAt: post.publishedAt, publishedAt: post.publishedAt, scheduledAt: post.publishedAt, platform, url: post.url, source: nickname, media: null, imported: true, externalId,
+        createdAt: publishedAt ?? now, publishedAt, scheduledAt: publishedAt, platform, url: post.url, source: nickname, media: null, imported: true, externalId,
       }
       draft.items.push(item)
       added += 1
     }
     if (item.accountId === undefined || item.accountId === null) item.accountId = row.id
     if (covers.has(post.id)) item.media = { src: covers.get(post.id) }
-    const numbers = { views: post.views, likes: post.likes, comments: post.comments, shares: post.shares, saves: post.saves }
-    const metric = draft.metrics.find(row => row.externalId === externalId)
-    if (metric) Object.assign(metric, numbers, { fetchedAt: now, accountId: item.accountId })
-    else draft.metrics.push({ id: newId('m'), accountId: item.accountId, itemId: item.id, platform, date: post.publishedAt, ...numbers, externalId, fetchedAt: now })
+    const numbers = Object.fromEntries(COUNTERS.map(key => [key, count(post[key])]))
+    const replay = draft.metrics.some(metric => metric.itemId === item.id && metric.platform === platform && metric.externalId === externalId && (collectedAt !== null ? collectionTimestamp(metric.collectedAt) === collectionTimestamp(collectedAt) : metric.collectedAt == null && metric.recordedAt === now) && COUNTERS.every(key => metric[key] === numbers[key]))
+    if (!replay) draft.metrics.push({ id: newId('m'), accountId: item.accountId, itemId: item.id, platform, date: publishedAt, ...numbers, externalId, fetchedAt: now, collectedAt, collectionTimeBasis: collectedAt === null ? null : 'local-response-observed', recordedAt: now, source: 'monid', semantics: 'cumulative' })
   }
   return Object.defineProperty({ added, updated: posts.length - added },'accountId',{value:row.id,enumerable:false})
 }

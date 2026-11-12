@@ -4,6 +4,7 @@ import { accountError, detachAccounts, hasActiveProduction, normalizedAccountId,
 import { normalizeAccountAvatar } from './avatar.js'
 import { currentLang, platformName, tr } from './i18n.js'
 import { draftFormat } from './style.js'
+import { collectionTimestamp, COUNTERS, validCounter } from './metrics.js'
 
 export const STATUSES = ['idea', 'outline', 'draft', 'ready', 'published']
 export const STATUS_LABEL = { idea: '灵感', outline: '大纲', draft: '草稿', ready: '待发布', published: '已发布' }
@@ -24,7 +25,7 @@ const PERSON_FIELDS = { name: 'text', role: 'text', note: 'text', traits: 'list'
 const ANGLE_FIELDS = { name: 'text', hook: 'text', prompt: 'text' }
 const STYLE_FIELDS = { name: 'text', icon: 'text', summary: 'text', tone: 'text', sentences: 'text', opening: 'text', structure: 'text', logic: 'text', story: 'text', flow: 'text', words: 'list', avoid: 'list', samples: 'list' }
 const SKILL_FIELDS = { accountId: 'id', name: 'text', rule: 'text', source: 'text', status: 'text', confidence: 'num', evidence: 'text' }
-const METRIC_FIELDS = { accountId: 'id', itemId: 'id', platform: 'platform', date: 'date', views: 'num', likes: 'num', comments: 'num', shares: 'num', saves: 'num' }
+const METRIC_FIELDS = { accountId: 'id', itemId: 'id', platform: 'platform', date: 'date', source: 'text', collectedAt: 'date', views: 'num', likes: 'num', comments: 'num', shares: 'num', saves: 'num' }
 const ACCOUNT_FIELDS = { group: 'text', positioning: 'text', audience: 'text', defaultStyleId: 'id', draftFormat: 'format', archived: 'bool', platform: 'platform', handle: 'text', url: 'url', followers: 'num', note: 'text', title: 'text', description: 'text', avatar: 'avatar', fetchedAt: 'date', fetchError: 'text' }
 
 let counter = 0
@@ -299,15 +300,19 @@ const handlers = {
     state.skills = state.skills.filter(row => row.id !== op.id)
     return { text: tr('删除规则「{name}」', { name: skill.name }) }
   },
-  add_metric(state, op) {
-    const metric = { id: newId('m'), accountId: null, date: new Date().toISOString(), views: 0, likes: 0, comments: 0, shares: 0, saves: 0, ...pick(METRIC_FIELDS, op) }
+  add_metric(state, op, now) {
+    for (const key of COUNTERS) if (op[key] !== undefined && op[key] !== null && !validCounter(op[key])) throw accountError(`${key} must be a nonnegative safe integer or null.`)
+    if (op.collectedAt != null && !collectionTimestamp(op.collectedAt)) throw accountError('collectedAt requires a valid ISO8601 timestamp with a timezone.')
+    const metric = { id: newId('m'), accountId: null, date: now, ...pick(METRIC_FIELDS, op), semantics: 'cumulative', recordedAt: now }
+    for (const key of COUNTERS) if (op[key] === null) metric[key] = null
+    if (op.collectedAt === null) metric.collectedAt = null
     const linked = metric.itemId ? findById(state.items,metric.itemId) : null
     if (linked) { if (op.accountId !== undefined && op.accountId !== normalizedAccountId(linked)) throw accountError('Metric belongs to another account.'); metric.accountId = normalizedAccountId(linked) }
     const account = requireAccount(state,metric.accountId)
     if (account && metric.platform !== account.platform) throw accountError('Metric platform does not match account.')
     if (!metric.platform) throw new Error(tr('数据需要平台'))
     state.metrics.push(metric)
-    return { text: tr('记录 {platform} 数据 {views} 阅读', { platform: platformName(metric.platform), views: metric.views }) }
+    return { text: tr('记录 {platform} 数据 {views} 阅读', { platform: platformName(metric.platform), views: metric.views ?? (currentLang() === 'en' ? 'unknown' : '未知') }) }
   },
   add_account(state, op, now) {
     const account = { id: newId('ac'), group: '', positioning: '', audience: '', defaultStyleId: null, draftFormat: null, archived: false, platform: '', handle: '', url: null, followers: null, createdAt: now, ...pick(ACCOUNT_FIELDS, op) }

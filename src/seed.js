@@ -178,18 +178,20 @@ export function buildSeed(now, lang = currentLang()) {
 
   const metrics = []
   const published = items.filter(item => item.publishedAt)
-  // 每篇已发布内容生成一段衰减的日阅读，数据只用于演示复盘界面
+  // Demo observations are cumulative snapshots; their timestamps and origin are explicit.
   const PEAK = { seed_7: 8200, seed_12: 21400, seed_14: 12600, seed_16: 34800 }
   for (const item of published) {
     const start = new Date(item.publishedAt)
     const peak = PEAK[item.id] ?? 6000
+    let cumulativeViews = 0
     for (let d = 0; d < 9; d += 1) {
       const date = new Date(start)
       date.setDate(date.getDate() + d)
       if (date > now) break
-      const views = Math.round(peak * Math.exp(-d * 0.55) * (0.9 + ((d * 37) % 20) / 100))
+      cumulativeViews += Math.round(peak * Math.exp(-d * 0.55) * (0.9 + ((d * 37) % 20) / 100))
+      const views = cumulativeViews
       metrics.push({
-        id: `seed_m_${item.id}_${d}`, itemId: item.id, platform: item.platform, date: date.toISOString(), views,
+        id: `seed_m_${item.id}_${d}`, itemId: item.id, platform: item.platform, date: date.toISOString(), collectedAt: date.toISOString(), recordedAt: date.toISOString(), source: 'demo', semantics: 'cumulative', views,
         likes: Math.round(views * 0.046), comments: Math.round(views * 0.009), shares: Math.round(views * 0.012), saves: Math.round(views * (item.platform === '小红书' ? 0.05 : 0.018)), sample: true,
       })
     }

@@ -18,7 +18,7 @@ const itemFields = { accountId, title: str(), body: str(), kind: { enum: ['image
 const styleFields = Object.fromEntries(['name', 'icon', 'summary', 'tone', 'sentences', 'opening', 'structure', 'logic', 'story', 'flow'].map(k => [k, str()]))
 Object.assign(styleFields, { words: strings, avoid: strings, samples: strings })
 const skillFields = { accountId, name: str(), rule: str(), source: str(), status: str(), confidence: number, evidence: str() }
-const metricFields = { accountId, itemId: nullable(id), platform, date: nullable(str(50)), ...Object.fromEntries(['views', 'likes', 'comments', 'shares', 'saves'].map(k => [k, number])) }
+const metricFields = { accountId, itemId: nullable(id), platform, date: nullable(str(50)), collectedAt: nullable(str(50)), source: str(300), ...Object.fromEntries(['views', 'likes', 'comments', 'shares', 'saves'].map(k => [k, nullable({ type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER })])) }
 const operations = []
 const op = (name, fields, required = []) => operations.push(object({ op: { const: name }, ...fields }, ['op', ...required]))
 op('add_item', itemFields)
@@ -64,7 +64,7 @@ tool('production_status', 'Compact production/job status for one item.', item, [
 tool('cancel_production', 'Ask the existing Producer to cancel one job.', item, ['id'], true)
 tool('regenerate_asset', 'Regenerate one existing asset once using configured image provider.', { id, accountId, target: { type: 'string', pattern: '^(cover|(image|shot):[0-9]{1,2})$' } }, ['id', 'target'], true)
 tool('export', 'Save article, storyboard, assets and composited JPEG cover to the configured export location.', item, ['id'], true)
-tool('get_insights', 'Compact insights for an explicit account, Unassigned or All, optionally filtered by canonical platform (including 快手). Kuaishou supports manual/CSV/API metrics; no automatic Monid fetch.', { accountId, platform: { enum: PLATFORMS } })
+tool('get_insights', 'Cumulative work/platform snapshots with coverage, nullable observed growth and field provenance. Arrays are limited to 30 with per-path total/truncation metadata. Optional account/platform filters; unidentified records excluded from work totals. No model or Monid call.', { accountId, platform: { enum: PLATFORMS } })
 tool('list_styles', 'Bounded style cards and active style.', { accountId, limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 }, offset: { type: 'integer', minimum: 0, maximum: 1000000, default: 0 } })
 tool('models', 'Configured provider and model identifiers; no credentials.')
 tool('request_status', 'Inspect a durable mutation request. Pending recovery is never replayed.', { requestId }, ['requestId'])

@@ -228,9 +228,9 @@ export async function importAccountRoute(ctx, store, desk, body) {
   try {
     const account = await resolveAccount(body.text)
     validateImportTarget(await store.read(),account,body.accountId)
-    const { posts, profile, cost } = await fetchAccount(account, desk.monid)
+    const { posts, profile, cost, collectedAt } = await fetchAccount(account, desk.monid)
     const covers = await saveCovers(posts, account.platform, await store.read(), store.filesDir)
-    const imported = await store.mutate(tr('导入{platform}账号', { platform: platformName(account.platform) }), draft => importPosts(draft, { account, profile, posts, covers, accountId:body.accountId }))
+    const imported = await store.mutate(tr('导入{platform}账号', { platform: platformName(account.platform) }), draft => importPosts(draft, { account, profile, posts, covers, collectedAt, accountId:body.accountId }))
     const nickname = profile.nickname || platformName(account.platform)
     let styleError = null
     const material = postsToMaterial(posts)

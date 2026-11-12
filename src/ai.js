@@ -124,7 +124,7 @@ const OP_DOC = `可用 ops（每个都是对象，op 字段必填，其余按需
 - add_skill {name, rule, source, status: proposed|active, confidence} / update_skill {id,...} / delete_skill {id}
 - set_style {id}：切换写作风格，id 从 styles 里选，id 为 null 表示不用特定风格
 - set_format {format: script|article}：之后成稿写成口播脚本（一句一行）还是文章（自然段）
-- add_metric {itemId?, platform, date, views, likes, comments, shares, saves}
+- add_metric {itemId?, platform, date?, collectedAt?, source?, views?, likes?, comments?, shares?, saves?}: one cumulative snapshot per work/platform, never a daily increment. Counters must be nonnegative safe integers; omit unknown counters (never default to 0). date is only the stat/record date, not collection time. collectedAt is optional and must be an actual known collection instant with Z or an explicit timezone offset; omit it when unknown. source is an optional self-declared label, never infer it from account identity. Link itemId only by an exact known ID; unidentified snapshots are stored but excluded from work totals.
 platform 只能取：${PLATFORMS.join('、')}。Kuaishou / Kwai 都使用规范值「快手」。`
 
 const REVISE_DOC = () => `

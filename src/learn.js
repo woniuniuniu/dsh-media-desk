@@ -5,37 +5,19 @@ import { activeStyle, styleToVoice } from './style.js'
 import { platformName, tr } from './i18n.js'
 import { PLATFORMS } from './platforms.js'
 import { accountError } from './accounts.js'
-
-/** 按这台电脑的时区算日期，北京时间早上发的内容不会算到前一天。 */
-function localDay(iso) {
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? String(iso).slice(0, 10) : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
+import { aggregateSnapshots, reduceMetrics, resolveMetricItem, validCounter } from './metrics.js'
 
 function sum(rows, key) {
-  return rows.reduce((total, row) => total + (row[key] || 0), 0)
-}
-
-/** 每篇内容的累计数据。 */
-function itemTotals(state) {
-  const totals = new Map()
-  for (const metric of state.metrics) {
-    if (!metric.itemId) continue
-    const entry = totals.get(metric.itemId) ?? { views: 0, likes: 0, comments: 0, shares: 0, saves: 0 }
-    for (const key of Object.keys(entry)) entry[key] += metric[key] || 0
-    totals.set(metric.itemId, entry)
-  }
-  return totals
+  const values = rows.map(row => row[key]).filter(validCounter)
+  if (!values.length) return null
+  const total = values.reduce((a, b) => a + b, 0)
+  return Number.isSafeInteger(total) ? total : null
 }
 
 /** 有了真实数据后，示例数据就不再参与统计。 */
 function realMetrics(state) {
   const real = state.metrics.filter(metric => !metric.sample)
   return real.length ? real : state.metrics
-}
-
-function engagement(row) {
-  return (row.likes || 0) + (row.comments || 0) + (row.shares || 0) + (row.saves || 0)
 }
 
 function bestGroup(rows) {
@@ -80,12 +62,10 @@ function editSignals(state) {
  */
 export function proposeRules(state) {
   const proposals = []
-  const totals = itemTotals({ metrics: realMetrics(state) })
-  const published = state.items.filter(item => totals.has(item.id))
-  const rows = published.map(item => ({ item, views: totals.get(item.id).views }))
+  const { rows } = reduceMetrics(state, realMetrics(state))
 
   // 有些平台公开接口读不到播放量，这些内容不参与跨平台比较
-  const byPlatform = bestGroup(rows.filter(row => row.views > 0).map(row => ({ key: row.item.platform, value: row.views })))
+  const byPlatform = bestGroup(rows.filter(row => row.views !== null).map(row => ({ key: row.platform, value: row.views })))
   if (byPlatform.length >= 2 && byPlatform[0].avg > byPlatform[1].avg * 1.3) {
     const best = byPlatform[0]
     const platform = platformName(best.key)
@@ -95,8 +75,12 @@ export function proposeRules(state) {
     })
   }
 
-  const hasViews = rows.some(row => row.views > 0)
-  const hours = bestGroup(published.filter(item => item.publishedAt).map(item => ({ key: String(new Date(item.publishedAt).getHours()), value: hasViews ? totals.get(item.id).views : engagement(totals.get(item.id)) })))
+  const hasViews = rows.some(row => row.views !== null)
+  const hours = bestGroup(rows.flatMap(row => {
+    const item = state.items.find(item => item.id === row.id)
+    const value = hasViews ? row.views : row.engagedPartial ? null : row.engaged
+    return item?.publishedAt && Number.isFinite(Date.parse(item.publishedAt)) && value !== null ? [{ key: String(new Date(item.publishedAt).getHours()), value }] : []
+  }))
   if (hours.length >= 2 && hours[0].n >= 2) {
     proposals.push({
       name: tr('{hour} 点前后发布', { hour: hours[0].key }), rule: tr('默认把内容排在 {hour}:00 前后发布。', { hour: hours[0].key }),
@@ -124,43 +108,27 @@ export function proposeRules(state) {
  * @returns {object} 概览、趋势、平台分布、排行与角度×人物覆盖。
  */
 export function computeInsights(state, { platform } = {}) {
+  const identityItems = state.items
   if (platform !== undefined) {
     if (!PLATFORMS.includes(platform)) throw accountError('Invalid insights platform.')
     const metrics = state.metrics.filter(metric => metric.platform === platform)
-    const linkedItems = new Set(metrics.map(metric => metric.itemId).filter(Boolean))
+    const linkedItems = new Set(metrics.flatMap(metric => {
+      const { item, reason } = resolveMetricItem(state.items, metric)
+      return item && !reason ? [item.id] : []
+    }))
     state = { ...state, items: state.items.filter(item => item.platform === platform || linkedItems.has(item.id)), metrics, accounts: state.accounts.filter(account => account.platform === platform) }
   }
   const metrics = realMetrics(state)
   const onlyReal = metrics.length !== state.metrics.length || !metrics.some(metric => metric.sample)
-  const totals = itemTotals({ metrics })
-  const daily = new Map()
-  for (const metric of metrics) {
-    const day = localDay(metric.date)
-    const entry = daily.get(day) ?? { date: day, views: 0, engaged: 0 }
-    entry.views += metric.views || 0
-    entry.engaged += engagement(metric)
-    daily.set(day, entry)
-  }
-  const platforms = new Map()
-  for (const metric of metrics) {
-    const entry = platforms.get(metric.platform) ?? { platform: metric.platform, views: 0, engaged: 0, likes: 0, comments: 0, shares: 0, saves: 0 }
-    for (const key of ['views', 'likes', 'comments', 'shares', 'saves']) entry[key] += metric[key] || 0
-    entry.engaged += engagement(metric)
-    platforms.set(metric.platform, entry)
-  }
-  const top = state.items
-    .filter(item => totals.has(item.id))
-    .map(item => ({ id: item.id, title: item.title, platform: platform ?? item.platform, ...totals.get(item.id), engaged: engagement(totals.get(item.id)) }))
-    .sort((a, b) => (b.views - a.views) || (b.engaged - a.engaged))
-  const views = sum(metrics, 'views')
-  const engaged = metrics.reduce((total, metric) => total + engagement(metric), 0)
-  // 互动率只算读得到播放量的内容，否则分子分母对不上
-  const withViews = metrics.filter(metric => metric.views > 0)
+  const included = { ...state, items: state.items.filter(item => !onlyReal || !item.sample) }
+  const { rows, coverage, daily, timeline } = reduceMetrics(included, metrics, { identityItems: identityItems.filter(item => !onlyReal || !item.sample) })
+  const ranking = (a, b) => ((b.views ?? -1) - (a.views ?? -1)) || ((b.engaged ?? -1) - (a.engaged ?? -1)) || String(a.streamKey ?? a.platform).localeCompare(String(b.streamKey ?? b.platform))
+  const top = [...rows].sort(ranking)
+  const platforms = [...new Set(rows.map(row => row.platform))].map(platform => ({ platform, ...aggregateSnapshots(rows.filter(row => row.platform === platform)) })).sort(ranking)
   const accounts = state.accounts.filter(account => (onlyReal ? !account.sample : true))
   return {
-    views, engaged, engagementRate: views ? withViews.reduce((total, metric) => total + engagement(metric), 0) / views : 0,
-    published: state.items.filter(item => item.status === 'published' && (onlyReal ? !item.sample : true)).length,
-    followers: sum(accounts, 'followers'), daily: [...daily.values()].sort((a, b) => a.date.localeCompare(b.date)), platforms: [...platforms.values()].sort((a, b) => (b.views - a.views) || (b.engaged - a.engaged)), top,
+    ...aggregateSnapshots(rows), published: coverage.published, coverage, timeline,
+    followers: sum(accounts, 'followers'), daily, platforms, top,
     hasSample: metrics.some(metric => metric.sample),
   }
 }

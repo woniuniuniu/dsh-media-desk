@@ -124,6 +124,84 @@ test('insights request carries explicit account and Kuaishou platform; CSV accep
   }
 })
 
+test('metrics CSV preserves blanks, rejects invalid counters and accepts explicit work and collection columns', async () => {
+  const { parseCsv } = await client('client/insights.jsx')
+  const parsed = parseCsv('date,platform,views,likes,comments,shares,saves,itemId,collectedAt\n2026-01-01,Douyin,0,,,,,a,2026-01-01T08:00:00Z')
+  assert.equal(parsed.errors.length, 0)
+  assert.equal(parsed.ops[0].views, 0)
+  assert.equal(parsed.ops[0].likes, undefined)
+  assert.equal(parsed.ops[0].itemId, 'a')
+  assert.equal(parsed.ops[0].collectedAt, '2026-01-01T08:00:00Z')
+  assert.equal(parsed.ops[0].source, undefined)
+  for (const value of ['-1', '1.5', 'oops', '9007199254740992']) assert.equal(parseCsv(`2026-01-01,Douyin,${value}`).errors.length, 1)
+  assert.equal(parseCsv('2026-01-01,Douyin,1,,,,,a,2026-01-01T08:00:00').errors.length, 1)
+  assert.equal(parseCsv('2026-01-01,Douyin,1').ops[0].collectedAt, undefined)
+})
+
+test('rendered insights show nullable totals, factual coverage and provenance even without a daily timeline', async () => {
+  const data = { published: 2, views: 1063, engaged: null, engagementRate: null, daily: [], platforms: [], top: [], coverage: { published: 2, withData: 1, withViews: 1, complete: 0, rawRecords: 2, uniqueWorks: 1, missingWorksCount: 1, unknownTimeRecords: 2, unknownTimeWorks: 1, unknownSourceRecords: 2, legacyZeroRecords: 2, latestCollectedAt: null, latestCollectedAtScope: 'known subset', fieldCounts: { views: 1, likes: 0, comments: 0, shares: 0, saves: 0 }, excludedRecords: 0, missingWorks: [{ id: 'missing', title: 'Missing piece', platform: '抖音', reason: 'no linked snapshot', missingFields: ['views', 'likes'], source: null, latestCollectedAt: null }] }, timeline: { reasons: { 'unknown-timestamp': 2 }, explanation: 'Only adjacent reliable collection instants.' } }
+  data.top = [{ id: 'legacy', title: 'Legacy piece', platform: '抖音', views: 1063, likes: null, comments: null, shares: null, saves: null, warnings: ['legacy-import-time-only'], provenance: { views: { collectedAt: null, ordering: 'legacy-import-time' } } }]
+  const requests = []
+  const slots = [], effects = []; let slot = 0
+  const api = await client({ contents: "export * from './client/insights.jsx'; export * from './client/desk.js'; export * from './client/i18n.js'" }, async (url, options) => { requests.push({ url, body: options?.body ? JSON.parse(options.body) : null }); return { ok: true, json: async () => options?.body ? { state: api.getDesk().state, receipts: [] } : data } }, {
+    useState: initial => { const at = slot++; if (!(at in slots)) slots[at] = initial; return [slots[at], v => { slots[at] = v }] },
+    useEffect: fn => { effects.push(fn) },
+  })
+  api.setDesk({ state: { accounts: [], items: [], metrics: [], skills: [], chat: [] } }); api.selectAccount(undefined)
+  const render = () => { slot = 0; return api.InsightsView() }
+  render(); for (const fn of effects.splice(0)) fn()
+  await new Promise(resolve => setImmediate(resolve))
+  const tree = render()
+  const expand = node => !node || typeof node !== 'object' ? node : typeof node.type === 'function' ? expand(node.type(node.props)) : { ...node, children: node.children.flat(Infinity).map(expand) }
+  const text = textOf(expand(tree))
+  assert.match(text, /1,063|1063/)
+  assert.match(text, /1\s+\/\s+2/)
+  assert.match(text, /Missing piece/)
+  assert.match(text, /有数据的作品 \/ 已发布作品/)
+  assert.match(text, /没有关联的数据记录/)
+  assert.match(text, /未知/)
+  assert.match(text, /采集时间/)
+  assert.match(text, /导入完成时间/)
+  assert.match(text, /五项数值（历史零值待核实）/)
+  assert.doesNotMatch(text, /unknown-timestamp|no linked snapshot|Legacy zero/)
+  api.setLanguagePreference('en')
+  const english = textOf(expand(render()))
+  assert.match(english, /Unknown/)
+  assert.match(english, /no linked snapshot/)
+  assert.match(english, /Legacy zero/)
+  assert.match(english, /five numeric fields in the latest snapshot \(legacy zeros need verification\)/)
+  assert.doesNotMatch(english, /five known counters/)
+  assert.doesNotMatch(english, /[一-鿿]/)
+  api.setLanguagePreference('zh')
+  elements(tree).find(node => node.type === 'button' && textOf(node).trim() === '录入数据').props.onClick()
+  const dialog = api.getDesk().dialog
+  assert.ok(dialog.fields.some(field => field.name === 'collectedAt' && !field.required))
+  dialog.onSubmit({ platform: '抖音', date: '2026-01-01', views: '0', likes: '' })
+  await new Promise(resolve => setImmediate(resolve))
+  const saved = requests.find(row => row.body?.ops)?.body.ops[0]
+  assert.equal(saved.source, 'manual')
+  assert.equal(saved.views, 0)
+  assert.equal(saved.likes, undefined)
+  assert.equal(saved.collectedAt, undefined)
+})
+
+test('rendered growth chart breaks paths at null values and unobserved calendar gaps', async () => {
+  const data = { published: 0, views: 1, engaged: null, engagementRate: null, platforms: [], top: [], daily: [{ date: '2026-01-01', views: 0 }, { date: '2026-01-02', views: null }, { date: '2026-01-03', views: 2 }, { date: '2026-01-06', views: 3 }, { date: '2026-01-07', views: 4 }] }
+  const slots = [], effects = []; let slot = 0
+  const api = await client({ contents: "export * from './client/insights.jsx'; export * from './client/desk.js'" }, async () => ({ ok: true, json: async () => data }), {
+    useState: initial => { const at = slot++; if (!(at in slots)) slots[at] = initial; return [slots[at], v => { slots[at] = v }] }, useEffect: fn => effects.push(fn),
+  })
+  api.setDesk({ state: { accounts: [], items: [], metrics: [], skills: [], chat: [] } }); api.selectAccount(undefined)
+  api.InsightsView(); for (const fn of effects.splice(0)) fn(); await new Promise(resolve => setImmediate(resolve))
+  slot = 0
+  const tree = api.InsightsView(), chart = elements(tree).find(node => node.type?.name === 'TrendChart')
+  const rendered = chart.type(chart.props), path = elements(rendered).find(node => node.type === 'path' && node.props.className === 'md-chart-line')
+  assert.equal((path.props.d.match(/M /g) ?? []).length, 3)
+  assert.equal((path.props.d.match(/L /g) ?? []).length, 1)
+  assert.doesNotMatch(path.props.d, /NaN/)
+  assert.match(elements(rendered).find(node => node.type === 'svg').props['aria-label'], /部分/)
+})
+
 test('studio opened from All reads the item account format and changes only that account', async () => {
   const requests = []
   const state = { accounts: [{ id: 'a', draftFormat: 'article' }, { id: 'b', draftFormat: 'script' }], draftFormat: 'script', items: [{ id: 'mine', title: 'A idea', accountId: 'a' }], metrics: [], skills: [], chat: [], styles: [] }
