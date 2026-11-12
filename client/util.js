@@ -51,6 +51,10 @@ export function compact(n) {
   return n.toLocaleString()
 }
 
+export function num1(n) {
+  return Number.isFinite(n) ? n.toFixed(1) : '—'
+}
+
 const URL_RUN = /https?:\/\/[^\s]+/g
 
 /** 与 src/inbox.js 的 safeText 一致：孤立代理项换成 U+FFFD，按码点截断。 */
@@ -111,6 +115,16 @@ export function upcomingList(candidates) {
   return candidates
     .filter(row => row.status === 'approved' && row.scheduledAt)
     .sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt))
+}
+
+export function recentSent(candidates, now, { days = 7, max = 10 } = {}) {
+  return candidates
+    .filter(row => {
+      const when = Date.parse(row.sentAt ?? row.decidedAt)
+      return row.status === 'sent' && when >= now - days * 86400000 && when <= now
+    })
+    .sort((a, b) => (Date.parse(b.sentAt ?? b.decidedAt) || 0) - (Date.parse(a.sentAt ?? a.decidedAt) || 0))
+    .slice(0, max)
 }
 
 /** 已过排期时间仍没发。 */

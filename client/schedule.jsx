@@ -3,7 +3,7 @@ import React from 'react'
 import { dispatchOps, fileUrl, makeImage, useDesk } from './desk.js'
 import { SentComparison } from './inbox.jsx'
 import { Dialog, Empty, IconButton } from './ui.jsx'
-import { dayKey, fmtTime, intentUrl, isDue, moveToDay, relativeDay, t, toLocalInput, upcomingList } from './util.js'
+import { dayKey, fmtTime, intentUrl, isDue, moveToDay, recentSent, relativeDay, t, toLocalInput, upcomingList } from './util.js'
 
 const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 const DRAG_TYPE = 'text/x-desk-candidate'
@@ -21,9 +21,9 @@ function Chip({ row }) {
         title={`${fmtTime(calendarDay(row))} ${row.title || row.text}`}
         onDragStart={(event) => { event.dataTransfer.setData(DRAG_TYPE, row.id); event.dataTransfer.effectAllowed = 'move' }}
       >
-        <span className="md-cal-chip-text"><time>{fmtTime(calendarDay(row))}</time>{sent ? <span className="md-inbox-tag">{t('已发')}</span> : null}<span>{row.title || row.text}</span></span>
+        <span className="md-cal-chip-text"><time>{fmtTime(calendarDay(row))}</time><span>{row.title || row.text}</span></span>
+        {sent ? <span className="md-inbox-tag md-cal-chip-sent">{t('已发')}</span> : null}
       </span>
-      {sent ? <SentComparison row={row} /> : null}
     </div>
   )
 }
@@ -167,8 +167,8 @@ function UpcomingCard({ row }) {
 
 function Rail({ rows }) {
   const list = upcomingList(rows)
-  const sent = rows.filter(row => row.status === 'sent').sort((a, b) => Date.parse(calendarDay(b)) - Date.parse(calendarDay(a)))
   const now = new Date()
+  const sent = recentSent(rows, now)
   // 该发了的排最前，其余按时间升序
   const ordered = [...list.filter(row => isDue(row, now)), ...list.filter(row => !isDue(row, now))]
   return (

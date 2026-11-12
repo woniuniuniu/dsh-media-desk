@@ -2,7 +2,39 @@ process.env.TZ = 'Asia/Shanghai'
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PLACEHOLDER, linePath, groupLongforms, splitPlaceholder, mineLink, pct, signed, insightLink } from '../client/util.js'
+import { PLACEHOLDER, linePath, groupLongforms, splitPlaceholder, mineLink, pct, signed, insightLink, recentSent, num1 } from '../client/util.js'
+
+test('recentSent：空列表、默认最多十条、倒序且不修改输入', () => {
+  const now = new Date('2026-11-12T12:00:00Z')
+  assert.deepEqual(recentSent([], now), [])
+  const rows = Array.from({ length: 12 }, (_, id) => ({ id, status: 'sent', sentAt: new Date(now.getTime() - id * 3600000).toISOString() })).reverse()
+  const before = structuredClone(rows)
+  assert.deepEqual(recentSent(rows, now).map(row => row.id), Array.from({ length: 10 }, (_, id) => id))
+  assert.deepEqual(recentSent(rows, now, { max: 2 }).map(row => row.id), [0, 1])
+  assert.deepEqual(recentSent(rows, now, { max: 0 }), [])
+  assert.deepEqual(rows, before)
+})
+
+test('recentSent：七天窗口含边界、实发时间优先、排除未来和无效日期', () => {
+  const now = new Date('2026-11-12T12:00:00Z')
+  const rows = [
+    { id: 'bad', status: 'sent', sentAt: 'bad', decidedAt: now.toISOString() },
+    { id: 'missing', status: 'sent' },
+    { id: 'boundary', status: 'sent', sentAt: '2026-11-05T12:00:00Z' },
+    { id: 'old', status: 'sent', sentAt: '2026-11-05T11:59:59Z', decidedAt: now.toISOString() },
+    { id: 'future', status: 'sent', sentAt: '2026-11-12T12:00:01Z' },
+    { id: 'fallback', status: 'sent', sentAt: null, decidedAt: now.toISOString() },
+    { id: 'approved', status: 'approved', sentAt: now.toISOString() },
+    { id: 'recent', status: 'sent', sentAt: '2026-11-11T12:00:00Z', decidedAt: '2026-11-01T00:00:00Z' },
+  ]
+  assert.deepEqual(recentSent(rows, now).map(row => row.id), ['fallback', 'recent', 'boundary'])
+  assert.deepEqual(recentSent(rows, now, { days: 1 }).map(row => row.id), ['fallback', 'recent'])
+})
+
+test('num1：保留一位小数，非有限数显示破折号', () => {
+  for (const [value, expected] of [[0, '0.0'], [12, '12.0'], [12.36, '12.4'], [-1.26, '-1.3'], [12345.67, '12345.7']]) assert.equal(num1(value), expected)
+  for (const value of [null, undefined, NaN, Infinity, -Infinity, '12']) assert.equal(num1(value), '—')
+})
 
 test('linePath：按日期排序、均匀横坐标、纵轴映射和一位小数', () => {
   const series = [{ day: '2026-11-03', count: 30 }, { day: '2026-11-01', count: 10 }, { day: '2026-11-02', count: 20 }]

@@ -1,7 +1,7 @@
 // 复盘：统计值均来自 Host，只负责展示。
 import React from 'react'
-import { fetchInsights, useDesk } from './desk.js'
-import { compact, insightLink, linePath, pct, signed, t } from './util.js'
+import { fetchInsights, toast, useDesk } from './desk.js'
+import { compact, insightLink, linePath, num1, pct, signed, t } from './util.js'
 import { Empty } from './ui.jsx'
 
 function TopPost({ row }) {
@@ -19,13 +19,19 @@ export function InsightsView() {
   const [data, setData] = React.useState(null)
   const [loading, setLoading] = React.useState(true)
   React.useEffect(() => {
+    if (!mineCount) return
     let active = true
     setLoading(true)
-    fetchInsights().then(result => { if (active) { setData(result); setLoading(false) } })
+    fetchInsights().then(result => {
+      if (!active) return
+      if (result) setData(result)
+      else toast(t('复盘数据刷新失败'), { error: true })
+      setLoading(false)
+    })
     return () => { active = false }
   }, [mineCount])
   if (!mineCount) return <div className="md-page"><Empty title={t('还没有复盘数据')} hint={t('这里的数据来自交换文件夹的 mine/ 目录，接上 Grok Bot 后才会有。')} /></div>
-  if (loading) return <div className="md-page"><p className="md-shimmer" role="status">{t('正在算…')}</p></div>
+  if (loading && !data) return <div className="md-page"><p className="md-shimmer" role="status">{t('正在算…')}</p></div>
   if (!data) return <div className="md-page"><Empty title={t('复盘数据加载失败')} /></div>
   const { followers, totals, byType, top, replies, funnel, edits } = data
   return (
@@ -45,7 +51,7 @@ export function InsightsView() {
         </div>
         <section className="md-panel md-insights-section">
           <h3>{t('哪类内容更好')}</h3>
-          {byType.length ? <div className="md-insights-table"><table><thead><tr>{['类型', '条数', '平均浏览', '平均互动'].map(label => <th scope="col" key={label}>{t(label)}</th>)}</tr></thead><tbody>{byType.map(row => <tr key={row.typeId}><td>{row.name}</td><td>{compact(row.posts)}</td><td>{compact(row.avgViews)}</td><td>{compact(row.avgEngagement)}</td></tr>)}</tbody></table></div> : <p className="md-muted">{t('还没有能对应到类型的内容')}</p>}
+          {byType.length ? <div className="md-insights-table"><table><thead><tr>{['类型', '条数', '平均浏览', '平均互动'].map(label => <th scope="col" key={label}>{t(label)}</th>)}</tr></thead><tbody>{byType.map(row => <tr key={row.typeId}><td>{row.name}</td><td>{compact(row.posts)}</td><td>{num1(row.avgViews)}</td><td>{num1(row.avgEngagement)}</td></tr>)}</tbody></table></div> : <p className="md-muted">{t('还没有能对应到类型的内容')}</p>}
         </section>
         <section className="md-panel md-insights-section">
           <h3>{t('表现最好的 5 条')}</h3>
@@ -53,7 +59,7 @@ export function InsightsView() {
         </section>
         <section className="md-panel md-insights-section">
           <h3>{t('回复')}</h3>
-          <p>{t('起草 {n} 条，发出 {m} 条（{rate}），平均互动 {engagement}', { n: replies.drafted, m: replies.sent, rate: pct(replies.sentRate), engagement: compact(replies.avgEngagement) })}</p>
+          <p>{t('起草 {n} 条，发出 {m} 条（{rate}），平均互动 {engagement}', { n: replies.drafted, m: replies.sent, rate: pct(replies.sentRate), engagement: num1(replies.avgEngagement) })}</p>
         </section>
         <section className="md-panel md-insights-section">
           <h3>{t('候选稿去向（30 天）')}</h3>

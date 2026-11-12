@@ -185,8 +185,8 @@ function ProposalRow({ row }) {
   return (
     <li className="md-style-rule">
       <div className="md-style-rule-text"><b>{row.name}</b><p>{row.rule}</p><small className="md-muted">{row.evidence}</small></div>
-      <button type="button" className="md-btn is-small" disabled={busy} onClick={() => decide('accept_proposal', '采纳了一条规则')}>{t('采纳')}</button>
-      <button type="button" className="md-btn is-small" disabled={busy} onClick={() => decide('dismiss_proposal', '忽略了一条建议')}>{t('忽略')}</button>
+      <button type="button" className="md-btn is-small" disabled={busy} aria-label={t('采纳：{name}', { name: row.name })} onClick={() => decide('accept_proposal', '采纳了一条规则')}>{t('采纳')}</button>
+      <button type="button" className="md-btn is-small" disabled={busy} aria-label={t('忽略：{name}', { name: row.name })} onClick={() => decide('dismiss_proposal', '忽略了一条建议')}>{t('忽略')}</button>
     </li>
   )
 }

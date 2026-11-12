@@ -8,7 +8,8 @@ function AddLongformDialog({ onClose }) {
   const [title, setTitle] = React.useState('')
   const [angle, setAngle] = React.useState('')
   const [busy, setBusy] = React.useState(false)
-  const add = async () => {
+  const add = async (event) => {
+    event.preventDefault()
     if (busy || !title.trim()) return
     setBusy(true)
     const data = await dispatchOps([{ op: 'add_longform', title: title.trim(), angle: angle.trim() }], { label: t('加了一个长文选题') })
@@ -17,15 +18,15 @@ function AddLongformDialog({ onClose }) {
   }
   return (
     <Dialog title={t('自己加一个')} onClose={onClose}>
-      <div className="md-form">
+      <form className="md-form" onSubmit={add}>
         <label className="md-field"><span>{t('标题')}</span><input required value={title} disabled={busy} onChange={event => setTitle(event.target.value)} /></label>
         <label className="md-field"><span>{t('角度')}</span><input value={angle} disabled={busy} onChange={event => setAngle(event.target.value)} /></label>
         <div className="md-form-foot">
           <span style={{ flex: 1 }} />
           <button type="button" className="md-btn" onClick={onClose}>{t('取消')}</button>
-          <button type="button" className="md-btn is-primary" disabled={busy || !title.trim()} onClick={add}>{t('添加')}</button>
+          <button type="submit" className="md-btn is-primary" disabled={busy || !title.trim()}>{t('添加')}</button>
         </div>
-      </div>
+      </form>
     </Dialog>
   )
 }
@@ -41,10 +42,13 @@ function LongformEditor({ row, busy, onBusy }) {
   React.useEffect(() => { if (document.activeElement !== titleRef.current) setTitle(row.title) }, [row.title])
   React.useEffect(() => { if (document.activeElement !== bodyRef.current) setBody(row.body ?? '') }, [row.body])
 
-  const saveTitle = () => {
+  const saveTitle = async () => {
     const next = title.trim()
     if (!next) { setTitle(row.title); return }
-    if (next !== row.title) dispatchOps([{ op: 'edit_longform', id: row.id, title: next }], { label: t('改了标题') })
+    if (next !== row.title) {
+      const data = await dispatchOps([{ op: 'edit_longform', id: row.id, title: next }], { label: t('改了标题') })
+      if (data === null || data?.errors?.length) setTitle(row.title)
+    }
   }
   const saveBody = () => {
     if (savingBody.current?.body === body) return savingBody.current.promise
@@ -78,6 +82,7 @@ function LongformEditor({ row, busy, onBusy }) {
   }
   const remove = async () => {
     onBusy(row.id, 'save')
+    if (savingBody.current) await savingBody.current.promise
     const data = await dispatchOps([{ op: 'delete_longform', id: row.id }], { label: t('删了一篇长文') })
     onBusy(row.id, '')
     if (data && !data.errors?.length) setDeleting(false)
@@ -143,7 +148,8 @@ export function LongformView() {
     setSuggesting(true)
     const result = await suggestLongform()
     setSuggesting(false)
-    if (result?.created > 0) toast(t('出了 {n} 个选题', { n: result.created }))
+    if (result?.busy) toast(t('已经在想选题了，稍等一下'))
+    else if (result?.created > 0) toast(t('出了 {n} 个选题', { n: result.created }))
     else if (result?.error) toast(result.error, { error: true })
   }
   return (
