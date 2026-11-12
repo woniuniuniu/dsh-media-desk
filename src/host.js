@@ -2,6 +2,9 @@
 import { createReadStream } from 'node:fs'
 import { stat, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { Sync } from './sync.js'
+import { addNotice } from './runs.js'
 import { Composer } from './compose.js'
 import { extractOwnVoice, learnDaily } from './learn.js'
 import { Longform } from './longform.js'
@@ -103,6 +106,13 @@ function engineLabel(ctx) {
   return info ? info.label : null
 }
 
+// 手动同步与后台共用当前目录的实例，避免同一交换文件夹并发同步。
+function syncFor(desk, settings, store) {
+  const dir = resolveExchangeDir(settings, store.root)
+  if (desk.sync?.dir !== dir) desk.sync = new Sync({ dir, projectDir: fileURLToPath(new URL('../', import.meta.url)) })
+  return desk.sync
+}
+
 async function route({ ctx, store, desk, callText }, req, res) {
   const url = new URL(req.url || '/', 'http://local')
   const path = url.pathname.replace(/^\/x-desk\/?/, '')
@@ -121,6 +131,11 @@ async function route({ ctx, store, desk, callText }, req, res) {
       const exchangeDir = resolveExchangeDir(settings, store.root)
       // ownHandle 给界面在显示时拼自己帖子的链接，存下来的数据不改
       return json(res, 200, { state, exchangeDir, ownHandle: settings.ownHandle, model: engineLabel(ctx), modelOk: modelStatus.ok, modelError: modelStatus.error, canUndo: store.undo.length > 0, composing: desk.composer.busy })
+    }
+    if (path === 'sync/status') {
+      const settings = await desk.settings.read()
+      const { runs } = await store.read()
+      return json(res, 200, { ...await syncFor(desk, settings, store).status(), ...settings.sync, lastSyncAt: runs.lastSyncAt, lastSyncError: runs.lastSyncError })
     }
     if (path === 'insights') return json(res, 200, computeInsights(await store.read(), new Date(), { ownHandle: (await desk.settings.read()).ownHandle }))
     if (path === 'settings') return json(res, 200, publicSettings(await desk.settings.read(), Boolean(imageTool(ctx))))
@@ -148,6 +163,19 @@ async function route({ ctx, store, desk, callText }, req, res) {
 
   const body = await readJson(req)
   switch (path) {
+    case 'sync/run': {
+      const settings = await desk.settings.read()
+      if (!settings.sync.enabled) return json(res, 400, { error: '同步还没打开' })
+      const sync = syncFor(desk, settings, store)
+      const result = await sync.syncOnce()
+      const now = new Date()
+      await store.mutate('同步记录', s => {
+        s.runs.lastSyncAt = now.toISOString()
+        s.runs.lastSyncError = result.error?.slice(0, 200) ?? null
+        if (!result.ok) addNotice(s, `同步失败：${result.error}`, now)
+      }, { undoable: false })
+      return json(res, 200, { ...result, status: await sync.status() })
+    }
     case 'ops': {
       const label = typeof body.label === 'string' ? body.label : tr('操作')
       const { slots } = await desk.settings.read()
@@ -313,6 +341,7 @@ export default {
       exchangeFor: current => new Exchange(resolveExchangeDir(current, store.root)),
       learn: { learnDaily: () => learnDaily({ store, callText, now: () => new Date() }) },
       longform: desk.longform,
+      sync: { syncOnce: async () => syncFor(desk, await settings.read(), store).syncOnce() },
     })
     desk.worker = worker
     ctx.effect(() => worker.start(), 'dsh-x-desk: worker')

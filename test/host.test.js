@@ -314,3 +314,18 @@ test('GET state 带上 ownHandle，GET insights 在显示时拼链接；存下�
     assert.equal(JSON.stringify(await h.store.read()), stored)
   } finally { await h.close() }
 })
+
+test('同步默认关闭，手动同步被拒绝，状态返回默认间隔', async () => {
+  const h = await serve()
+  try {
+    const run = await h.call('POST', '/x-desk/sync/run', { body: {} })
+    assert.equal(run.status, 400)
+    assert.equal(run.data.error, '同步还没打开')
+    const status = await h.call('GET', '/x-desk/sync/status')
+    assert.equal(status.status, 200)
+    assert.equal(status.data.enabled, false)
+    assert.equal(status.data.intervalSec, 120)
+    assert.equal(status.data.lastSyncAt, null)
+    assert.equal(status.data.lastSyncError, null)
+  } finally { await h.close() }
+})

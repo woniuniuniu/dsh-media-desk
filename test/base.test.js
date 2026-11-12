@@ -27,6 +27,8 @@ test('初始状态是空的第 2 版结构', () => {
     learnedPairs: 0,
     ownVoicePrompted: false,
     lastLongformWeek: null,
+    lastSyncAt: null,
+    lastSyncError: null,
   })
 })
 test('旧版数据不迁移，直接从空状态开始', () => {

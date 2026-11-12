@@ -28,11 +28,17 @@ export function violations(path, source) {
   const out = []
   const inSrc = path.startsWith('src/')
   if (inSrc) {
-    for (const [, , spec] of source.matchAll(SPECIFIER)) {
+    const imports = path === 'src/sync.js'
+      ? source.replace(/\bimport\s*\{\s*execFile\s*\}\s*from\s*(['"])(?:node:)?child_process\1/g, '')
+      : source
+    for (const [, , spec] of imports.matchAll(SPECIFIER)) {
       const m = FORBIDDEN_MODULE.exec(spec)
       if (m && !MODULES_ALLOWED[path]?.has(m[1])) out.push(`禁止引入网络或子进程模块：${spec}`)
     }
-    if (FETCH.test(source) && !FETCH_ALLOWED.has(path)) out.push('禁止使用 fetch')
+    if (path === 'src/sync.js' && /\bexec\s*\(|\b(?:execSync|spawn|spawnSync|fork)\b|\bshell\s*:/.test(source)) out.push('同步只允许 execFile，禁止 shell')
+    // Git 的固定子命令字符串不等于调用网络 fetch；其余写法照旧检查。
+    const networkSource = path === 'src/sync.js' ? source.replace(/(['"])fetch\1/g, '') : source
+    if (FETCH.test(networkSource) && !FETCH_ALLOWED.has(path)) out.push('禁止使用 fetch')
     if (/XMLHttpRequest|WebSocket/.test(source)) out.push('禁止使用 XMLHttpRequest 或 WebSocket')
     if (REMOTE_SERVICES.test(source)) out.push('禁止出现 X 接口或抓取服务域名')
     if (WRITE_CALLS.test(source)) out.push('禁止出现点赞、发帖、转发、关注的调用')

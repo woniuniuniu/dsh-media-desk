@@ -30,6 +30,8 @@ export function emptyState() {
       learnedPairs: 0,
       ownVoicePrompted: false,
       lastLongformWeek: null,
+      lastSyncAt: null,
+      lastSyncError: null,
     },
   }
 }

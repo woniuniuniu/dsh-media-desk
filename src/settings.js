@@ -8,6 +8,7 @@ const DEFAULTS = {
   image: { source: 'http', baseUrl: '', model: '', apiKey: '', size: '1536x1024', quality: '', toolSize: '1536x1024', toolQuality: '', extra: '' },
   // 助手文字模型：空对象表示跟随 DeepSeek Harness 默认模型
   assistant: { provider: '', model: '' },
+  sync: { enabled: false, intervalSec: 120 },
   exchangeDir: '',
   ownHandle: '',
   composeAt: '07:00',
@@ -50,7 +51,7 @@ export class Settings {
     // 每次都读文件：桌面版和 Web 版可能同时运行
     try {
       const saved = JSON.parse(await readFile(this.file, 'utf8'))
-      this.value = { ...known(DEFAULTS, saved), image: known(DEFAULTS.image, saved?.image), assistant: known(DEFAULTS.assistant, saved?.assistant) }
+      this.value = { ...known(DEFAULTS, saved), image: known(DEFAULTS.image, saved?.image), assistant: known(DEFAULTS.assistant, saved?.assistant), sync: known(DEFAULTS.sync, saved?.sync) }
     } catch (err) {
       if (err.code !== 'ENOENT') throw err
       this.value = structuredClone(DEFAULTS)
@@ -106,6 +107,11 @@ export class Settings {
       if (Boolean(provider) !== Boolean(model)) throw Object.assign(new Error(tr('助手模型的提供方和模型要一起填')), { status: 400 })
       next.assistant = { provider, model }
     }
+    if (patch.sync?.enabled !== undefined) {
+      if (typeof patch.sync.enabled !== 'boolean') throw Object.assign(new Error('同步开关必须是布尔值'), { status: 400 })
+      next.sync.enabled = patch.sync.enabled
+    }
+    if (patch.sync?.intervalSec !== undefined) next.sync.intervalSec = clamp(patch.sync.intervalSec, 60, 3600, current.sync.intervalSec)
     if (patch.exchangeDir !== undefined) {
       const dir = typeof patch.exchangeDir === 'string' ? patch.exchangeDir.trim() : null
       if (dir === null || dir.length > 500 || (dir && !isAbsolute(dir))) throw Object.assign(new Error(tr('交换文件夹要留空，或填一个绝对路径')), { status: 400 })

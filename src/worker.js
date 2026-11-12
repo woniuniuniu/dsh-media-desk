@@ -1,5 +1,6 @@
 // 后台处理：每分钟读入素材和处理结果，每天定时成稿，并把候选稿写回交换文件夹。
 // 交换文件夹里的内容是不可信数据，这里只做合并和状态迁移；模型调用都在 store.mutate 之外。
+import { readdir } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { applyDecision, expire, intentUrl } from './inbox.js'
 import { isoWeek, NO_MATERIAL } from './longform.js'
@@ -56,7 +57,7 @@ function capNewest(rows, cap, time) {
 }
 
 export class Worker {
-  constructor({ store, settings, composer, lock, exchangeFor, now = () => new Date(), learn = { learnDaily: async () => ({ proposals: 0 }) }, longform = null }) {
+  constructor({ store, settings, composer, lock, exchangeFor, now = () => new Date(), learn = { learnDaily: async () => ({ proposals: 0 }) }, longform = null, sync = null }) {
     this.store = store
     this.settings = settings
     this.composer = composer
@@ -65,6 +66,8 @@ export class Worker {
     this.now = now
     this.learn = learn
     this.longform = longform
+    this.sync = sync
+    this.lastSyncMs = 0
     this.lastAttemptAt = null
     this.voiceMemo = null
     this.inflight = null
@@ -86,14 +89,30 @@ export class Worker {
     const exchange = this.exchangeFor(settings)
     await exchange.ensure()
 
-    const posts = await exchange.readNew('posts')
-    const decisions = await exchange.readNew('decisions')
-    const pendingModel = []
     const abort = async () => {
       await this.#notice(TAKEN_NOTICE)
       return { ran: true, aborted: true }
     }
     const halted = { ran: true, stopped: true }
+    if (this.stopped) return halted
+
+    // 每个阶段之前都续锁并看一眼是否已停止
+    const gate = async () => {
+      if (this.stopped) return halted
+      if (!(await this.lock.acquire())) return abort()
+      return this.stopped ? halted : null
+    }
+    let synced = false
+    if (settings.sync?.enabled && this.sync && now.getTime() - this.lastSyncMs >= settings.sync.intervalSec * 1000) {
+      const stop = await gate()
+      if (stop) return stop
+      await this.#guarded('同步', () => this.#syncOnce(now))
+      synced = true
+    }
+    if (this.stopped) return halted
+    const posts = await exchange.readNew('posts')
+    const decisions = await exchange.readNew('decisions')
+    const pendingModel = []
     if (this.stopped) return halted
 
     await this.store.mutate('后台处理', s => {
@@ -125,12 +144,6 @@ export class Worker {
     await posts.commit()
     await decisions.commit()
 
-    // 每个阶段之前都续锁并看一眼是否已停止
-    const gate = async () => {
-      if (this.stopped) return halted
-      if (!(await this.lock.acquire())) return abort()
-      return null
-    }
     for (const stage of [() => this.#ingestMine(exchange, settings), () => this.#ingestReplies(exchange), () => this.#matchAndTrim(now)]) {
       const stop = await gate()
       if (stop) return stop
@@ -169,7 +182,12 @@ export class Worker {
     await this.#guarded('每周长文选题', () => this.#longformIfDue(now))
     stop = await gate()
     if (stop) return stop
-    await this.#exportAll(exchange)
+    const exported = await this.#exportAll(exchange)
+    if (settings.sync?.enabled && this.sync && exported && !synced) {
+      const stop = await gate()
+      if (stop) return stop
+      await this.#guarded('同步', () => this.#syncOnce(now))
+    }
     return { ran: true }
   }
 
@@ -304,6 +322,20 @@ export class Worker {
     await this.store.mutate('长文选题周记', s => { s.runs.lastLongformWeek = week }, { undoable: false })
   }
 
+  async #syncOnce(now) {
+    let error = null
+    try {
+      const result = await this.sync.syncOnce()
+      if (!result.ok) error = result.error
+    } catch (err) { error = err.message } finally { this.lastSyncMs = now.getTime() }
+    error = error == null ? null : String(error).slice(0, 200)
+    await this.store.mutate('同步记录', s => {
+      s.runs.lastSyncAt = now.toISOString()
+      s.runs.lastSyncError = error
+      if (error) addNotice(s, `同步失败：${error}`, now)
+    }, { undoable: false })
+  }
+
   async #notice(text) {
     await this.store.mutate('提示', s => addNotice(s, text, this.now()), { undoable: false })
   }
@@ -317,13 +349,17 @@ export class Worker {
   }
 
   async #exportAll(exchange) {
+    let wrote = false
+    const existing = new Set(await readdir(join(exchange.root, 'drafts')))
     const state = await this.store.read()
     const typeName = id => state.voice.types.find(t => t.id === id)?.name ?? ''
     for (const c of state.candidates) {
       if (c.status !== 'pending' && c.status !== 'approved') continue
       // 一条写不出去只记提示，不拦住其他稿子
       try {
-        await exchange.writeDraft(c, typeName(c.typeId), { intentUrl: intentUrl(c) })
+        const name = await exchange.writeDraft(c, typeName(c.typeId), { intentUrl: intentUrl(c) })
+        if (!existing.has(name)) wrote = true
+        existing.add(name)
       } catch (err) {
         await this.#notice(`候选稿 ${c.id} 没能写进交换文件夹：${err.message}`)
       }
@@ -335,7 +371,9 @@ export class Worker {
     if (memo !== this.voiceMemo) {
       await exchange.writeVoice({ watchlist, skillMarkdown })
       this.voiceMemo = memo
+      wrote = true
     }
+    return wrote
   }
 
   /** 立即执行一次，之后每 60 秒一次。返回的函数停止定时器并释放锁。 */

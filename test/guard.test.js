@@ -57,3 +57,15 @@ test('防护规则自测：x.com 的各种写法都会被抓到', () => {
     assert.deepEqual(violations('src/exchange.js', source), [], source)
   }
 })
+
+test('同步只放行 execFile 的命名导入，不放行其他子进程或网络调用', () => {
+  for (const source of ['exec("git")', 'execSync("git")', 'spawn("git")', 'spawnSync("git")', 'fork("git")', '{ shell: true }',
+    "import { execFile, exec } from 'node:child_process'", "import cp from 'child_process'", "import('node:child_process')", 'fetch(url)']) {
+    assert.ok(violations('src/sync.js', source).length > 0, source)
+  }
+  for (const spec of ['node:child_process', 'child_process']) {
+    const source = `import { execFile } from '${spec}'`
+    assert.deepEqual(violations('src/sync.js', source), [])
+    assert.ok(violations('src/worker.js', source).length > 0)
+  }
+})
