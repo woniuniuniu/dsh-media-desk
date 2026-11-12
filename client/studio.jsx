@@ -2,6 +2,7 @@ import { AccountAssignment } from './accounts.jsx'
 // 点开灵感后的工作区：左边对话，右边是一张稿面。稿面的格子一开始就排好，同时开工，一点点长满。
 import React from 'react'
 import { VersionHistory } from './versions.jsx'
+import { ContentLabStudio } from './content-lab.jsx'
 import { ChatPanel } from './chat.jsx'
 import { downloadCover } from './cover.js'
 import { cancelProduce, cancelArticleEditing, closeItem, dispatchOps, isCurrentArticleEditor, regenAsset, releaseArticleEditor, revealSaved, runProduce, saveProduced, setArticleEditing, setDesk, toast, touchArticleEditor, useDesk, watchProduction } from './desk.js'
@@ -558,6 +559,7 @@ function Sheet({ item, live }) {
   return (
     <div className="md-sheet">
       <VersionHistory key={item.id} item={item} />
+      <ContentLabStudio key={`lab-${item.id}`} item={item} />
       <div className={`md-bento ${open ? 'has-open' : ''}`} ref={bento}>
         <HeroTile item={item} live={live} onView={setViewing} />
         <section {...tile('article')}>

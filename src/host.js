@@ -356,6 +356,7 @@ async function route(ctx, store, desk, req, res) {
   switch (path) {
     case 'content-lab/read': return json(res, 200, await desk.automation.call({ tool: 'media_desk_get_content_lab', input: body }))
     case 'content-lab/action': return json(res, 200, await desk.automation.call({ tool: 'media_desk_content_lab_action', input: body }))
+    case 'content-lab/request-status': return json(res, 200, await desk.automation.call({ tool: 'media_desk_request_status', input: body }))
     case 'ops': {
       const label = typeof body.label === 'string' ? body.label : tr('操作')
       const result = await store.mutate(label, (draft) => {

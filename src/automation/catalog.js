@@ -3,7 +3,7 @@ import { AVATAR_LOCAL_PATTERN, AVATAR_MAX_LENGTH } from '../avatar.js'
 import { labReadSchema, labActionSchema } from '../content-lab/schemas.js'
 import { PLATFORMS } from '../platforms.js'
 export const PROTOCOL_VERSION = 1
-export const PLUGIN_VERSION = '2.7.0-accounts.4'
+export const PLUGIN_VERSION = '2.7.0-accounts.5'
 const str = (maxLength = 40000) => ({ type: 'string', maxLength })
 const id = { type: 'string', minLength: 1, maxLength: 200 }
 const nullable = schema => ({ anyOf: [schema, { type: 'null' }] })

@@ -3,5 +3,6 @@ import { ACCOUNTS } from './accounts.js'
 import { CORE } from './core.js'
 import { PAGES } from './pages.js'
 import { STUDIO } from './studio.js'
+import { CONTENT_LAB } from './content-lab.js'
 
-export const EN = { ...ACCOUNTS, ...CORE, ...PAGES, ...STUDIO }
+export const EN = { ...ACCOUNTS, ...CORE, ...PAGES, ...STUDIO, ...CONTENT_LAB }

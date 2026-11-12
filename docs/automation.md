@@ -1,6 +1,6 @@
 # Local Media Desk automation
 
-This document describes source version `2.7.0-accounts.4`. An existing installation is unchanged until this source build is explicitly installed. It includes a CLI, official MCP stdio server and an explicitly started authenticated HTTP adapter for the **installed desktop workbench**, sharing 18 tools. Start DeepSeek Harness and open Media Desk first. The adapter uses the Host's existing Store, Settings and Producer; it never starts another Harness or borrows browser cookies. Ordinary authoring uses `assist` with the workbench selected/subscription model; structured operations remain direct, and importing local media or a finished external draft requires no model call.
+This document describes source version `2.7.0-accounts.5`. An existing installation is unchanged until this source build is explicitly installed. It includes a CLI, official MCP stdio server and an explicitly started authenticated HTTP adapter for the **installed desktop workbench**, sharing 20 tools. Start DeepSeek Harness and open Media Desk first. The adapter uses the Host's existing Store, Settings and Producer; it never starts another Harness or borrows browser cookies. Ordinary authoring uses `assist` with the workbench selected/subscription model; structured operations remain direct, and importing local media or a finished external draft requires no model call.
 
 ## Run
 
@@ -26,7 +26,7 @@ Default stdout is one compact JSON envelope. Diagnostics use stderr. Exit codes:
 
 ## Account scope
 
-Version `2.7.0-accounts.4` includes editorial profiles for many accounts, including multiple accounts on the same platform and manual Kuaishou accounts. These profiles do not log into or publish to social platforms. Manual CRUD, archive/restore, default-style/format selection, assignment and local-media/external-draft import require no model or Monid call. Kuaishou supports manual entry, CSV imports and structured API metrics. Monid's supported platforms remain unchanged; automatic Kuaishou fetching is unavailable.
+Version `2.7.0-accounts.5` includes editorial profiles for many accounts, including multiple accounts on the same platform and manual Kuaishou accounts. These profiles do not log into or publish to social platforms. Manual CRUD, archive/restore, default-style/format selection, assignment and local-media/external-draft import require no model or Monid call. Kuaishou supports manual entry, CSV imports and structured API metrics. Monid's supported platforms remain unchanged; automatic Kuaishou fetching is unavailable.
 
 Discover IDs with `accounts list` / `accounts get ID`. Names and platforms are not unique IDs. The desktop opens at the account list, with search, platform/group filters, archive/restore, 50-row pagination and CSV add (at most 100 rows, with failed rows retained). Choose one account, All accounts or Unassigned to enter Content, then use the nested Inspiration / Content / Schedule / Insights / Account / Styles tabs. The Account tab edits only the selected profile; virtual scopes explain that they have no profile. The Account list breadcrumb returns to the main menu and clears transient selections. The hub has no child tabs or assistant. All existing unattributed content remains Unassigned; migration never guesses ownership from a platform. Deleting a profile detaches content, metrics, rules and chat without deleting content; use archive for routine retirement.
 
@@ -166,12 +166,67 @@ A remote MCP client running only in the cloud cannot directly reach the desktop 
 | `media_desk_list_styles` | Bounded style cards (including logic/story/flow) and active style; raw reference text omitted |
 | `media_desk_models` | Provider/model identifiers, no keys or full settings |
 | `media_desk_request_status` | Durable mutation status and compact recorded result |
+| `media_desk_get_content_lab` | Scoped metadata, detail, queue and uncalibrated rubric presets; no model; manuscripts opt-in |
+| `media_desk_content_lab_action` | Explicit evaluate / forecast / lock / publish / retro; exact IDs, account scope and durable request ID required |
 
 `apply_ops` supports item add/update/delete/status/schedule/draft/production text, styles add/update/delete/select, script/article format selection, rules (`*_skill`) add/update/delete, metrics add, and `save_version` / `restore_version`. Unknown operations/fields, arbitrary media paths and `savedPath` are rejected. Use `tools media_desk_apply_ops` for the exact JSON schema. Schedule timestamps must include `Z` or an explicit timezone offset; `null` cancels scheduling. Scheduling changes only the local editorial calendar. It does not post to social platforms.
 
 `assist` (CLI `assist` or `write`) uses the same workbench assistant as the UI and then executes requested production jobs server-side once. Existing revisions/asset regeneration inside that turn are not repeated. The compact response includes reply, receipts/errors, started jobs and UI hints; it never includes chat history or full workspace state. Poll production status for background jobs. If the configured model is unavailable, the existing UI fallback is reported through `modelUsed:false` and its notice. Provider errors remain private.
 
 `write_draft` (CLI `write-draft ID --input JSON`) explicitly imports a finished externally authored draft without another generation. It accepts text only, with optional `format:"script"|"article"`. If omitted, it retains the existing production format or uses the item account's effective preference for a new draft. Asset references cannot be submitted through it; legitimate existing cover, images and corresponding storyboard images remain. It refuses writes during active production. Existing Producer's own provider rate-limit handling is preserved; the adapter adds no generation or dispatch retries.
+
+## Saved-version review, prediction and timed retrospective
+
+Source `2.7.0-accounts.5` implements this first increment only. It is not an npm publication or an installed runtime update: the previously verified installed runtime remains `2.7.0-accounts.3` until explicitly replaced. The market index remains upstream `2.7.0`. Personas, benchmark imports, topic generation and formula recalibration are later increments and are not implemented here.
+
+The account list remains the main menu. Choose an account, open a work in Content and use **Content review and retrospectives** beside version history. Insights contains its account-scoped prediction queue even with no chart data. Nothing calls a model automatically on load, version changes, account changes or refresh. Complete/cancel article edits and finish saving first. Failed title/body saves prevent review and locking. Queued or accepted retired saves are reconciled through the same capture guard used by versions and exports.
+
+| Stage | Required input | Model use and behavior |
+| --- | --- | --- |
+| `evaluate` | `itemId`, exact saved `versionId`, `format`, matching `rubricId` | One model call; only rubric plus selected manuscript in the fresh review user JSON |
+| `forecast` | `evaluationId`, optional `horizonDays` 1–30 (default 3) | A separate model call; saves an immutable preview and frozen comparison basis |
+| `lock` | `forecastId` after reading the full preview | No model; explicitly freezes evaluation and forecast before publication or target performance is known |
+| `publish` | `predictionId`, actual zoned `publishedAt`, optional HTTP(S) `url` | No model; immutable **user declaration**, never social publishing or platform verification |
+| `retro` | `predictionId`, exact matching `metricId`, optional `notes` | One model call; only at/after due time with a reliable local observation |
+
+Every mutation requires **explicit `accountId` (string or null)** and a stable durable `requestId`. This differs from reads, where omission means All and null means Unassigned. The chosen subscription/default model connection is reused; no extra API key is needed when that connection already works. Model explanations follow the UI request language. Scores use preset integer dimensions 0–5 and a server-computed weighted composite 0–100. `general-script-v1`, `general-article-v1` and explicitly selected `opinion-video-v1` are **uncalibrated criteria**, not measured predictive accuracy. Dimension confidence is the model's own assessment. A fresh limited input does not establish that the model is globally ignorant of the work or its historical results. Historical/data-known work may be evaluated, but is labeled `historical-nonblind` and cannot become a fresh locked prediction.
+
+Forecasts freeze comparable prior works from the **same account, platform, format and horizon**. Choose the earliest reliable observation for each prior work between its due instant and six hours later, then select the recent **20 distinct works** by collection time. `baseline.count` is the selected count; `totalEligibleCount` is all available eligible distinct works. The explicit timing/selection policy and source observation times are retained. Fewer than three works or a zero median produces qualitative bets with `probabilities:null`, never invented traffic counts. Otherwise five relative buckets (`<0.3x`, `0.3x..<1x`, `1x..<3x`, `3x..<10x`, `>=10x`) use frozen exact rational intervals. `medianViewsExact` contains decimal-string numerator/denominator; `medianViews` is the display number and `medianViewsApproximate` warns when it is rounded. `topBuckets` are zero-based bucket indices. Tied maxima have `predictedBucket:null`, so no unique winner or invented hit/miss.
+
+Locking rechecks the current saved creative version, hash and sticky creative epoch on the server. Editing then Undo/restoring the old text does not revive a stale preview. The UI requires complete relevant preview details and an explicit acknowledgement before Lock. Truncated details are not treated as complete. Actual publication time must be calendar-valid, zoned, no earlier than lock and no later than now. A scheduled time is never prefilled as actual. The UI supports seconds or an explicit declaration at the current submission instant. Publication also synchronizes the local item's status/time. If the working copy differs from the locked manuscript, registration is allowed with a retained `manuscriptMatch:"mismatch"`, registration fingerprint and warning; that observation cannot calibrate a forecast.
+
+Retrospectives use one unambiguous metric for the same work/account/platform, with reliable `collectedAt` at/after publication plus horizon and no later than now. Unknown counters remain unknown, never zero; a stat date or historical import completion time is not reliable collection time. The result freezes a copy of actuals, source, collection-time basis, elapsed time and lateness. A late cumulative count is **not exact T+3 data**. The UI shows actual observation time and age. Quantitative comparison is nullable for missing views, qualitative forecasts, tied maxima and publication mismatch; records expose `comparisonStatus`, `observedBucket`, `assignedProbability`, `predictedBucket`, `topBuckets` and `bucketHit` honestly. A same-observation logical duplicate returns the original immutable record and its original `requestId`; newly typed notes do not replace original notes. Completed histories are read-only.
+
+The queue distinguishes `awaiting-publication`, `upcoming`, `due`, `awaiting-data`, `finished` and `late`. Upcoming is not due. No scheduler, provider fetch or social publishing is added. Immutable records survive ordinary Undo, deletion and reassignment. Archived records remain in their original account and All, not the new account. Legacy published works may enter historical evaluation; do not manufacture a past blind prediction.
+
+```sh
+media-desk lab rubrics
+media-desk lab list --input '{"accountId":"ACCOUNT_ID","limit":20}'
+media-desk lab evaluate ITEM_ID --request-id review-001 --input '{"accountId":"ACCOUNT_ID","versionId":"VERSION_ID","format":"script","rubricId":"general-script-v1"}'
+media-desk lab get EVALUATION_ID --input '{"accountId":"ACCOUNT_ID","maxChars":100000}'
+media-desk lab forecast EVALUATION_ID --request-id forecast-001 --input '{"accountId":"ACCOUNT_ID","horizonDays":3}'
+media-desk lab get FORECAST_ID --input '{"accountId":"ACCOUNT_ID","maxChars":100000}'
+media-desk lab lock FORECAST_ID --request-id lock-001 --input '{"accountId":"ACCOUNT_ID"}'
+media-desk lab publish PREDICTION_ID --request-id publication-001 --input '{"accountId":"ACCOUNT_ID","publishedAt":"2026-11-12T16:30:01+08:00","url":"https://example.com/work"}'
+media-desk lab retro PREDICTION_ID --request-id retro-001 --input '{"accountId":"ACCOUNT_ID","metricId":"METRIC_ID","notes":"Observed cumulative count"}'
+media-desk call media_desk_get_content_lab --input '{"accountId":"ACCOUNT_ID","view":"queue","limit":20}'
+media-desk call media_desk_request_status --input '{"requestId":"forecast-001"}'
+media-desk call media_desk_get_content_lab --input '{"accountId":"ACCOUNT_ID","queryRequestId":"forecast-001","limit":10}'
+```
+
+`get_content_lab` reads support `view:records|list|rubrics|queue|detail` (`detail` requires `recordId`), `itemId`, `kind`, `queryRequestId`, `limit` 1–100, `offset` and `maxChars` 1–100000. List pages return metadata only with `total/offset/nextOffset`. Detail returns `{record,truncated}`. Manuscript text, including nested originals, is hidden unless `includeManuscript:true` is explicitly requested. Oversized detail is metadata plus a `json-fragment` preview, not a complete/parseable record. Evaluation/forecast details also include read-only `currentEligibility:{lockable,reason}` computed from current state, separate from immutable records. Generic state/ops/Undo responses omit internal lab state.
+
+Prediction details include bounded read-only `currentRelations:{predictionId,publication,retrospectiveCount,latestRetrospectiveId}`. `publication` is its exact same-account/item/platform publication metadata or null, not a manuscript or narrative. The count and latest ID describe matching retrospective records without returning a history array or notes. These relations are computed independently of list pagination, remain available for archived records and never rewrite the prediction. The UI withholds registration/review forms if relations are not confirmed; loading more history is not required to discover an existing publication or completed review.
+
+The observation picker uses the same exact identity resolver as the backend: explicit item ID, or an unambiguous external ID within its account, with matching platform/account and one exact unique metric ID. Ambiguous identities are never broad-matched. Timed legacy zero views without cumulative semantics or explicit measurement provenance remain unknown; an explicitly measured/manual zero remains zero. The UI and backend share the same browser-safe provenance policy. Median display uses exact human integers or half decimals, including very large halves, and shows an approximate numeric display only when rounding is necessary.
+
+Authenticated desktop POST routes `/media-desk/content-lab/read` and `/media-desk/content-lab/action` share the exact automation dispatcher and durable journal with MCP. `/media-desk/content-lab/request-status` is a narrow desktop alias to the existing request-status read tool; it adds no MCP tool. They return normal `{ok,result,requestId?}` or `{ok:false,error:{code,message,details?},requestId}` envelopes: **HTTP 200 alone does not mean success**. For example the action JSON is `{"accountId":"ACCOUNT_ID","requestId":"review-001","action":"evaluate","itemId":"ITEM_ID","versionId":"VERSION_ID","format":"script","rubricId":"general-script-v1"}`. Model/provider details are sanitized at the lab boundary; ordinary authoring diagnostics retain their existing behavior.
+
+On network loss retain the **same request ID and exact intent**. The UI holds operation ownership across close/reopen and account navigation, prevents prepaint double clicks, shows “Result needs checking” and offers a read-only manual check. It never automatically resubmits or mints a new ID to bypass an uncertain action. `media_desk_request_status` reports `pending|done|unknown|not_found`; use `queryRequestId` and bounded `error.details.contentLab.records` identifiers to find saved evidence. An existing record may carry a different original request ID for a logical duplicate. Keep notes and inputs after failure/uncertainty. No recovery read starts a model. UI pending ownership lasts for the current application session; retain the displayed recovery ID externally before a full reload.
+
+Each selection/intent has a monotonic UI revision: switching versions or history records and then switching back cannot let an older action or manual recovery replace the newer focus. Saved results remain available through the operation notice/history even when they are not automatically opened.
+
+The review-loop approach is attributed to [XBuilderLAB/cheat-on-content](https://github.com/XBuilderLAB/cheat-on-content), [MIT license](https://github.com/XBuilderLAB/cheat-on-content/blob/d88d004abcabfe6656a007b8fb4e7ed4ea7a4c89/LICENSE), commit [d88d004abcabfe6656a007b8fb4e7ed4ea7a4c89](https://github.com/XBuilderLAB/cheat-on-content/commit/d88d004abcabfe6656a007b8fb4e7ed4ea7a4c89). This implementation does not claim that later persona, benchmark, topic or recalibration stages are present.
 
 ## Format and image choices
 
@@ -217,7 +272,7 @@ Tests use temporary real Stores, actual Unix sockets, CLI subprocesses, the offi
 
 ## Persistent content versions and exports
 
-These operations use the same 18 tools, Store, account boundaries, read-only mode and durable request IDs. They call no model or Monid. Use a newly built/installed source version to access them; this document does not change a running installation.
+These operations use the same 20 tools, Store, account boundaries, read-only mode and durable request IDs. They call no model or Monid. Use a newly built/installed source version to access them; this document does not change a running installation.
 
 ```sh
 media-desk call media_desk_apply_ops --request-id save-v1 --input '{"accountId":"ACCOUNT_ID","ops":[{"op":"save_version","id":"ITEM_ID","name":"Initial draft"}]}'

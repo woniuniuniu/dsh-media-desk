@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { normalizedAccountId } from '../accounts.js'
 import { contentSha256, creativeFingerprint } from '../versions.js'
-import { collectionTimestamp, COUNTERS, resolveMetricItem, validCounter } from '../metrics.js'
+import { collectionTimestamp, COUNTERS, validCounter } from '../metrics.js'
+import { associatedMetric, viewCounter } from './observations.js'
+export { associatedMetric, viewCounter } from './observations.js'
 import { exactMedian, makeComparisonPolicy, bucketForPolicy } from './comparison.js'
 
 export const textSha256 = text => createHash('sha256').update(text, 'utf8').digest('hex')
@@ -10,10 +12,6 @@ export const BASELINE_POLICY = Object.freeze({ id: 'earliest-per-work-within-6h-
 export const BUCKETS = Object.freeze(['<0.3x', '0.3x..<1x', '1x..<3x', '3x..<10x', '>=10x'])
 export const labError = (message, code = 'INVALID_ARGUMENT') => Object.assign(new Error(message), { code, status: code === 'BUSY' ? 409 : 400 })
 export const labRecords = state => state.contentLab?.records ?? []
-export function associatedMetric(state, metric, item) {
-  const resolved = resolveMetricItem(state.items, metric)
-  return !resolved.reason && resolved.item?.id === item.id && metric.platform === item.platform && normalizedAccountId(metric) === normalizedAccountId(item)
-}
 export function dataKnown(state, item) {
   return item.status === 'published' || Boolean(item.publishedAt) || labRecords(state).some(r => r.kind === 'publication' && r.itemId === item.id) || state.metrics.some(metric => associatedMetric(state, metric, item))
 }
@@ -86,13 +84,6 @@ export function recordDetail(record, { includeManuscript = false, maxChars = 800
   delete safe.integrity
   const json = JSON.stringify(safe)
   return json.length <= maxChars ? { record: safe, truncated: false } : { record: { ...recordMetadata(record), preview: json.slice(0, maxChars), encoding: 'json-fragment' }, truncated: true }
-}
-export function viewCounter(metric) {
-  // Imported legacy zeros were once defaults. A zero only becomes observed zero
-  // when its cumulative semantics or explicit provenance establishes that fact.
-  if (!validCounter(metric.views)) return null
-  if (metric.views === 0 && metric.semantics !== 'cumulative' && metric.collectionTimeBasis !== 'self-declared' && metric.collectionTimeBasis !== 'platform-observed' && metric.source !== 'manual' && metric.source !== 'user-declared') return null
-  return metric.views
 }
 export function metricSnapshot(state, metricId, prediction, publication, now) {
   const matches = state.metrics.filter(row => row.id === metricId)

@@ -41,6 +41,7 @@ test('authenticated Host lab endpoints and private socket share one journal; gen
   assert.equal(cached.ok, true, JSON.stringify(cached)); assert.equal(cached.cached, true); assert.equal(calls, 1)
   const journal = JSON.parse(await readFile(join(f.store.root, 'automation', 'journal.json'), 'utf8')); assert.equal(Object.keys(journal).length, 1)
   const list = await request('content-lab/read', { accountId: 'a' }); assert.equal(list.body.result.total, 1); assert.equal(list.body.state, undefined)
+  const status = await request('content-lab/request-status', { requestId: 'same-shared-request' }); assert.equal(status.body.result.status, 'done'); assert.equal(status.body.result.response.result.record.id, saved.body.result.record.id)
   const detail = await request('content-lab/read', { accountId: 'a', recordId: saved.body.result.record.id, includeManuscript: true, maxChars: 100000 }); assert.equal(detail.body.result.record.manuscript.text, 'PRIVATE_MANUSCRIPT_TEXT')
   for (const result of [await request('state', undefined, 'GET'), await request('ops', { ops: [{ op: 'update_item', id: 'work', pinned: true }] }), await request('undo', {})]) {
     assert.equal(result.body.state.contentLab, undefined); assert.doesNotMatch(JSON.stringify(result.body.state), /fresh-context-input-only|targetEpoch/)

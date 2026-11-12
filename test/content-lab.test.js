@@ -10,6 +10,48 @@ import { createAutomationService } from '../src/automation/service.js'
 
 const initialTime = Date.parse('2026-11-12T00:00:00Z')
 const producer = { isRunning: () => false, anyAssetActive: () => false }
+
+test('readonly detail reports current lock eligibility without changing frozen records or reviving Undo lineage', async t => {
+  const f = await fixture(t), e = await f.evaluate(), forecast = await f.action('forecast', { evaluationId: e.result.record.id })
+  const input = { accountId: 'a', recordId: forecast.result.record.id, maxChars: 100000 }
+  const before = JSON.stringify((await f.store.read()).contentLab.records)
+  assert.equal((await f.read(input)).result.currentEligibility.lockable, true)
+  assert.equal(JSON.stringify((await f.store.read()).contentLab.records), before)
+  await f.store.mutate('edit', s => { s.items[0].title = 'changed' })
+  assert.equal((await f.read(input)).result.currentEligibility.lockable, false)
+})
+
+test('prediction detail exposes bounded authoritative relations beyond all history pages without manuscripts or notes', async t => {
+  const { sealRecord } = await import('../src/content-lab/records.js')
+  const f = await fixture(t), p = await f.lock()
+  await f.store.mutate('old history', s => { const evaluation = s.contentLab.records.find(r => r.kind === 'evaluation'); for (let i = 0; i < 205; i++) s.contentLab.records.push(sealRecord({ ...evaluation, integrity: undefined, id: `archive-${i}` })) })
+  const pub = await f.action('publish', { predictionId: p.id, publishedAt: '2026-11-12T00:00:00Z' }); assert.equal(pub.ok, true)
+  f.time('2026-11-15T00:00:00Z')
+  await f.store.mutate('actual metric', s => { s.metrics.push({ id: 'actual', itemId: 'work', accountId: 'a', platform: '抖音', views: 0, source: 'manual', collectedAt: '2026-11-15T00:00:00Z' }) })
+  const retro = await f.action('retro', { predictionId: p.id, metricId: 'actual', notes: 'PRIVATE_RELATION_NOTES' }); assert.equal(retro.ok, true)
+  const detail = await f.read({ accountId: 'a', recordId: p.id, maxChars: 100000 }), relations = detail.result.currentRelations
+  assert.equal(relations.predictionId, p.id); assert.equal(relations.publication.id, pub.result.record.id); assert.equal(relations.retrospectiveCount, 1); assert.equal(relations.latestRetrospectiveId, retro.result.record.id); assert.doesNotMatch(JSON.stringify(relations), /"manuscript":|PRIVATE_RELATION_NOTES|narrative|dimensions/)
+  assert.equal((await f.read({ accountId: 'b', recordId: p.id })).ok, false)
+  const short = await f.read({ accountId: 'a', recordId: p.id, maxChars: 1 }); assert.equal(short.result.truncated, true); assert.equal(short.result.currentRelations.publication.id, pub.result.record.id)
+})
+
+test('shared browser-safe provenance and backend retrospective preserve unknown legacy zeros and explicit measured zeros identically', async t => {
+  const shared = await import('../src/content-lab/observations.js'), backend = await import('../src/content-lab/records.js')
+  assert.equal(shared.viewCounter, backend.viewCounter); assert.equal(shared.associatedMetric, backend.associatedMetric)
+  for (const [metric, expected] of [[{ views: 0 }, null], [{ views: -1 }, null], [{ views: 1.5 }, null], [{ views: Number.MAX_SAFE_INTEGER + 1 }, null], [{ views: 0, source: 'manual' }, 0], [{ views: 0, source: 'user-declared' }, 0], [{ views: 0, semantics: 'cumulative' }, 0], [{ views: 0, collectionTimeBasis: 'self-declared' }, 0], [{ views: 0, collectionTimeBasis: 'platform-observed' }, 0], [{ views: 20 }, 20]]) assert.equal(shared.viewCounter(metric), expected)
+  const f = await fixture(t), p = await f.lock(); await f.action('publish', { predictionId: p.id, publishedAt: '2026-11-12T00:00:00Z' }); f.time('2026-11-15T00:00:00Z')
+  await f.store.mutate('two zero observations', s => { for (const [id, source] of [['legacy', undefined], ['measured', 'manual']]) s.metrics.push({ id, itemId: 'work', accountId: 'a', platform: '抖音', collectedAt: '2026-11-15T00:00:00Z', views: 0, ...(source ? { source } : {}) }) })
+  assert.equal((await f.action('retro', { predictionId: p.id, metricId: 'legacy' })).result.record.actuals.views, null)
+  assert.equal((await f.action('retro', { predictionId: p.id, metricId: 'measured' })).result.record.actuals.views, 0)
+})
+
+test('model explanations use UI language in system instructions while evaluation user JSON stays rubric plus script only', async t => {
+  const { withLang } = await import('../src/i18n.js')
+  const f = await fixture(t)
+  await withLang('en', () => f.evaluate())
+  assert.match(f.calls[0].system, /human-readable.*English/)
+  assert.deepEqual(Object.keys(JSON.parse(f.calls[0].user)), ['rubric', 'script'])
+})
 async function fixture(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), 'md-lab-')); t.after(() => rm(root, { recursive: true, force: true }))
   const store = new Store(root); let version; let now = initialTime

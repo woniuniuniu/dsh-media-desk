@@ -1,5 +1,6 @@
 // 数据复盘。
 import React from 'react'
+import { ContentLabQueue } from './content-lab.jsx'
 import { AccountBadge } from './accounts.jsx'
 import { dispatchOps, getDesk, fetchInsights, learnSkills, openItem, setDesk, toast, useDesk } from './desk.js'
 import { ConnectDialog } from './connect.jsx'
@@ -221,7 +222,7 @@ export function InsightsView() {
       {kuaishou ? <p className="md-muted">{t('快手支持手动录入、CSV 和 API 数据复盘；暂不支持 Monid 自动抓取。')}</p> : null}
     </div>
   )
-  if (!data) return <div className="md-board-page">{filters}<div className="md-tile md-i-hero" /></div>
+  if (!data) return <div className="md-board-page">{filters}<ContentLabQueue /><div className="md-tile md-i-hero" /></div>
   // 有真实数据后，不再把示例规则当建议
   const proposed = skills.filter(s => s.status === 'proposed' && (data.hasSample || !s.sample))
   // 有的平台公开接口读不到播放量，这时统一按互动来比
@@ -243,6 +244,7 @@ export function InsightsView() {
   return (
     <div className="md-board-page">
       {filters}
+      <ContentLabQueue />
       <div className="md-insights">
         <section className="md-tile md-i-hero">
           <div className="md-hero-copy">

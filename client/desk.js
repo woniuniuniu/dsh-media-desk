@@ -220,6 +220,23 @@ export async function runVersionOperation(id, operation) {
   return dispatchOps([{ ...operation, id }], { accountId, label: t(operation.op === 'restore_version' ? '恢复版本' : '保存版本') })
 }
 
+// Lab responses never replace editor state. Reuse the version capture gate so
+// accepted retired saves are reconciled before review, lock or registration.
+export async function withContentLabReady(id, accountId, action) {
+  const origin = originNow(), revision = snapshot.studioRevision
+  const item = snapshot.state?.items.find(row => row.id === id)
+  if (!item || (item.accountId ?? null) !== accountId || !await readyForVersion(id, origin, accountId)) return null
+  if (!sameOrigin(origin) || snapshot.studioRevision !== revision) return null
+  const epoch = itemWriteEpoch.get(id), result = await action(snapshot.state.items.find(row => row.id === id))
+  const publication = result?.result?.record
+  if (publication?.kind === 'publication' && publication.itemId === id && publication.accountId === accountId && sameOrigin(origin) && snapshot.studioRevision === revision && itemWriteEpoch.get(id) === epoch) {
+    // Only the declared publication fields belong to this receipt. In
+    // particular no lab response can replace creative text or version history.
+    setDesk({ state: { ...snapshot.state, items: snapshot.state.items.map(row => row.id === id && (row.accountId ?? null) === accountId ? { ...row, status: 'published', publishedAt: publication.publishedAt } : row) } })
+  }
+  return result
+}
+
 export async function undo() {
   try {
     const data = await request('undo', {})
