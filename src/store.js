@@ -5,6 +5,7 @@ import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { CREATIVE_FIELDS } from './versions.js'
+import { labTargetSnapshot, trackLabTargets } from './content-lab/records.js'
 import { assertAccountTransition } from './accounts.js'
 import { buildSeed, migrateState } from './seed.js'
 
@@ -49,12 +50,12 @@ function revertList(before, after, current) {
  */
 export function revertChange(before, after, current) {
   if (same(before, after)) return current
-  if (same(current, after) && !current?.items && !current?.contentVersions && !current?.contentRevision && !(Array.isArray(current) && current.some(row => row?.contentVersions || row?.contentRevision))) return before === undefined ? undefined : structuredClone(before)
+  if (same(current, after) && !current?.contentLab && !current?.items && !current?.contentVersions && !current?.contentRevision && !(Array.isArray(current) && current.some(row => row?.contentVersions || row?.contentRevision))) return before === undefined ? undefined : structuredClone(before)
   if (isObject(before) && isObject(after) && isObject(current)) {
     const result = { ...current }
     for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
       const preserveCreative = current.contentRevision && current.contentRevision !== after.contentRevision
-      const value = ['contentVersions', 'contentVersionExports', 'contentRevision'].includes(key) || (preserveCreative && CREATIVE_FIELDS.includes(key)) ? current[key] : key === 'production' && differentProduction(after[key], current[key])
+      const value = ['contentLab', 'contentVersions', 'contentVersionExports', 'contentRevision'].includes(key) || (preserveCreative && CREATIVE_FIELDS.includes(key)) ? current[key] : key === 'production' && differentProduction(after[key], current[key])
         ? current[key] : revertChange(before[key], after[key], current[key])
       if (value === undefined) delete result[key]
       else result[key] = value
@@ -133,7 +134,9 @@ export class Store {
     return this.run(async () => {
       await this.refresh()
       const before = undoable ? JSON.stringify(this.state) : null
+      const labBefore = labTargetSnapshot(this.state)
       const result = await mutate(this.state)
+      trackLabTargets(labBefore, this.state)
       if (undoable) {
         const after = JSON.stringify(this.state)
         // 什么都没改的操作不占撤销位，免得用户点撤销却没反应
@@ -153,6 +156,7 @@ export class Store {
       if (!entry) return null
       await this.refresh()
       const before = JSON.parse(entry.before), after = JSON.parse(entry.after)
+      const labBefore = labTargetSnapshot(this.state)
       const next = revertChange(before, after, this.state)
       // Undoing a restore is itself a new creative identity; older Undo must not own it.
       for (const item of next.items) {
@@ -163,6 +167,7 @@ export class Store {
         }
       }
       assertAccountTransition(this.state,next)
+      trackLabTargets(labBefore, next)
       this.undo.pop()
       this.state = next
       await this.persist()

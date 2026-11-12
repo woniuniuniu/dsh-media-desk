@@ -284,7 +284,7 @@ test('assist client timeout exceeds Host editing window and explicit timeouts ov
 })
 
 
-test('CLI and official MCP transport preserve scoped 2.7 format and image options with 18 tools', async t => {
+test('CLI and official MCP transport preserve scoped 2.7 format and image options with 20 tools', async t => {
   const { home, store, starts } = await fixture(t)
   const { applyOps } = await import('../src/ops.js')
   let accountId, id
@@ -303,7 +303,7 @@ test('CLI and official MCP transport preserve scoped 2.7 format and image option
   t.after(() => client.close())
   await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(process.cwd(), 'bin/media-desk.js'), '--home', home, 'mcp'], stderr: 'pipe' }))
   const tools = await client.listTools()
-  assert.equal(tools.tools.length, 18)
+  assert.equal(tools.tools.length, 20)
   assert.equal(tools.tools.find(t => t.name === 'media_desk_produce').inputSchema.properties.withImages.type, 'boolean')
   const imported = await client.callTool({ name: 'media_desk_write_draft', arguments: { requestId: 'mcp-article', id, accountId, format: 'article', article: 'Transport body stays intact' } })
   assert.equal(imported.structuredContent.ok, true)
@@ -335,7 +335,7 @@ test('official CLI and SDK save, page, bound, restore and replay named versions 
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
   const sdk = new Client({ name: 'versions-test', version: '1' }); t.after(() => sdk.close())
   await sdk.connect(new StdioClientTransport({ command: process.execPath, args: [join(process.cwd(), 'bin/media-desk.js'), '--home', home, 'mcp'], stderr: 'pipe' }))
-  assert.equal((await sdk.listTools()).tools.length, 18)
+  assert.equal((await sdk.listTools()).tools.length, 20)
   const invoke = async (suffix, args) => (await sdk.callTool({ name: `media_desk_${suffix}`, arguments: args })).structuredContent
   const history = await invoke('get_item', { id, accountId, fields: ['versions'], versionLimit: 1 })
   assert.equal(history.result.versions.total, 1); assert.equal(history.result.versions.items[0].name, 'CLI initial')

@@ -60,7 +60,7 @@ test('insights platform filter follows account scope and excludes unidentified s
  const status = await call(service, 'status')
  assert.equal(status.result.supportedPlatforms.length, 10)
  assert.ok(status.result.supportedPlatforms.includes('快手'))
- assert.equal(catalog.length, 18)
+ assert.equal(catalog.length, 20)
  assert.ok(catalog.find(t => t.name === 'media_desk_get_insights').inputSchema.properties.platform.enum.includes('快手'))
 })
 
@@ -117,5 +117,5 @@ test('avatar automation accepts local images and long URLs, retains compact outp
  const ro = createAutomationService({ ...opts, readOnly: true })
  assert.equal((await call(ro, 'apply_ops', { ops: [{ op: 'update_account', id: a, avatar: null }] }, 'avatar-ro')).error.code, 'READ_ONLY')
  assert.equal((await call(ro, 'get_account', { id: a })).result.avatar, long)
- assert.equal(catalog.length, 18)
+ assert.equal(catalog.length, 20)
 })

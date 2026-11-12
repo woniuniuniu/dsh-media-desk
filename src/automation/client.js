@@ -6,7 +6,7 @@ import { failure } from './errors.js'
 const MAX_RESPONSE = 1048576
 export class AutomationClient {
   constructor(options = {}) { this.paths = automationPaths(options); this.readOnly = !!options.readOnly; this.timeout = options.timeout }
-  timeoutFor(tool) { return this.timeout ?? (tool === 'media_desk_assist' ? 300000 : 30000) }
+  timeoutFor(tool) { return this.timeout ?? (['media_desk_assist', 'media_desk_content_lab_action'].includes(tool) ? 300000 : 30000) }
   async call(tool, input = {}, requestId = input.requestId) {
     const def = catalog.find(t => t.name === tool)
     if (!def) return failure('UNKNOWN_TOOL', 'Unknown tool.', undefined, requestId)

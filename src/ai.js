@@ -46,10 +46,10 @@ export function modelInfo(ctx) {
 /**
  * 调一次模型并流式回传文本。
  * @param {object} ctx - Cordis 上下文。
- * @param {{system: string, user: string, maxTokens?: number, signal?: AbortSignal, onText?: (delta: string) => void, light?: boolean, sessionId?: string}} request - 请求。
+ * @param {{system: string, user: string, maxTokens?: number, signal?: AbortSignal, onText?: (delta: string) => void, light?: boolean, sessionId?: string, sanitizePublicError?: boolean}} request - 请求。
  * @returns {Promise<{text: string, model: string}>} 完整文本与模型名。
  */
-export async function callModel(ctx, { system, user, maxTokens = 4000, signal, onText, light = false, sessionId = PLUGIN_SESSION_ID }) {
+export async function callModel(ctx, { system, user, maxTokens = 4000, signal, onText, light = false, sessionId = PLUGIN_SESSION_ID, sanitizePublicError = false }) {
   const info = modelInfo(ctx)
   if (!info) throw new Error(tr('当前没有可用模型'))
   const llm = ctx.get('llm')
@@ -79,10 +79,10 @@ export async function callModel(ctx, { system, user, maxTokens = 4000, signal, o
     }
     modelStatus.ok = true
     modelStatus.error = null
-    return { text, model: info.label }
+    return { text, model: info.model, provider: info.provider }
   } catch (err) {
     modelStatus.ok = false
-    modelStatus.error = err.message
+    modelStatus.error = sanitizePublicError ? tr('Content review model failed. Check model availability.') : err.message
     throw err
   }
 }

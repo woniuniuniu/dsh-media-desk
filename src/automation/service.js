@@ -3,7 +3,9 @@ import Ajv from 'ajv'
 import { draftFormat } from '../style.js'
 import { catalog, PLUGIN_VERSION, PROTOCOL_VERSION } from './catalog.js'
 import { failure, invalid } from './errors.js'
-import { MutationJournal } from './journal.js'
+import { sharedMutationJournal } from './journal.js'
+import { createContentLabService } from '../content-lab/service.js'
+import { baselineSummary, labRecords, recordMetadata } from '../content-lab/records.js'
 import { automationDirectory } from './paths.js'
 import { randomUUID } from 'node:crypto'
 import { assertVersionIdle, backupMeaningful, selectedVersion, versionMetadata } from '../versions.js'
@@ -20,6 +22,14 @@ const definitions = new Map(catalog.map(t => [t.name, { ...t, validate: ajv.comp
 const META = ['id', 'accountId', 'title', 'kind', 'status', 'platform', 'scheduledAt', 'publishedAt', 'createdAt', 'pinned', 'tags', 'parentId', 'importRequestId']
 const pick = (row, keys) => Object.fromEntries(keys.filter(k => row[k] !== undefined).map(k => [k, row[k]]))
 const clipped = (v, n = 500) => typeof v === 'string' ? v.slice(0, n) : v
+function compactLabReceipt(response) {
+  if (!response?.result?.record) return response
+  // Old completed receipts may contain a full frozen prediction or forecast.
+  // Project their baselines at read time without changing durable archives.
+  const project = value => Array.isArray(value) ? value.map(project) : value && typeof value === 'object'
+    ? Object.fromEntries(Object.entries(value).map(([key, row]) => [key, key === 'baseline' ? baselineSummary(row) : project(row)])) : value
+  return { ...response, result: { ...response.result, record: project(response.result.record) } }
+}
 function metadata(row) { const out = pick(row, META); out.title = clipped(out.title, 300); out.tags = out.tags?.slice(0, 24).map(x => clipped(x, 100)); out.productionStatus = row.production?.status ?? null; return out }
 function avatarImportMetadata(account) {
   const marker = account.avatarImport
@@ -47,11 +57,14 @@ function validateSchedule(input) {
     if (op.scheduledAt !== undefined && op.scheduledAt !== null && (!/^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{1,3})?)?(?:Z|[+-]\d\d:\d\d)$/.test(op.scheduledAt) || Number.isNaN(Date.parse(op.scheduledAt)))) throw invalid('scheduledAt must be timezone-qualified ISO8601, or null to cancel.')
   }
 }
-export function createAutomationService({ store, settings, producer, assist, models = async () => ({ providers: [] }), readOnly = false, profile = 'desktop', journal = new MutationJournal(automationDirectory(store.root, profile)) }) {
+export function createAutomationService({ store, settings, producer, assist, models = async () => ({ providers: [] }), readOnly = false, profile = 'desktop', callText, now, journal = sharedMutationJournal(automationDirectory(store.root, profile)) }) {
+  const lab = createContentLabService({ store, producer, callText, now })
   async function find(id, accountId) { const state = await store.read(); const row = state.items.find(i=>i.id===id); if(!row) throw Object.assign(new Error('Item not found.'),{code:'NOT_FOUND'}); return requireMembership(state,id,accountId) }
   async function dispatch(tool, input, requestId) {
-    if (input.accountId !== undefined) requireAccount(await store.read(),input.accountId)
+    if (!['media_desk_get_content_lab', 'media_desk_content_lab_action'].includes(tool) && input.accountId !== undefined) requireAccount(await store.read(),input.accountId)
     switch (tool) {
+      case 'media_desk_get_content_lab': return lab.read(input)
+      case 'media_desk_content_lab_action': return lab.action(input, requestId)
       case 'media_desk_list_accounts': {
         const state=await store.read();const counts=allAccountCounts(state); const q=input.query?.toLocaleLowerCase(); const rows=state.accounts.filter(a=>(!q||`${a.handle} ${a.platform} ${a.group} ${a.id}`.toLocaleLowerCase().includes(q))&&(input.platform===undefined||a.platform===input.platform)&&(input.group===undefined||a.group===input.group)&&(input.archived===undefined||Boolean(a.archived)===input.archived));const offset=input.offset??0,limit=input.limit??20;return {accounts:rows.slice(offset,offset+limit).map(a=>({...Object.fromEntries(Object.entries(pick(a,['id','handle','platform','avatar','group','archived','defaultStyleId','draftFormat'])).map(([k,v])=>[k,clipped(v,k==='avatar'?4000:300)])),...avatarImportMetadata(a),counts:counts.get(a.id)??{items:0,published:0,scheduled:0,metrics:0}})),total:rows.length,offset,nextOffset:offset+limit<rows.length?offset+limit:null}
       }
@@ -206,7 +219,10 @@ export function createAutomationService({ store, settings, producer, assist, mod
         return { activeStyleId: s.activeStyleId ?? null, total: (s.styles ?? []).length, styles: (s.styles ?? []).slice(offset, offset + limit).map(row => Object.fromEntries(Object.entries(pick(row, ['id', 'name', 'icon', 'summary', 'tone', 'sentences', 'opening', 'structure', 'logic', 'story', 'flow', 'words', 'avoid', 'samples'])).map(([k, v]) => [k, Array.isArray(v) ? v.slice(0, 10).map(x => clipped(x, 300)) : clipped(v, 800)]))) }
       }
       case 'media_desk_models': return models()
-      case 'media_desk_request_status': return journal.status(input.requestId)
+      case 'media_desk_request_status': {
+        const status = await journal.status(input.requestId)
+        return status.tool === 'media_desk_content_lab_action' && status.response ? { ...status, response: compactLabReceipt(status.response) } : status
+      }
     }
   }
   return {
@@ -228,10 +244,22 @@ export function createAutomationService({ store, settings, producer, assist, mod
         try { const result = await dispatch(tool, args, requestId); return result?.ok === false ? result : { ok: true, result } } catch (e) {
           // Provider details/settings never leave this boundary. Known validation errors are safe.
           if (e.exportEvidence) return failure('OUTCOME_UNKNOWN', e.message, { export: e.exportEvidence })
-          return failure(e.code === 'NOT_FOUND' || e.code === 'BUSY' || e.code === 'INVALID_ARGUMENT' || e.code === 'ASSET_ERROR' ? e.code : def.mutation ? 'OUTCOME_UNKNOWN' : 'OPERATION_FAILED', ['NOT_FOUND', 'BUSY', 'INVALID_ARGUMENT', 'ASSET_ERROR'].includes(e.code) ? e.message : 'Operation outcome is uncertain; inspect request status and workbench state before acting.')
+          return failure(e.code === 'NOT_FOUND' || e.code === 'BUSY' || e.code === 'INVALID_ARGUMENT' || e.code === 'ASSET_ERROR' || ['UNAVAILABLE', 'MODEL_UNAVAILABLE', 'MODEL_TIMEOUT', 'INVALID_MODEL_RESULT'].includes(e.code) ? e.code : def.mutation ? 'OUTCOME_UNKNOWN' : 'OPERATION_FAILED', ['NOT_FOUND', 'BUSY', 'INVALID_ARGUMENT', 'ASSET_ERROR', 'UNAVAILABLE', 'MODEL_UNAVAILABLE', 'MODEL_TIMEOUT', 'INVALID_MODEL_RESULT'].includes(e.code) ? e.message : 'Operation outcome is uncertain; inspect request status and workbench state before acting.')
         }
       }
-      try { return def.mutation ? await journal.execute(requestId, tool, args, invoke) : await invoke() } catch { return failure('JOURNAL_ERROR', 'Unable to record mutation intent; no new dispatch was started.', undefined, requestId) }
+      try {
+        const dispatched = def.mutation ? await journal.execute(requestId, tool, args, invoke) : await invoke()
+        const response = tool === 'media_desk_content_lab_action' ? compactLabReceipt(dispatched) : dispatched
+        if (tool === 'media_desk_content_lab_action' && response.error?.code === 'OUTCOME_UNKNOWN') {
+          // Recovery lookup is best-effort. A lookup failure must not turn an
+          // already-dispatched operation into a claim that nothing was sent.
+          try {
+            const records = labRecords(await store.read()).filter(r => r.requestId === requestId && r.accountId === args.accountId).slice(0, 10).map(recordMetadata)
+            if (records.length) response.error.details = { contentLab: { records } }
+          } catch {}
+        }
+        return response
+      } catch { return failure('JOURNAL_ERROR', 'Unable to record mutation intent; no new dispatch was started.', undefined, requestId) }
     },
   }
 }

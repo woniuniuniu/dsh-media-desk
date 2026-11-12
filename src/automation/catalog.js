@@ -1,5 +1,6 @@
 // One catalog for the Host dispatcher, CLI discovery and MCP schemas.
 import { AVATAR_LOCAL_PATTERN, AVATAR_MAX_LENGTH } from '../avatar.js'
+import { labReadSchema, labActionSchema } from '../content-lab/schemas.js'
 import { PLATFORMS } from '../platforms.js'
 export const PROTOCOL_VERSION = 1
 export const PLUGIN_VERSION = '2.7.0-accounts.4'
@@ -71,5 +72,10 @@ tool('get_insights', 'Cumulative work/platform snapshots with coverage, nullable
 tool('list_styles', 'Bounded style cards and active style.', { accountId, limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 }, offset: { type: 'integer', minimum: 0, maximum: 1000000, default: 0 } })
 tool('models', 'Configured provider and model identifiers; no credentials.')
 tool('request_status', 'Inspect a durable mutation request. Pending recovery is never replayed.', { requestId }, ['requestId'])
+tool('get_content_lab', 'Read bounded scoped review, preview, immutable prediction, publication and retrospective records; list metadata first. Manuscript detail is explicit opt-in. Rubric presets are uncalibrated. No model or platform calls.')
+tools.at(-1).inputSchema = labReadSchema
+tool('content_lab_action', 'Evaluate a saved version in an independent input context; preview then lock a prediction; register actual publication; retrospect against one timed local observation. Explicit accountId and requestId are required. Models may incur configured provider costs; publish registers a user claim and never posts to a platform.', {}, [], true)
+tools.at(-1).inputSchema = labActionSchema
+tools.at(-1).annotations.openWorldHint = true
 export const catalog = tools
 export const catalogFor = (readOnly = false) => catalog.filter(t => !readOnly || !t.mutation)

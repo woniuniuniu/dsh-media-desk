@@ -36,7 +36,10 @@ function json(res, status, body) {
   res.statusCode = status
   res.setHeader('content-type', 'application/json; charset=utf-8')
   res.setHeader('cache-control', 'no-store')
-  res.end(JSON.stringify(body))
+  // Internal immutable review archives have a separate scoped, bounded endpoint.
+  // Do not add historical manuscripts to ordinary whole-state UI responses.
+  res.end(JSON.stringify(body, (key, value) => key === 'state' && value?.items && value?.accounts
+    ? Object.fromEntries(Object.entries(value).filter(([field]) => field !== 'contentLab')) : value))
 }
 
 async function readBuffer(req, limit) {
@@ -351,6 +354,8 @@ async function route(ctx, store, desk, req, res) {
   if (path === 'upload') return handleUpload(req, store, res)
   const body = await readJson(req)
   switch (path) {
+    case 'content-lab/read': return json(res, 200, await desk.automation.call({ tool: 'media_desk_get_content_lab', input: body }))
+    case 'content-lab/action': return json(res, 200, await desk.automation.call({ tool: 'media_desk_content_lab_action', input: body }))
     case 'ops': {
       const label = typeof body.label === 'string' ? body.label : tr('操作')
       const result = await store.mutate(label, (draft) => {
@@ -483,22 +488,24 @@ export default {
     })
     const monid = createMonidRunner()
     const desk = { settings, producer, monid }
+    const profile = hostProfile()
+    const service = createAutomationService({ store, settings, producer, profile, callText: options => callModel(ctx, options), assist: body => chatTurn(ctx, store, desk, body), models: async () => {
+      const llm = ctx.get('llm')
+      const providers = llm ? (await llm.listProviders()).slice(0, 20) : []
+      const settled = await Promise.allSettled(providers.map(async p => ({
+        provider: String(p.id).slice(0, 200), name: String(p.name || p.id).slice(0, 200),
+        models: (await llm.listModels(p.id)).slice(0, 100).map(m => ({ id: String(m.id).slice(0, 200), name: String(m.name || m.id).slice(0, 200) })),
+      })))
+      return { providers: settled.filter(r => r.status === 'fulfilled').map(r => r.value), default: defaultSelection(ctx), current: assistantModelOverride() }
+    } })
+    desk.automation = service
     // 启动时恢复用户在工作台里选过的助手模型
     settings.read().then(saved => setAssistantModel(saved.assistant)).catch(() => {})
     // The local bridge shares these exact objects with the authenticated UI routes.
     // Its startup/disposal cannot take down the normal workbench.
     ctx.effect(() => {
-      const home = dshHome(); const profile = hostProfile()
+      const home = dshHome()
       const started = Promise.resolve().then(() => {
-        const service = createAutomationService({ store, settings, producer, profile, assist: body => chatTurn(ctx, store, desk, body), models: async () => {
-          const llm = ctx.get('llm')
-          const providers = llm ? (await llm.listProviders()).slice(0, 20) : []
-          const settled = await Promise.allSettled(providers.map(async p => ({
-            provider: String(p.id).slice(0, 200), name: String(p.name || p.id).slice(0, 200),
-            models: (await llm.listModels(p.id)).slice(0, 100).map(m => ({ id: String(m.id).slice(0, 200), name: String(m.name || m.id).slice(0, 200) })),
-          })))
-          return { providers: settled.filter(r => r.status === 'fulfilled').map(r => r.value), default: defaultSelection(ctx), current: assistantModelOverride() }
-        } })
         return startAutomationServer({ home, profile, service })
       }).catch(error => {
         console.warn(`[media-desk] Local automation unavailable: ${String(error.message).slice(0, 300)} Desktop workbench remains available.`)

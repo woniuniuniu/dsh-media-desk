@@ -1,17 +1,23 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rename } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { boundedExportEvidence } from '../export-evidence.js'
+import { boundedLabEvidence } from '../content-lab/evidence.js'
 import { failure } from './errors.js'
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical)
   if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]))
   return value
 }
-function exportDetails(tool, response) {
-  if (tool !== 'media_desk_export') return undefined
-  const evidence = boundedExportEvidence(response?.ok === true ? response.result : response?.error?.details?.export)
-  return evidence ? { export: evidence } : undefined
+function recoveryDetails(tool, response) {
+  if (tool === 'media_desk_export') {
+    const evidence = boundedExportEvidence(response?.ok === true ? response.result : response?.error?.details?.export)
+    return evidence ? { export: evidence } : undefined
+  }
+  if (tool === 'media_desk_content_lab_action') {
+    const evidence = boundedLabEvidence(response?.ok === true ? response.result : response?.error?.details?.contentLab)
+    return evidence ? { contentLab: evidence } : undefined
+  }
 }
 export class MutationJournal {
   constructor(root) { this.root = root; this.file = join(root, 'journal.json'); this.inflight = new Map(); this.queue = Promise.resolve(); this.rows = null }
@@ -39,7 +45,7 @@ export class MutationJournal {
         if (row.hash !== hash) return { response: failure('REQUEST_ID_CONFLICT', 'Request ID was already used with different arguments.', undefined, id) }
         if (this.inflight.has(id)) return { waiting: this.inflight.get(id).promise }
         if (row.status === 'done') return { response: { ...row.response, cached: true } }
-        return { response: failure('OUTCOME_UNKNOWN', 'A previous dispatch has an uncertain outcome. Inspect state and request status; do not replay.', exportDetails(row.tool, row.response), id) }
+        return { response: failure('OUTCOME_UNKNOWN', 'A previous dispatch has an uncertain outcome. Inspect state and request status; do not replay.', recoveryDetails(row.tool, row.response), id) }
       }
       let resolve
       const promise = new Promise(r => { resolve = r })
@@ -56,17 +62,25 @@ export class MutationJournal {
       this.rows[id].status = response.error?.code === 'OUTCOME_UNKNOWN' ? 'unknown' : 'done'
       this.rows[id].response = response
       try { await this.persist() } catch {
-        const details = exportDetails(tool, response)
+        const details = recoveryDetails(tool, response)
         response = failure('OUTCOME_UNKNOWN', 'Result could not be durably recorded; inspect state before any new action.', details, id)
         // Keep failure handling in the same serial section: another intent must
         // never persist an unconfirmed success while this row becomes unknown.
         this.rows[id].status = 'unknown'
         this.rows[id].response = response
-        // Retry only metadata for an export receipt; never re-enter invoke().
+        // Retry only bounded receipt metadata; never re-enter invoke().
         if (details) { try { await this.persist() } catch {} }
       }
     })
     this.inflight.get(id)?.resolve(response); this.inflight.delete(id)
     return response
   }
+}
+
+// UI and local transports in one Host share a single serializer for each path.
+const sharedJournals = new Map()
+export function sharedMutationJournal(root) {
+  const key = resolve(root)
+  if (!sharedJournals.has(key)) sharedJournals.set(key, new MutationJournal(key))
+  return sharedJournals.get(key)
 }
