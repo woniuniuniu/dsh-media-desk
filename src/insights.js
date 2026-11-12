@@ -1,4 +1,5 @@
 // 复盘数据：把存下来的状态算成复盘页要显示的数字。纯函数：不读写、不取时钟（now 由调用方给）、不改 state。
+import { mineUrl } from './exchange.js'
 import { editPairs } from './match.js'
 import { safeText } from './inbox.js'
 import { engagement } from './score.js'
@@ -40,7 +41,7 @@ function followersBlock(raw) {
   return { series, now: latest ? latest.count : null, delta7: delta(7), delta30: delta(30) }
 }
 
-export function computeInsights(state, now) {
+export function computeInsights(state, now, { ownHandle } = {}) {
   const t = new Date(now).getTime()
   const inWindow = (iso, days) => {
     const x = ms(iso)
@@ -89,7 +90,7 @@ export function computeInsights(state, now) {
     .map(({ m }) => {
       const c = m.candidateId == null ? null : candById.get(m.candidateId)
       return {
-        id: m.id, text: safeText(m.text, 80), url: m.url ?? null, views: metric(m.views), likes: metric(m.likes),
+        id: m.id, text: safeText(m.text, 80), url: m.url ?? mineUrl(m, ownHandle), views: metric(m.views), likes: metric(m.likes),
         replies: metric(m.replies), reposts: metric(m.reposts), typeName: c ? typeName(c.typeId) : null,
       }
     })

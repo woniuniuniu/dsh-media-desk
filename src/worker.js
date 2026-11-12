@@ -1,19 +1,26 @@
 // 后台处理：每分钟读入素材和处理结果，每天定时成稿，并把候选稿写回交换文件夹。
 // 交换文件夹里的内容是不可信数据，这里只做合并和状态迁移；模型调用都在 store.mutate 之外。
 import { isAbsolute, join } from 'node:path'
-import { applyDecision, expire, intentUrl, safeText } from './inbox.js'
+import { applyDecision, expire, intentUrl } from './inbox.js'
+import { isoWeek } from './longform.js'
+import { matchSent } from './match.js'
 import { newId } from './ops.js'
+import { addNotice, localDay } from './runs.js'
 import { exportSkillMarkdown, watchlistJson } from './voice.js'
 
 const TICK_MS = 60_000
 const RETRY_MS = 30 * 60_000
 const KEEP_POSTS_MS = 14 * 24 * 3600e3
-const MAX_NOTICES = 50
-const MAX_NOTICE_CHARS = 200
+const DAY_MS = 24 * 3600e3
+const KEEP_MINE_MS = 180 * DAY_MS
+const KEEP_REPLIES_MS = 90 * DAY_MS
+const KEEP_FOLLOWERS_MS = 400 * DAY_MS
+const METRICS = ['likes', 'replies', 'reposts', 'quotes', 'views']
 const TAKEN_NOTICE = '后台处理被另一个进程接管，本轮已停止'
 
+export { addNotice, localDay }
+
 const pad = n => String(n).padStart(2, '0')
-export const localDay = date => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 const localTime = date => `${pad(date.getHours())}:${pad(date.getMinutes())}`
 
 /** 交换文件夹的实际位置：设置里留空则用数据目录下的 exchange。 */
@@ -34,23 +41,16 @@ export function countImage(state, now) {
   state.runs.imagesCount = used + 1
 }
 
-/** 在 state.runs.notices 末尾追加一条提示（截到 200 字）；与上一条相同则不重复，最多留 50 条。 */
-export function addNotice(state, raw, now) {
-  const text = safeText(raw, MAX_NOTICE_CHARS)
-  const notices = state.runs.notices
-  if (notices.at(-1)?.text === text) return
-  notices.push({ id: newId('n'), at: now.toISOString(), text })
-  if (notices.length > MAX_NOTICES) notices.splice(0, notices.length - MAX_NOTICES)
-}
-
 export class Worker {
-  constructor({ store, settings, composer, lock, exchangeFor, now = () => new Date() }) {
+  constructor({ store, settings, composer, lock, exchangeFor, now = () => new Date(), learn = { learnDaily: async () => ({ proposals: 0 }) }, longform = null }) {
     this.store = store
     this.settings = settings
     this.composer = composer
     this.lock = lock
     this.exchangeFor = exchangeFor
     this.now = now
+    this.learn = learn
+    this.longform = longform
     this.lastAttemptAt = null
     this.voiceMemo = null
     this.inflight = null
@@ -104,11 +104,22 @@ export class Worker {
         if (result === 'ignored') notice(`处理结果（${decision.action}）指向的候选稿 ${decision.candidateId} 不存在或已处理，已忽略`)
         else if (result === 'needs_model') pendingModel.push(decision)
       }
-      expire(s, now)
     }, { undoable: false })
     // 落库之后才算处理过；改稿失败只记提示，不会反复重试
     await posts.commit()
     await decisions.commit()
+
+    // 每个阶段之前都续锁并看一眼是否已停止
+    const gate = async () => {
+      if (this.stopped) return halted
+      if (!(await this.lock.acquire())) return abort()
+      return null
+    }
+    for (const stage of [() => this.#ingestMine(exchange, settings), () => this.#ingestReplies(exchange), () => this.#matchAndTrim(now)]) {
+      const stop = await gate()
+      if (stop) return stop
+      await stage()
+    }
 
     for (const decision of pendingModel) {
       if (this.stopped) return halted
@@ -129,10 +140,112 @@ export class Worker {
     } catch (err) {
       await this.#notice(`每日成稿出错：${err.message}`)
     }
-    if (this.stopped) return halted
-    if (!(await this.lock.acquire())) return abort()
+
+    let stop = await gate()
+    if (stop) return stop
+    try {
+      await this.learn.learnDaily()
+    } catch (err) {
+      await this.#notice(`每日学习出错：${err.message}`)
+    }
+    stop = await gate()
+    if (stop) return stop
+    await this.#longformIfDue(now)
+    stop = await gate()
+    if (stop) return stop
     await this.#exportAll(exchange)
     return { ran: true }
+  }
+
+  /** 某一步出错只记一条提示，不影响本轮其余步骤；没落库的交换文件下一轮还会读到。 */
+  async #guarded(what, fn) {
+    try {
+      await fn()
+    } catch (err) {
+      await this.#notice(`${what}出错：${err.message}`)
+    }
+  }
+
+  #ingestMine(exchange, settings) {
+    return this.#guarded('读入自己发出的内容', async () => {
+      const mine = await exchange.readNew('mine', { ownHandle: settings.ownHandle })
+      const now = this.now()
+      await this.store.mutate('读入自己发出的内容', s => {
+        for (const { file, why } of mine.skipped) addNotice(s, `交换文件夹里的 mine/${file} 无法读取：${why}`, now)
+        const byId = new Map(s.mine.map(m => [m.id, m]))
+        for (const { mine: item, followers } of mine.items) {
+          const have = byId.get(item.id)
+          if (!have) {
+            s.mine.push(item)
+            byId.set(item.id, item)
+          } else if (Date.parse(item.fetchedAt) > Date.parse(have.fetchedAt)) {
+            // 只更新互动数；文字、配对和类型不变
+            for (const key of METRICS) have[key] = item[key]
+            have.fetchedAt = item.fetchedAt
+          }
+          if (followers !== null) this.#recordFollowers(s, followers, item.fetchedAt)
+        }
+      }, { undoable: false })
+      await mine.commit()
+    })
+  }
+
+  /** 同一天只留一条：取该天 fetchedAt 最晚的值。 */
+  #recordFollowers(s, count, fetchedAt) {
+    const day = localDay(new Date(fetchedAt))
+    const row = s.followers.find(f => f.day === day)
+    if (!row) {
+      s.followers.push({ day, count, at: fetchedAt })
+      s.followers.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0))
+    } else if (!(Date.parse(row.at) >= Date.parse(fetchedAt))) {
+      row.count = count
+      row.at = fetchedAt
+    }
+  }
+
+  #ingestReplies(exchange) {
+    return this.#guarded('读入回复草稿', async () => {
+      const replies = await exchange.readNew('replies')
+      const now = this.now()
+      await this.store.mutate('读入回复草稿', s => {
+        for (const { file, why } of replies.skipped) addNotice(s, `交换文件夹里的 replies/${file} 无法读取：${why}`, now)
+        const key = r => `${r.toPostId}|${r.notifiedAt}`
+        const known = new Set(s.replyDrafts.map(key))
+        for (const item of replies.items) {
+          if (known.has(key(item))) continue
+          known.add(key(item))
+          s.replyDrafts.push({ id: newId('r'), ...item })
+        }
+      }, { undoable: false })
+      await replies.commit()
+    })
+  }
+
+  /** 认出已发的候选稿和回复、让过期的候选稿过期，并裁掉超过保留期的记录。 */
+  #matchAndTrim(now) {
+    return this.#guarded('识别已发内容', () => this.store.mutate('识别已发内容', s => {
+      matchSent(s, { now })
+      expire(s, now)
+      // 保留期一律按时间裁剪：不为仍指向某条 mine 的候选稿特意多留，那样的候选稿早已过期
+      const t = now.getTime()
+      s.mine = s.mine.filter(m => Date.parse(m.postedAt) >= t - KEEP_MINE_MS)
+      s.replyDrafts = s.replyDrafts.filter(r => Date.parse(r.notifiedAt) >= t - KEEP_REPLIES_MS)
+      s.followers = s.followers.filter(f => Date.parse(`${f.day}T00:00:00`) >= t - KEEP_FOLLOWERS_MS)
+    }, { undoable: false }))
+  }
+
+  /** 每周一（本地）成稿尝试之后建议一次长文选题；无论结果如何本周都算过，不整天重试。 */
+  async #longformIfDue(now) {
+    if (!this.longform || now.getDay() !== 1) return
+    const week = isoWeek(now)
+    const { runs } = await this.store.read()
+    if (runs.lastComposeDay !== localDay(now) || runs.lastLongformWeek === week) return
+    try {
+      await this.longform.suggest({ undoable: false })
+    } catch (err) {
+      await this.#notice(`每周长文选题出错：${err.message}`)
+    }
+    await this.store.mutate('长文选题周记', s => { s.runs.lastLongformWeek = week }, { undoable: false })
   }
 
   async #notice(text) {

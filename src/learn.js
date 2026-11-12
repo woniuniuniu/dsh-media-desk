@@ -3,9 +3,9 @@ import { extractJson, rulePrompts } from './ai.js'
 import { tr } from './i18n.js'
 import { safeText } from './inbox.js'
 import { editPairs } from './match.js'
-import { newId } from './ops.js'
+import { newId, oneLine } from './ops.js'
 import { normalizeStyle, stylePrompts } from './style.js'
-import { addNotice, localDay } from './worker.js'
+import { addNotice, localDay } from './runs.js'
 
 const MIN_PAIRS = 5
 const NEW_PAIRS = 5
@@ -33,8 +33,6 @@ export function lengthProposal(pairs) {
   return null
 }
 
-const clip = (value, max) => safeText(typeof value === 'string' ? value.trim() : '', max)
-
 /** 让模型从最近的改稿里找反复出现的习惯；样本不足、模型失败或输出无法解析都返回 []。 */
 export async function proposeFromEdits({ callText }, pairs) {
   if (pairs.length < MIN_PAIRS) return []
@@ -46,9 +44,9 @@ export async function proposeFromEdits({ callText }, pairs) {
     const out = []
     for (const item of raw) {
       if (!item || typeof item !== 'object' || Array.isArray(item)) continue
-      const rule = clip(item.rule, 60)
+      const rule = oneLine(item.rule, 60)
       if (!rule) continue
-      out.push({ name: clip(item.name, 12), rule, evidence: clip(item.evidence, 60), source: 'edits' })
+      out.push({ name: oneLine(item.name, 12), rule, evidence: oneLine(item.evidence, 60), source: 'edits' })
       if (out.length === 3) break
     }
     return out
@@ -64,12 +62,15 @@ export async function learnDaily({ store, callText, now = () => new Date() }) {
   const state = await store.read()
   if (state.runs.lastLearnDay === today) return { proposals: 0 }
   const pairs = editPairs(state)
+  const taken = (st) => new Set([...st.rules, ...st.proposals].map(r => String(r.rule).trim()).concat((st.dismissedRules ?? []).map(r => String(r).trim())))
+  // 配对数变少（有候选稿被删）时，以现有数量为基准，不让学习卡在一个永远够不到的数上
+  const base = Math.min(state.runs.learnedPairs, pairs.length)
   let fresh = []
   let ran = false
-  if (pairs.length - state.runs.learnedPairs >= NEW_PAIRS) {
+  if (pairs.length - base >= NEW_PAIRS) {
     ran = true
     const found = [lengthProposal(pairs), ...await proposeFromEdits({ callText }, pairs)].filter(Boolean)
-    const known = new Set([...state.rules, ...state.proposals].map(r => String(r.rule).trim()))
+    const known = taken(state)
     for (const p of found) {
       const key = p.rule.trim()
       if (known.has(key)) continue
@@ -78,20 +79,24 @@ export async function learnDaily({ store, callText, now = () => new Date() }) {
     }
   }
   return store.mutate('规则建议', s => {
+    // 模型回答期间另一次调用可能已经写过了；负责人也可能已经采纳或忽略了某条
+    if (s.runs.lastLearnDay === today) return { proposals: 0 }
     const stamp = at.toISOString()
     if (ran) {
-      const known = new Set([...s.rules, ...s.proposals].map(r => String(r.rule).trim()))
+      const known = taken(s)
       fresh = fresh.filter(p => !known.has(p.rule.trim()))
       s.proposals.push(...fresh.map(p => ({ id: newId('p'), ...p, createdAt: stamp })))
       if (s.proposals.length > MAX_PROPOSALS) s.proposals.splice(0, s.proposals.length - MAX_PROPOSALS)
       s.runs.learnedPairs = pairs.length
+    } else {
+      s.runs.learnedPairs = Math.min(s.runs.learnedPairs, pairs.length)
     }
     s.runs.lastLearnDay = today
     if (!s.runs.ownVoicePrompted && s.mine.filter(m => m.kind === 'post').length >= OWN_VOICE_POSTS) {
       addNotice(s, tr('你自己发出的内容已有 30 条，可以到风格页提炼你自己的核心风格了'), at)
       s.runs.ownVoicePrompted = true
     }
-    return { proposals: fresh.length }
+    return { proposals: ran ? fresh.length : 0 }
   }, { undoable: false })
 }
 
@@ -101,7 +106,12 @@ export async function extractOwnVoice({ callText, state }) {
   if (posts.length < OWN_VOICE_MIN) {
     throw Object.assign(new Error(tr('自己发出的内容还不够，再攒 {n} 条再来提炼', { n: OWN_VOICE_MIN - posts.length })), { status: 400 })
   }
-  const recent = [...posts].sort((a, b) => Date.parse(b.postedAt) - Date.parse(a.postedAt)).slice(0, OWN_VOICE_SAMPLES)
+  // 时间缺失或无法解析的排在最后；不用相减，避免 NaN 让比较函数前后矛盾
+  const time = m => {
+    const t = Date.parse(m.postedAt)
+    return Number.isFinite(t) ? t : -Infinity
+  }
+  const recent = [...posts].sort((a, b) => (time(a) === time(b) ? 0 : time(b) > time(a) ? 1 : -1)).slice(0, OWN_VOICE_SAMPLES)
   const { system, user } = stylePrompts(recent.map(m => safeText(m.text, 400)).join('\n\n'), '')
   const { text } = await callText({ system, user, maxTokens: 2000 })
   return normalizeStyle(extractJson(text))

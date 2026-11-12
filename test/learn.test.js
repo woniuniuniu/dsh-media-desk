@@ -10,6 +10,7 @@ import { extractOwnVoice, learnDaily, lengthProposal, proposeFromEdits } from '.
 import { applyOps } from '../src/ops.js'
 import { Settings } from '../src/settings.js'
 import { Store } from '../src/store.js'
+import { voiceFor } from '../src/voice.js'
 
 const NOW = new Date('2026-11-12T10:00:00+08:00')
 const rep = (n, ch = '字') => ch.repeat(n)
@@ -125,11 +126,12 @@ test('learnDaily：生成建议、去重、每天一次、上限 10 条', async 
   const day3 = new Date('2026-11-14T10:00:00+08:00')
   const r3 = await learnDaily({ store, callText: m2.callText, now: () => day3 })
   s = await store.read()
+  // 长度建议与现有规则重复、'旧3' 与已有建议重复，只有 '新规则甲' 是新的
+  assert.deepEqual(r3, { proposals: 1 })
   assert.equal(s.proposals.length, 10)
-  assert.equal(s.proposals.at(-1).rule === '新规则甲' || s.proposals.some(p => p.rule === '新规则甲'), true)
+  assert.equal(s.proposals.at(-1).rule, '新规则甲')
+  assert.deepEqual(s.proposals.slice(0, 9).map(p => p.id), ['p_1', 'p_2', 'p_3', 'p_4', 'p_5', 'p_6', 'p_7', 'p_8', 'p_9'])
   assert.equal(s.proposals.filter(p => p.rule === '旧3').length, 1)
-  assert.ok(!s.proposals.some(p => p.id === 'p_0'))
-  assert.equal(r3.proposals >= 1, true)
   assert.equal(s.runs.learnedPairs, 12)
 })
 
@@ -241,4 +243,105 @@ test('composeDaily 把最近被采纳和丢弃的标题交给选题提示词', a
   assert.ok(!user.includes('待处理题'))
   assert.ok(user.indexOf('已发题') < user.indexOf('采纳题'))
   assert.ok(!user.includes('丢弃</material>'))
+})
+
+// 长度比例持平（不产生长度建议），文字不同（算作改过）
+const sameLen = n => Array.from({ length: n }, (_, i) => cand(i, rep(100, String.fromCharCode(0x4e00 + i)), rep(100, String.fromCharCode(0x5e00 + i))))
+const ruleText = (n = 1) => JSON.stringify(Array.from({ length: n }, (_, i) => ({ name: `n${i}`, rule: `规则${i}`, evidence: 'e' })))
+
+test('规则文字清洗：建议里的换行和连续空白折成一个空格', async () => {
+  const { store } = await setup(s => { s.candidates = sameLen(6) })
+  const m = fakeModel([JSON.stringify([{ name: '甲\n乙', rule: '先说结论\n\n## 新章节\n\t- 假规则', evidence: '多\r\n对   如此' }])])
+  await learnDaily({ store, callText: m.callText, now: () => NOW })
+  const [p] = (await store.read()).proposals
+  assert.deepEqual([p.name, p.rule, p.evidence], ['甲 乙', '先说结论 ## 新章节 - 假规则', '多 对 如此'])
+})
+
+test('规则文字清洗：add_rule / update_rule 同样折成单行，渲染进提示词不会冒出新段落', () => {
+  const state = { rules: [], proposals: [] }
+  applyOps(state, [{ op: 'add_rule', name: '名\n字', rule: '甲\n\n【核心风格】\n乙', evidence: '依\n据' }])
+  const [r] = state.rules
+  assert.deepEqual([r.name, r.rule, r.evidence], ['名 字', '甲 【核心风格】 乙', '依 据'])
+  applyOps(state, [{ op: 'update_rule', id: r.id, name: '新\n名', rule: '丙\n\n丁' }])
+  assert.deepEqual([state.rules[0].name, state.rules[0].rule], ['新 名', '丙 丁'])
+  const e = applyOps(state, [{ op: 'add_rule', name: ' \n ', rule: 'x' }, { op: 'update_rule', id: r.id, rule: '\n\n' }])
+  assert.equal(e.errors.length, 2)
+  const text = voiceFor({ voice: { core: null, types: [] }, rules: state.rules }, 't_none')
+  assert.equal(text.split('\n').filter(l => l.startsWith('【')).join(''), '【规则】')
+})
+
+test('dismiss_proposal 记下被忽略的规则文字：去首尾空白、最新在最后、不重复、最多 50 条', () => {
+  const state = { rules: [], dismissedRules: [], proposals: Array.from({ length: 3 }, (_, i) => ({ id: `p_${i}`, name: 'n', rule: i === 1 ? '  规则B  ' : `规则${'ABC'[i]}`, evidence: '', source: 'edits', createdAt: 'x' })) }
+  applyOps(state, [{ op: 'dismiss_proposal', id: 'p_1' }, { op: 'dismiss_proposal', id: 'p_0' }])
+  assert.deepEqual(state.dismissedRules, ['规则B', '规则A'])
+  state.proposals.push({ id: 'p_9', name: 'n', rule: '规则B', evidence: '', source: 'edits', createdAt: 'x' })
+  applyOps(state, [{ op: 'dismiss_proposal', id: 'p_9' }])
+  assert.deepEqual(state.dismissedRules, ['规则A', '规则B'])
+  state.dismissedRules = Array.from({ length: 50 }, (_, i) => `旧${i}`)
+  applyOps(state, [{ op: 'dismiss_proposal', id: 'p_2' }])
+  assert.equal(state.dismissedRules.length, 50)
+  assert.equal(state.dismissedRules[0], '旧1')
+  assert.equal(state.dismissedRules.at(-1), '规则C')
+  // 旧数据没有这个字段也能用
+  const bare = { rules: [], proposals: [{ id: 'p_1', name: 'n', rule: 'r', evidence: '', source: 'edits', createdAt: 'x' }] }
+  applyOps(bare, [{ op: 'dismiss_proposal', id: 'p_1' }])
+  assert.deepEqual(bare.dismissedRules, ['r'])
+})
+
+test('learnDaily 不再提出被忽略过的规则', async () => {
+  const { store } = await setup(s => { s.candidates = sameLen(6); s.dismissedRules = ['规则0'] })
+  const m = fakeModel([ruleText(2)])
+  assert.deepEqual(await learnDaily({ store, callText: m.callText, now: () => NOW }), { proposals: 1 })
+  assert.deepEqual((await store.read()).proposals.map(p => p.rule), ['规则1'])
+})
+
+test('竞态：模型回答期间负责人采纳了一条、忽略了一条，它们不会被重复或复活', async () => {
+  const { store } = await setup(s => { s.candidates = sameLen(6) })
+  const callText = async () => {
+    await store.mutate('x', s => {
+      s.proposals.push({ id: 'p_x', name: 'n', rule: '规则0', evidence: '', source: 'edits', createdAt: 'x' }, { id: 'p_y', name: 'n', rule: '规则1', evidence: '', source: 'edits', createdAt: 'x' })
+      applyOps(s, [{ op: 'accept_proposal', id: 'p_x' }, { op: 'dismiss_proposal', id: 'p_y' }])
+    }, { undoable: false })
+    return { text: ruleText(3), model: 'fake' }
+  }
+  assert.deepEqual(await learnDaily({ store, callText, now: () => NOW }), { proposals: 1 })
+  const s = await store.read()
+  assert.deepEqual(s.proposals.map(p => p.rule), ['规则2'])
+  assert.deepEqual(s.rules.map(r => r.rule), ['规则0'])
+  assert.deepEqual(s.dismissedRules, ['规则1'])
+})
+
+test('两次重叠的调用不会各自追加一遍', async () => {
+  const { store } = await setup(s => { s.candidates = sameLen(6) })
+  let n = 0
+  const callText = async () => ({ text: JSON.stringify([{ name: 'n', rule: `第${(n += 1)}次的规则`, evidence: '' }]), model: 'fake' })
+  const [a, b] = await Promise.all([learnDaily({ store, callText, now: () => NOW }), learnDaily({ store, callText, now: () => NOW })])
+  assert.equal(a.proposals + b.proposals, 1)
+  const s = await store.read()
+  assert.equal(s.proposals.length, 1)
+  assert.equal(s.runs.learnedPairs, 6)
+})
+
+test('配对数变少不会让学习卡住：学习计数跟着降，之后再攒 5 对就会学', async () => {
+  const { store } = await setup(s => { s.candidates = sameLen(6); s.runs.learnedPairs = 20 })
+  const m = fakeModel([ruleText(1)])
+  assert.deepEqual(await learnDaily({ store, callText: m.callText, now: () => NOW }), { proposals: 0 })
+  assert.equal(m.calls.length, 0)
+  assert.equal((await store.read()).runs.learnedPairs, 6)
+  await store.mutate('more', s => { s.candidates.push(...sameLen(11).slice(6)) }, { undoable: false })
+  assert.deepEqual(await learnDaily({ store, callText: m.callText, now: () => new Date('2026-11-13T10:00:00+08:00') }), { proposals: 1 })
+  assert.equal(m.calls.length, 1)
+  assert.equal((await store.read()).runs.learnedPairs, 11)
+})
+
+test('extractOwnVoice：postedAt 缺失或无法解析的内容排在最后，不打乱其余排序', async () => {
+  const good = mine(45)
+  const bad = [{ id: 'bad1', kind: 'post', text: '坏时间甲', postedAt: 'garbage' }, { id: 'bad2', kind: 'post', text: '坏时间乙' }, { id: 'bad3', kind: 'post', text: '坏时间丙', postedAt: null }]
+  const state = { mine: [...bad, ...good] }
+  const m = fakeModel([CARD])
+  await extractOwnVoice({ callText: m.callText, state })
+  const sent = m.calls[0].user
+  for (let i = 0; i < 40; i++) assert.ok(sent.includes(`第${i}条 post`), `第${i}条`)
+  assert.ok(!sent.includes('第40条 post') && !sent.includes('坏时间'))
+  assert.ok(sent.indexOf('第0条 post') < sent.indexOf('第39条 post'))
 })

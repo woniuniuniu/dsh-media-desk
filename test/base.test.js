@@ -14,7 +14,7 @@ test('初始状态是空的第 2 版结构', () => {
   for (const key of ['watch', 'posts', 'notes', 'candidates', 'rules']) assert.deepEqual(s[key], [])
   assert.equal(s.voice.core, null)
   assert.deepEqual(s.voice.types.map(t => [t.id, t.name]), [['t_product', '产品'], ['t_model', '模型'], ['t_tech', '技术底层'], ['t_society', '社会']])
-  for (const key of ['mine', 'replyDrafts', 'followers', 'proposals', 'longforms']) assert.deepEqual(s[key], [])
+  for (const key of ['mine', 'replyDrafts', 'followers', 'proposals', 'dismissedRules', 'longforms']) assert.deepEqual(s[key], [])
   assert.deepEqual(s.runs, {
     lastComposeDay: null,
     lastComposeError: null,

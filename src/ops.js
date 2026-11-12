@@ -7,6 +7,7 @@ import { approve, discard, markSent, unapprove, setText, safeText } from './inbo
 const HANDLE = /^[A-Za-z0-9_]{1,15}$/
 const TIERS = ['engage', 'topic']
 const RULE_STATUS = ['active', 'off']
+const MAX_DISMISSED = 50
 const MAX_LONGFORMS = 30
 const MAX_LONGFORM_BODY = 20000
 
@@ -94,21 +95,21 @@ const HANDLERS = {
     return tr('已取消关注：{handle}', { handle: row.handle })
   },
   add_rule(state, op) {
-    const name = text(op.name, 60)
-    const rule = text(op.rule, 500)
+    const name = oneLine(op.name, 60)
+    const rule = oneLine(op.rule, 500)
     if (!name || !rule) throw new Error(tr('规则要有名字和内容'))
-    state.rules.push({ id: newId('r'), name, rule, status: 'active', evidence: text(op.evidence, 300) })
+    state.rules.push({ id: newId('r'), name, rule, status: 'active', evidence: oneLine(op.evidence, 300) })
     return tr('已添加规则：{name}', { name })
   },
   update_rule(state, op) {
     const row = need(state.rules, op.id, tr('规则'))
     if (op.name !== undefined) {
-      const name = text(op.name, 60)
+      const name = oneLine(op.name, 60)
       if (!name) throw new Error(tr('规则要有名字和内容'))
       row.name = name
     }
     if (op.rule !== undefined) {
-      const rule = text(op.rule, 500)
+      const rule = oneLine(op.rule, 500)
       if (!rule) throw new Error(tr('规则要有名字和内容'))
       row.rule = rule
     }
@@ -168,8 +169,13 @@ const HANDLERS = {
     return tr('已采纳规则：{name}', { name: row.name })
   },
   dismiss_proposal(state, op) {
-    need(state.proposals, op.id, tr('规则建议'))
+    const row = need(state.proposals, op.id, tr('规则建议'))
     state.proposals = state.proposals.filter(entry => entry.id !== op.id)
+    // 记下被忽略的规则文字，之后学习不再提同一条；最新的在最后，最多 50 条
+    const key = String(row.rule).trim()
+    const kept = (state.dismissedRules ?? []).filter(rule => rule !== key)
+    kept.push(key)
+    state.dismissedRules = kept.slice(-MAX_DISMISSED)
     return tr('已忽略这条建议')
   },
   add_longform(state, op, ctx) {

@@ -65,6 +65,14 @@ export function parseDecision(raw) {
   }
 }
 
+/** 自己发出的一条内容的链接：账号名和帖子 id 都合法才拼，否则 null。读者在显示时用它，不改存下来的数据。 */
+export function mineUrl(mine, ownHandle) {
+  const id = mine?.id
+  if (typeof ownHandle !== 'string' || !HANDLE.test(ownHandle)) return null
+  if (typeof id !== 'string' || !POST_ID.test(id)) return null
+  return `https://x.com/${ownHandle}/status/${id}`
+}
+
 const MINE_KINDS = new Set(['post', 'reply', 'quote'])
 
 /** 负责人自己账号发出的一条内容。返回 {mine, followers}：粉丝数由调用方记入序列，不属于 mine 本身。 */
@@ -90,7 +98,7 @@ export function parseMine(raw, { ownHandle } = {}) {
       id: raw.postId,
       kind,
       text: safeText(raw.text, 4000),
-      url: typeof ownHandle === 'string' && HANDLE.test(ownHandle) ? `https://x.com/${ownHandle}/status/${raw.postId}` : null,
+      url: mineUrl({ id: raw.postId }, ownHandle),
       postedAt,
       fetchedAt,
       likes: count(m.likes),

@@ -9,6 +9,7 @@ import { readCompletion, startMock, stopMock } from '../scripts/mock-llm.mjs'
 import { Composer } from '../src/compose.js'
 import { Exchange } from '../src/exchange.js'
 import { Lock } from '../src/lock.js'
+import { similarity } from '../src/match.js'
 import { Settings } from '../src/settings.js'
 import { Store } from '../src/store.js'
 import { Worker } from '../src/worker.js'
@@ -80,6 +81,75 @@ test('端到端：示例帖子 → 成稿 → 通过和改稿 → 坏文件只�
     assert.ok(state.runs.notices.some(n => n.text.includes('posts/oops.json')))
     assert.equal(state.candidates.find(c => c.id === first.id).status, 'approved')
     assert.equal(state.candidates.find(c => c.id === second.id).revision, 1)
+  } finally {
+    await stopMock(server)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('端到端（计划 2）：自己发出的内容 → 候选稿被识别为已发，回复配上起草，粉丝数记一条，不再为它写新的草稿文件', async () => {
+  const server = await startMock(0, { delay: 0 })
+  const root = await mkdtemp(join(tmpdir(), 'e2e2-'))
+  try {
+    const skew = { ms: 60_000 }
+    const clock = { t: NOW }
+    const store = new Store(root)
+    const settings = new Settings(root)
+    const ex = new Exchange(join(root, 'exchange'), { now: () => Date.now() + skew.ms })
+    await ex.ensure()
+    const composer = new Composer({ store, settings, callText: httpCallText(server.address().port), now: () => clock.t })
+    const lock = new Lock(join(root, 'worker.lock'), { now: () => clock.t.getTime() })
+    const worker = new Worker({ store, settings, composer, lock, exchangeFor: () => ex, now: () => clock.t })
+    const next = async () => {
+      skew.ms += 60_000
+      clock.t = new Date(clock.t.getTime() + 60_000)
+      await worker.tick()
+    }
+
+    for (const [i, name] of (await readdir(SAMPLES)).filter(f => f.endsWith('.json')).sort().entries()) {
+      const raw = JSON.parse(await readFile(join(SAMPLES, name), 'utf8'))
+      raw.postedAt = new Date(NOW.getTime() - (i + 1) * 30 * 60_000).toISOString()
+      raw.fetchedAt = new Date(NOW.getTime() - 10 * 60_000).toISOString()
+      await writeFile(join(ex.root, 'posts', name), JSON.stringify(raw))
+    }
+    await worker.tick()
+    let state = await store.read()
+    const target = state.candidates.find(c => c.status === 'pending')
+    assert.ok(target, '应当有待处理的候选稿')
+    const filesBefore = (await readdir(join(ex.root, 'drafts'))).sort()
+
+    const edited = `${target.text}。`
+    assert.ok(similarity(target.text, edited) >= 0.8)
+    const at = minutes => new Date(clock.t.getTime() + minutes * 60_000).toISOString()
+    await writeFile(join(ex.root, 'mine', 'p.json'), JSON.stringify({
+      schema: 1, postId: '1856000000000000001', kind: 'post', text: edited, postedAt: at(10), fetchedAt: at(11),
+      metrics: { likes: 3, replies: 0, reposts: 0, quotes: 0, views: 120 }, followers: 1234,
+    }))
+    await writeFile(join(ex.root, 'replies', 'r.json'), JSON.stringify({
+      schema: 1, toHandle: 'karpathy', toPostId: '1855000000000000001', drafts: ['谢谢分享，这点我很认同', '有意思'], notifiedAt: at(1),
+    }))
+    await writeFile(join(ex.root, 'mine', 'q.json'), JSON.stringify({
+      schema: 1, postId: '1856000000000000002', kind: 'reply', text: '谢谢分享，这点我非常认同', postedAt: at(15), fetchedAt: at(16),
+      metrics: { likes: 1, replies: 0, reposts: 0, quotes: 0, views: 20 }, inReplyTo: { handle: 'karpathy', postId: '1855000000000000001' }, followers: 1234,
+    }))
+    await next()
+    state = await store.read()
+    const sent = state.candidates.find(c => c.id === target.id)
+    assert.equal(sent.status, 'sent')
+    assert.equal(sent.sentText, edited)
+    assert.equal(sent.sentPostId, '1856000000000000001')
+    assert.equal(state.replyDrafts.length, 1)
+    assert.equal(state.replyDrafts[0].sentText, '谢谢分享，这点我非常认同')
+    assert.equal(state.mine.length, 2)
+    assert.equal(state.followers.length, 1)
+    assert.equal(state.followers[0].count, 1234)
+    assert.ok(state.candidates.filter(c => c.id !== target.id).every(c => c.status !== 'sent'))
+
+    await next()
+    assert.deepEqual((await readdir(join(ex.root, 'drafts'))).sort(), filesBefore)
+    state = await store.read()
+    assert.equal(state.candidates.find(c => c.id === target.id).status, 'sent')
+    assert.equal(state.mine.length, 2)
   } finally {
     await stopMock(server)
     await rm(root, { recursive: true, force: true })

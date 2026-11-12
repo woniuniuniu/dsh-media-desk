@@ -238,3 +238,62 @@ test('长文路由：没有素材时建议返回原因且不调用模型；未�
     assert.equal(h.store.undo.length, 0)
   } finally { await h.close() }
 })
+
+const CARD = JSON.stringify({ name: '我的', summary: '短', tone: 't', sentences: 's', opening: 'o', structure: 'x', words: ['a'], avoid: [], samples: ['q'] })
+const ownPosts = n => Array.from({ length: n }, (_, i) => ({
+  id: `185600000000000${String(i).padStart(4, '0')}`, kind: 'post', text: `第${i}条`, url: null, postedAt: new Date(Date.now() - (i + 1) * 3600e3).toISOString(),
+  fetchedAt: new Date().toISOString(), likes: i, replies: 0, reposts: 0, quotes: 0, views: 10, inReplyTo: null, candidateId: null, replyId: null,
+}))
+
+test('POST voice/extract-own：不足 10 条返回 400 和还差几条；成功返回风格卡，状态不变', async () => {
+  let calls = 0
+  const h = await serve({ callText: async () => { calls += 1; return { text: CARD } } })
+  try {
+    await h.store.mutate('seed', s => { s.mine = ownPosts(7) }, { undoable: false })
+    const few = await h.call('POST', '/x-desk/voice/extract-own', { body: {} })
+    assert.equal(few.status, 400)
+    assert.equal(few.data.error, '自己发出的内容还不够，再攒 3 条再来提炼')
+    assert.equal(calls, 0)
+    await h.store.mutate('seed', s => { s.mine = ownPosts(12) }, { undoable: false })
+    const before = JSON.stringify(await h.store.read())
+    const ok = await h.call('POST', '/x-desk/voice/extract-own', { body: {} })
+    assert.equal(ok.status, 200)
+    assert.equal(ok.data.style.name, '我的')
+    assert.deepEqual(Object.keys(ok.data), ['style'])
+    assert.equal(JSON.stringify(await h.store.read()), before)
+    assert.equal(h.store.undo.length, 0)
+  } finally { await h.close() }
+})
+
+test('POST voice/extract-own：模型失败或返回乱码按 502，状态不变；跨站请求 403', async () => {
+  let reply = () => { throw new Error('模型挂了') }
+  const h = await serve({ callText: async () => reply() })
+  try {
+    await h.store.mutate('seed', s => { s.mine = ownPosts(12) }, { undoable: false })
+    const failed = await h.call('POST', '/x-desk/voice/extract-own', { body: {} })
+    assert.equal(failed.status, 502)
+    assert.equal(failed.data.error, '模型挂了')
+    reply = () => ({ text: '不是 JSON' })
+    assert.equal((await h.call('POST', '/x-desk/voice/extract-own', { body: {} })).status, 502)
+    const cross = await h.call('POST', '/x-desk/voice/extract-own', { body: {}, headers: { 'sec-fetch-site': 'cross-site' } })
+    assert.equal(cross.status, 403)
+  } finally { await h.close() }
+})
+
+test('GET state 带上 ownHandle，GET insights 在显示时拼链接；存下来的数据一个字都不改', async () => {
+  const h = await serve()
+  try {
+    await h.store.mutate('seed', s => { s.mine = ownPosts(2) }, { undoable: false })
+    const stored = JSON.stringify(await h.store.read())
+    assert.equal((await h.call('GET', '/x-desk/state')).data.ownHandle, '')
+    assert.equal((await h.call('GET', '/x-desk/insights')).data.top[0].url, null)
+    await h.settings.update({ ownHandle: 'me_x' })
+    const state = await h.call('GET', '/x-desk/state')
+    assert.equal(state.data.ownHandle, 'me_x')
+    assert.ok(state.data.state.mine.every(m => m.url === null))
+    const top = (await h.call('GET', '/x-desk/insights')).data.top
+    assert.ok(top.length > 0)
+    for (const t of top) assert.equal(t.url, `https://x.com/me_x/status/${t.id}`)
+    assert.equal(JSON.stringify(await h.store.read()), stored)
+  } finally { await h.close() }
+})

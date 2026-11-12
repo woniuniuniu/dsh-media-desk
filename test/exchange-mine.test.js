@@ -3,7 +3,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { Exchange, parseMine, parseReplyDraft } from '../src/exchange.js'
+import { Exchange, mineUrl, parseMine, parseReplyDraft } from '../src/exchange.js'
 import { emptyState, migrateState } from '../src/seed.js'
 import { Settings } from '../src/settings.js'
 
@@ -135,13 +135,13 @@ test('新样例文件都能解析，followers 递增，回复指向 replies 样�
 
 test('migrateState：旧的第 2 版数据补齐新字段，原有数据不变', () => {
   const old = emptyState()
-  for (const k of ['mine', 'replyDrafts', 'followers', 'proposals', 'longforms']) delete old[k]
+  for (const k of ['mine', 'replyDrafts', 'followers', 'proposals', 'dismissedRules', 'longforms']) delete old[k]
   for (const k of ['lastLearnDay', 'learnedPairs', 'ownVoicePrompted', 'lastLongformWeek']) delete old.runs[k]
   old.runs.lastComposeDay = '2026-11-10'
   old.candidates = [{ id: 'c_abc1', text: 'x', status: 'sent', sentText: 'kept' }, { id: 'c_abc2', text: 'y', status: 'pending' }]
   old.posts = [{ id: '1' }]
   const m = migrateState(structuredClone(old))
-  for (const k of ['mine', 'replyDrafts', 'followers', 'proposals', 'longforms']) assert.deepEqual(m[k], [])
+  for (const k of ['mine', 'replyDrafts', 'followers', 'proposals', 'dismissedRules', 'longforms']) assert.deepEqual(m[k], [])
   assert.deepEqual([m.runs.lastLearnDay, m.runs.learnedPairs, m.runs.ownVoicePrompted, m.runs.lastLongformWeek], [null, 0, false, null])
   assert.equal(m.runs.lastComposeDay, '2026-11-10')
   assert.deepEqual(m.candidates[0], { id: 'c_abc1', text: 'x', status: 'sent', sentText: 'kept', sentPostId: null, sentAt: null })
@@ -165,4 +165,14 @@ test('设置 ownHandle：去掉开头 @，可清空，非法 400', async () => {
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test('mineUrl：账号名和帖子 id 都合法才拼出链接，否则 null', () => {
+  const id = '1856000000000000001'
+  assert.equal(mineUrl({ id }, 'me_x'), `https://x.com/me_x/status/${id}`)
+  assert.equal(parseMine(MINE, { ownHandle: 'me_x' }).mine.url, mineUrl({ id }, 'me_x'))
+  for (const bad of ['', 'bad handle', 'x'.repeat(16), null, undefined, 5, '@me']) assert.equal(mineUrl({ id }, bad), null, String(bad))
+  for (const badId of ['abc', '12', '', null, undefined, 1856000000000000001, '1856/../x']) assert.equal(mineUrl({ id: badId }, 'me_x'), null, String(badId))
+  assert.equal(mineUrl(null, 'me_x'), null)
+  assert.equal(mineUrl(undefined, 'me_x'), null)
 })

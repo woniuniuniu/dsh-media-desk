@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs'
 import { stat, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import { Composer } from './compose.js'
+import { extractOwnVoice, learnDaily } from './learn.js'
 import { Longform } from './longform.js'
 import { computeInsights } from './insights.js'
 import { Exchange } from './exchange.js'
@@ -116,10 +117,12 @@ async function route({ ctx, store, desk, callText }, req, res) {
   if (method === 'GET') {
     if (path === 'state') {
       const state = await store.read()
-      const exchangeDir = resolveExchangeDir(await desk.settings.read(), store.root)
-      return json(res, 200, { state, exchangeDir, model: engineLabel(ctx), modelOk: modelStatus.ok, modelError: modelStatus.error, canUndo: store.undo.length > 0, composing: desk.composer.busy })
+      const settings = await desk.settings.read()
+      const exchangeDir = resolveExchangeDir(settings, store.root)
+      // ownHandle 给界面在显示时拼自己帖子的链接，存下来的数据不改
+      return json(res, 200, { state, exchangeDir, ownHandle: settings.ownHandle, model: engineLabel(ctx), modelOk: modelStatus.ok, modelError: modelStatus.error, canUndo: store.undo.length > 0, composing: desk.composer.busy })
     }
-    if (path === 'insights') return json(res, 200, computeInsights(await store.read(), new Date()))
+    if (path === 'insights') return json(res, 200, computeInsights(await store.read(), new Date(), { ownHandle: (await desk.settings.read()).ownHandle }))
     if (path === 'settings') return json(res, 200, publicSettings(await desk.settings.read(), Boolean(imageTool(ctx))))
     if (path === 'models') {
       // 列出 Harness 里已接的提供方和它们公布的模型，给工作台的助手模型选择器用
@@ -169,6 +172,11 @@ async function route({ ctx, store, desk, callText }, req, res) {
       } catch (err) {
         return json(res, 502, { error: tr('提炼风格失败：{reason}', { reason: err.message }) })
       }
+    }
+    case 'voice/extract-own': {
+      // 只返回风格卡，不保存；不足 10 条时 extractOwnVoice 自己抛 400
+      const style = await upstream(extractOwnVoice({ callText, state: await store.read() }))
+      return json(res, 200, { style })
     }
     case 'undo': {
       const label = await store.undoLast()
@@ -302,6 +310,8 @@ export default {
       store, settings, composer,
       lock: new Lock(join(store.root, 'worker.lock'), { ttlMs: 600_000 }),
       exchangeFor: current => new Exchange(resolveExchangeDir(current, store.root)),
+      learn: { learnDaily: () => learnDaily({ store, callText, now: () => new Date() }) },
+      longform: desk.longform,
     })
     desk.worker = worker
     ctx.effect(() => worker.start(), 'dsh-x-desk: worker')

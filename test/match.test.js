@@ -305,3 +305,33 @@ test('editPairs：sentText 为空字符串的回复和候选稿都跳过', () =>
   })
   assert.deepEqual(editPairs(s), [])
 })
+
+// 用共同的"核心"加上各自的尾巴，精确控制相似度
+const seq = (start, n) => Array.from({ length: n }, (_, i) => String.fromCodePoint(0x4e00 + start + i)).join('')
+const CORE = seq(0, 29)
+const withTail = (start, n) => CORE + seq(start, n)
+
+test('两条实发内容抢同一条候选稿：第二名按最初的候选集合算，只有最高分的那条才可能被配', () => {
+  const p1Text = withTail(100, 9) // 与 K1 完全相同
+  const p2Text = withTail(300, 3)
+  const run = k2Tail => {
+    const k1 = cand('c_1', p1Text, '2026-11-12T09:00:00+08:00')
+    const k2 = cand('c_2', withTail(200, k2Tail), '2026-11-12T09:05:00+08:00')
+    const s = st({ candidates: [k1, k2], mine: [mine('m1', p1Text, '2026-11-12T10:00:00+08:00'), mine('m2', p2Text, '2026-11-12T10:05:00+08:00')] })
+    return { s, r: matchSent(s, { now: NOW }), sims: [similarity(p2Text, k1.text), similarity(p2Text, k2.text)] }
+  }
+  // A：m2 的第一名 c_1 被 m1 抢走，它另一条候选 c_2 与第一名相差不到 GAP。
+  // 如果第二名按"剩下的候选稿"重新算，c_2 会变成第一名而被误配。
+  const a = run(13)
+  assert.ok(a.sims[0] >= MIN && a.sims[1] >= MIN && a.sims[0] - a.sims[1] < GAP, a.sims.join())
+  assert.equal(a.r.changed, 1)
+  assert.equal(a.s.candidates[0].sentPostId, 'm1')
+  assert.equal(a.s.candidates[1].status, 'pending')
+  assert.equal(a.s.mine[1].candidateId, null)
+  // B：c_2 比第一名低 GAP 以上、也不低于 MIN。只有"第一名"才能靠 MIN 配上，c_2 不行。
+  const b = run(18)
+  assert.ok(b.sims[1] >= MIN && b.sims[0] - b.sims[1] >= GAP, b.sims.join())
+  assert.equal(b.r.changed, 1)
+  assert.equal(b.s.candidates[1].status, 'pending')
+  assert.equal(b.s.mine[1].candidateId, null)
+})

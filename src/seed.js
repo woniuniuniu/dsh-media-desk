@@ -13,8 +13,9 @@ export function emptyState() {
     rules: [],
     mine: [],
     replyDrafts: [],
-    followers: [],
+    followers: [], // {day:'YYYY-MM-DD', count, at}：每天一条，at 是该值的读取时间（用来判断同一天哪个更晚）
     proposals: [],
+    dismissedRules: [],
     longforms: [],
     runs: {
       lastComposeDay: null,
