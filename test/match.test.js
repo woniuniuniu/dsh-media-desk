@@ -1,7 +1,7 @@
 process.env.TZ = 'Asia/Shanghai'
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizeText, similarity, matchSent, editPairs } from '../src/match.js'
+import { normalizeText, similarity, matchSent, editPairs, STRONG, MIN, GAP, SHORT } from '../src/match.js'
 
 const A = '今天聊聊模型评测：榜单分数越来越高，但真实任务里的表现差距并没有那么大，关键是看你自己的场景。'
 const A_SMALL = '今天聊聊模型评测：榜单分数越来越高，但真实任务里的表现差距并没有那么大，关键看自己的场景。'
@@ -163,8 +163,7 @@ test('同一状态连续调用两次，第二次 changed 为 0 且状态不变',
   assert.deepEqual(s, snap)
 })
 
-test('同一条实发内容被重复读入（互动数不同）时只配一次', () => {
-  // mine 以 id 去重后只有一条；即便调用方传入同 id 的新旧值，配对结果也不变
+test('配对后互动数变了再调用 matchSent：配对结果不变，changed 为 0', () => {
   const s = st({
     candidates: [cand('c_1', A, '2026-11-12T09:00:00+08:00')],
     mine: [mine('m1', A_SMALL, '2026-11-12T10:00:00+08:00', { likes: 3 })],
@@ -222,4 +221,87 @@ test('editPairs：改过的候选稿与回复；未改动的不收', () => {
     { aiText: '这个观点我同意，评测确实要看场景', sentText: '这个观点我同意，评测确实要看自己的场景', kind: 'reply' },
     { aiText: A, sentText: A_SMALL, kind: 'post' },
   ])
+})
+
+// ---- 阈值与误配防护 ----
+const tailOf = (k) => Array.from(A).slice(0, k).join('') + '，所以我现在选模型先跑自己的十道题。'
+const one = (c, m) => st({ candidates: c, mine: [m] })
+
+test('常量', () => {
+  assert.deepEqual([STRONG, MIN, GAP, SHORT], [0.8, 0.55, 0.1, 12])
+})
+
+test('阈值 0.55：略低于不配，略高于配', () => {
+  const below = tailOf(30), above = tailOf(34)
+  const sb = similarity(A, below), sa = similarity(A, above)
+  assert.ok(sb >= 0.50 && sb <= 0.54, `below=${sb}`)
+  assert.ok(sa >= 0.56 && sa <= 0.60, `above=${sa}`)
+  const s1 = one([cand('c_1', below, '2026-11-12T09:00:00+08:00')], mine('m1', A, '2026-11-12T10:00:00+08:00'))
+  assert.equal(matchSent(s1, { now: NOW }).changed, 0)
+  assert.equal(s1.candidates[0].status, 'pending')
+  const s2 = one([cand('c_1', above, '2026-11-12T09:00:00+08:00')], mine('m1', A, '2026-11-12T10:00:00+08:00'))
+  assert.equal(matchSent(s2, { now: NOW }).changed, 1)
+})
+
+test('同模板的两条候选稿分数接近：一条都不配', () => {
+  const x = tailOf(40), y = tailOf(36)
+  const sx = similarity(A, x), sy = similarity(A, y)
+  assert.ok(sx >= 0.55 && sx <= 0.75 && sx < STRONG, `sx=${sx}`)
+  assert.ok(sx - sy > 0 && sx - sy < GAP, `sx=${sx} sy=${sy}`)
+  for (const order of [[x, y], [y, x]]) {
+    const cs = order.map((t, i) => cand(`c_${i}`, t, '2026-11-12T09:00:00+08:00'))
+    const s = one(cs, mine('m1', A, '2026-11-12T10:00:00+08:00'))
+    assert.equal(matchSent(s, { now: NOW }).changed, 0)
+    assert.ok(s.candidates.every(c => c.status === 'pending' && c.sentText === null))
+  }
+})
+
+test('最高分比第二名高出 0.1 以上：配上最高的，与数组顺序无关', () => {
+  const x = tailOf(42), y = tailOf(34)
+  const sx = similarity(A, x), sy = similarity(A, y)
+  assert.ok(sx >= 0.55 && sx < STRONG && sx - sy >= GAP, `sx=${sx} sy=${sy}`)
+  for (const order of [[['c_x', x], ['c_y', y]], [['c_y', y], ['c_x', x]]]) {
+    const s = one(order.map(([id, t]) => cand(id, t, '2026-11-12T09:00:00+08:00')), mine('m1', A, '2026-11-12T10:00:00+08:00'))
+    assert.equal(matchSent(s, { now: NOW }).changed, 1)
+    const byId = Object.fromEntries(s.candidates.map(c => [c.id, c]))
+    assert.equal(byId.c_x.status, 'sent')
+    assert.equal(byId.c_y.status, 'pending')
+    assert.equal(byId.c_y.sentPostId, null)
+  }
+})
+
+test('短文字（不足 12 字）：0.6 左右不配，0.8 以上才配', () => {
+  const short = '今天模型发布了新版本'
+  const mid = '今天模型发布了新功能', hi = '今天模型发布了新版'
+  assert.ok(Array.from(normalizeText(short)).length < SHORT)
+  const sm = similarity(short, mid), sh = similarity(short, hi)
+  assert.ok(sm >= 0.55 && sm < 0.7, `sm=${sm}`)
+  assert.ok(sh >= STRONG, `sh=${sh}`)
+  const s1 = one([cand('c_1', mid, '2026-11-12T09:00:00+08:00')], mine('m1', short, '2026-11-12T10:00:00+08:00'))
+  assert.equal(matchSent(s1, { now: NOW }).changed, 0)
+  const s2 = one([cand('c_1', hi, '2026-11-12T09:00:00+08:00')], mine('m1', short, '2026-11-12T10:00:00+08:00'))
+  assert.equal(matchSent(s2, { now: NOW }).changed, 1)
+})
+
+test('Review Focus 3：同一稿的两个近似版本，最像的靠 STRONG 配上，另一条原样；与顺序无关', () => {
+  const hi = '今天聊聊模型评测：榜单分数越来越高，但真实任务里的表现差距并没有那么大，关键是看自己的场景。'
+  const lo = '今天聊聊模型评测：榜单分数越来越高，但真实任务里的表现差距并没有那么大，关键看自己的场景。'
+  const sh = similarity(A, hi), sl = similarity(A, lo)
+  assert.ok(sh > sl && sl >= 0.8 && sh >= 0.9, `hi=${sh} lo=${sl}`)
+  for (const order of [[['c_hi', hi], ['c_lo', lo]], [['c_lo', lo], ['c_hi', hi]]]) {
+    const s = one(order.map(([id, t]) => cand(id, t, '2026-11-12T09:00:00+08:00')), mine('m1', A, '2026-11-12T10:00:00+08:00'))
+    assert.equal(matchSent(s, { now: NOW }).changed, 1)
+    const byId = Object.fromEntries(s.candidates.map(c => [c.id, c]))
+    assert.equal(byId.c_hi.status, 'sent')
+    assert.equal(byId.c_lo.status, 'pending')
+    assert.equal(byId.c_lo.sentText, null)
+  }
+})
+
+test('editPairs：sentText 为空字符串的回复和候选稿都跳过', () => {
+  const s = st({
+    candidates: [cand('c_1', A, '2026-11-12T09:00:00+08:00', { status: 'sent', sentText: '', sentPostId: 'm1', sentAt: iso('2026-11-12T10:00:00+08:00') })],
+    replyDrafts: [{ id: 'r_1', toHandle: 'k', toPostId: '10', drafts: ['好的'], notifiedAt: iso('2026-11-12T08:00:00+08:00'), sentText: '', sentAt: iso('2026-11-12T09:00:00+08:00') }],
+  })
+  assert.deepEqual(editPairs(s), [])
 })

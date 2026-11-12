@@ -1,7 +1,10 @@
 // 配对：认出哪些候选稿已被负责人发出，记录实发文字；认出用过的回复草稿。
 // 纯函数：不读写、不取时钟、不调模型。
 
-const THRESHOLD = 0.55
+export const STRONG = 0.8
+export const MIN = 0.55
+export const GAP = 0.1
+export const SHORT = 12
 const WINDOW_MS = 96 * 3600 * 1000
 const SKEW_MS = 5 * 60 * 1000
 const EDIT_SAME = 0.98
@@ -53,18 +56,28 @@ export function matchSent(state, { now } = {}) {
   // 帖子 / 引用：与候选稿贪心配对
   const cands = (state.candidates || [])
     .filter(c => ['pending', 'approved', 'sent'].includes(c.status) && !c.sentPostId)
-    .map(c => ({ c, t: ms(c.createdAt), grams: gramSet(c.text) }))
+    .map(c => ({ c, t: ms(c.createdAt), grams: gramSet(c.text), len: Array.from(normalizeText(c.text)).length }))
     .filter(x => x.t !== null)
   const posts = mine
     .filter(m => (m.kind === 'post' || m.kind === 'quote') && !m.candidateId)
-    .map(m => ({ m, t: ms(m.postedAt), grams: gramSet(m.text) }))
+    .map(m => ({ m, t: ms(m.postedAt), grams: gramSet(m.text), len: Array.from(normalizeText(m.text)).length }))
     .filter(x => x.t !== null)
   const pairs = []
   for (const p of posts) {
+    const eligible = []
     for (const k of cands) {
       if (k.t > p.t + SKEW_MS || k.t < p.t - WINDOW_MS) continue
-      const sim = jaccard(p.grams, k.grams)
-      if (sim >= THRESHOLD) pairs.push({ p, k, sim })
+      eligible.push({ p, k, sim: jaccard(p.grams, k.grams) })
+    }
+    // 该条实发内容的第一名与第二名（在配对分配之前算好，结果与遍历顺序无关）
+    const sims = eligible.map(e => e.sim).sort((a, b) => b - a)
+    const top = sims[0] ?? 0
+    const second = sims[1] ?? 0
+    for (const e of eligible) {
+      const short = p.len < SHORT || e.k.len < SHORT
+      const ok = e.sim >= STRONG
+        || (!short && e.sim >= MIN && e.sim === top && top - second >= GAP)
+      if (ok) pairs.push(e)
     }
   }
   pairs.sort((x, y) => y.sim - x.sim || x.p.t - y.p.t
@@ -118,7 +131,7 @@ export function editPairs(state) {
     }
   }
   for (const r of state.replyDrafts || []) {
-    if (r.sentText == null) continue
+    if (!r.sentText) continue
     const sentGrams = gramSet(r.sentText)
     let bestText = null
     let bestSim = -1
