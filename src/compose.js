@@ -2,6 +2,7 @@
 // 模型输出是不可信数据：只取约定字段、限制长度，失败时不留半成品。
 import { draftPrompts, extractJson, revisePrompts, topicPrompts } from './ai.js'
 import { tr } from './i18n.js'
+import { safeText } from './inbox.js'
 import { newId } from './ops.js'
 import { burst, eligible, qualityScore } from './score.js'
 import { voiceFor } from './voice.js'
@@ -164,7 +165,7 @@ export class Composer {
           materials: topic.postIds.map(id => byId.get(id).text),
         })
         const { text } = await callText({ system, user, maxTokens: 1200 })
-        drafts.push({ topic, score, text: cleanDraft(text).slice(0, MAX_TEXT), quoteUrl: topic.form === 'quote' ? top.url ?? null : null })
+        drafts.push({ topic, score, text: safeText(cleanDraft(text), MAX_TEXT), quoteUrl: topic.form === 'quote' ? top.url ?? null : null })
       } catch (err) {
         if (err.taken) return { created: 0, error: TAKEN }
         lastError = err.message
@@ -221,7 +222,7 @@ export class Composer {
     }
     const { system, user } = draftPrompts({ title: topic.title, form: 'post', voice: voiceFor(state, topic.typeId), materials: [note.text] })
     const { text: raw } = await this.callText({ system, user, maxTokens: 1200 })
-    const text = cleanDraft(raw).slice(0, MAX_TEXT)
+    const text = safeText(cleanDraft(raw), MAX_TEXT)
     return this.store.mutate('笔记成稿', s => {
       const row = s.notes.find(n => n.id === noteId)
       if (!row) throw fail(tr('找不到这条笔记'), 404)
@@ -251,6 +252,8 @@ export class Composer {
     if (!c) throw fail(tr('找不到候选稿'), 404)
     if (!LIVE.includes(c.status)) throw fail(tr('这条候选稿已经处理过，不能再改'))
     if (kind === 'typeId' && !state.voice.types.some(t => t.id === value)) throw fail(tr('没有这个类型'))
+    // 模型调用期间稿子可能被手改或通过；写回前对照，变了就放弃，不覆盖
+    const { revision, status } = c
 
     const nextType = kind === 'typeId' ? value : c.typeId
     const voice = voiceFor(state, nextType)
@@ -265,10 +268,11 @@ export class Composer {
       prompt = draftPrompts({ title: c.title, form: c.form, voice, materials: materials.length ? materials : [c.aiText], view: kind === 'view' ? input : c.view })
     }
     const { text: raw } = await this.callText({ ...prompt, maxTokens: 1200 })
-    const text = cleanDraft(raw).slice(0, MAX_TEXT)
+    const text = safeText(cleanDraft(raw), MAX_TEXT)
     return this.store.mutate('改稿', s => {
       const row = s.candidates.find(r => r.id === candidateId)
-      if (!row || !LIVE.includes(row.status)) throw fail(tr('这条候选稿已经处理过，不能再改'))
+      if (!row) throw fail(tr('找不到候选稿'), 404)
+      if (row.revision !== revision || row.status !== status) throw fail(tr('稿子刚被改动过，请再试一次'), 409)
       row.text = text
       if (kind === 'view') row.view = input
       if (kind === 'typeId') row.typeId = value

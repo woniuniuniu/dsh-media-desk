@@ -1,8 +1,8 @@
 process.env.TZ = 'Asia/Shanghai'
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { intentUrl as hostIntentUrl, tweetLength as hostTweetLength } from '../src/inbox.js'
-import { composeStatus, intentUrl, tweetLength } from '../client/util.js'
+import { intentUrl as hostIntentUrl, safeText as hostSafeText, tweetLength as hostTweetLength } from '../src/inbox.js'
+import { composeStatus, intentUrl, safeText, tweetLength } from '../client/util.js'
 
 const TEXTS = [
   '', 'hello world', '今天写了一个小工具', 'emoji 😀 mixed 中文', 'see https://example.com/a?b=1&c=2 now',
@@ -11,6 +11,12 @@ const TEXTS = [
 
 test('tweetLength 与 src/inbox.js 一致', () => {
   for (const text of [...TEXTS, 'x\ud800y']) assert.equal(tweetLength(text), hostTweetLength(text), JSON.stringify(text))
+})
+
+test('safeText 与 src/inbox.js 一致', () => {
+  for (const text of [...TEXTS, 'x\ud800y', 'a😀b😀c']) {
+    for (const max of [undefined, 0, 2, 3, 280]) assert.equal(safeText(text, max), hostSafeText(text, max), `${JSON.stringify(text)} ${max}`)
+  }
 })
 
 test('intentUrl 与 src/inbox.js 一致', () => {

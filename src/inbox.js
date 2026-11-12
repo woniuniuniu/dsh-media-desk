@@ -7,10 +7,29 @@ const URL_RUN = /https?:\/\/[^\s]+/g
 const find = (state, id) => state.candidates.find(row => row.id === id)
 const validDate = value => typeof value === 'string' && !Number.isNaN(new Date(value).getTime())
 
+/**
+ * 存入或截断文字的唯一入口：孤立代理项换成 U+FFFD（否则发帖链接编码会抛错），按码点截断，不会把 emoji 切成两半。
+ * @param {unknown} text - 文字。
+ * @param {number} [max] - 最多保留的码点数。
+ * @returns {string} 合法的文字。
+ */
+export function safeText(text, max) {
+  const whole = String(text ?? '').toWellFormed()
+  if (max === undefined || whole.length <= max) return whole
+  let out = ''
+  let n = 0
+  for (const ch of whole) {
+    if (n === max) break
+    out += ch
+    n += 1
+  }
+  return out
+}
+
 /** 一键发帖链接：文字（和引用的原帖链接）预填进 X 的发帖页。 */
 export function intentUrl(candidate) {
-  let url = `https://x.com/intent/tweet?text=${encodeURIComponent(candidate.text)}`
-  if (candidate.form === 'quote' && candidate.quoteUrl) url += `&url=${encodeURIComponent(candidate.quoteUrl)}`
+  let url = `https://x.com/intent/tweet?text=${encodeURIComponent(safeText(candidate.text))}`
+  if (candidate.form === 'quote' && candidate.quoteUrl) url += `&url=${encodeURIComponent(safeText(candidate.quoteUrl))}`
   return url
 }
 
@@ -99,7 +118,7 @@ export function unapprove(state, id) {
 export function setText(state, id, text) {
   const row = find(state, id)
   if (!row || typeof text !== 'string' || (row.status !== 'pending' && row.status !== 'approved')) return false
-  row.text = text.slice(0, 4000)
+  row.text = safeText(text, 4000)
   row.revision += 1
   return true
 }

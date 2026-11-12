@@ -328,3 +328,20 @@ test('手动成稿记录尝试时间：30 分钟内后台不再自动成稿', as
   await worker.tick()
   assert.equal(composeCalls(), 0)
 })
+
+test('一条候选稿写不出去不影响其他稿子，留一条点名的提示', async () => {
+  const { worker, store, ex } = await setup({ samples: false })
+  await store.mutate('seed', s => {
+    s.candidates.push(candidate('c_bad1'), candidate('c_good1'))
+    s.runs.lastComposeDay = TODAY
+  }, { undoable: false })
+  const write = ex.writeDraft.bind(ex)
+  ex.writeDraft = async (c, ...rest) => {
+    if (c.id === 'c_bad1') throw new Error('写坏了')
+    return write(c, ...rest)
+  }
+  assert.deepEqual(await worker.tick(), { ran: true })
+  assert.deepEqual(await readdir(join(ex.root, 'drafts')), ['c_good1-r0.json'])
+  assert.ok((await store.read()).runs.notices.some(n => n.text.includes('c_bad1') && n.text.includes('写坏了')))
+  assert.ok((await readFile(join(ex.root, 'voice', 'SKILL.md'), 'utf8')).length > 0)
+})

@@ -143,7 +143,12 @@ export class Worker {
     const typeName = id => state.voice.types.find(t => t.id === id)?.name ?? ''
     for (const c of state.candidates) {
       if (c.status !== 'pending' && c.status !== 'approved') continue
-      await exchange.writeDraft(c, typeName(c.typeId), { intentUrl: intentUrl(c) })
+      // 一条写不出去只记提示，不拦住其他稿子
+      try {
+        await exchange.writeDraft(c, typeName(c.typeId), { intentUrl: intentUrl(c) })
+      } catch (err) {
+        await this.#notice(`候选稿 ${c.id} 没能写进交换文件夹：${err.message}`)
+      }
     }
     const watchlist = watchlistJson(state)
     const skillMarkdown = exportSkillMarkdown(state)

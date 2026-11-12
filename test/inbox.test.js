@@ -143,3 +143,24 @@ test('操作：通过、撤回、改时间、标记已发；不允许的迁移�
   r = applyOps(s, [{ op: 'discard_candidate', id: 'c_aaaa', reason: 'not_me' }])
   assert.equal(s.candidates[0].discardReason, 'not_me')
 })
+
+test('safeText：按码点截断不拆开 emoji，孤立代理项换成 U+FFFD', async () => {
+  const { safeText } = await import('../src/inbox.js')
+  const text = 'a'.repeat(3999) + '😀' + 'tail'
+  const cut = safeText(text, 4000)
+  assert.equal([...cut].length, 4000)
+  assert.ok(cut.endsWith('😀'))
+  assert.equal(cut.isWellFormed(), true)
+  assert.equal(safeText('x\ud800y'), 'x�y')
+  assert.equal(safeText(null), '')
+  const s = stateWith([cand('c_cccc', 'pending')])
+  assert.equal(setText(s, 'c_cccc', 'b'.repeat(3999) + '😀😀'), true)
+  assert.ok(s.candidates[0].text.endsWith('😀'))
+  assert.equal(s.candidates[0].text.isWellFormed(), true)
+})
+
+test('intentUrl 对任何字符串都不抛错', () => {
+  for (const text of ['\ud800', '\udc00x', 'a\ud83d', '😀'.slice(0, 1) + 'b', '']) {
+    assert.doesNotThrow(() => intentUrl({ form: 'quote', text, quoteUrl: `https://x.com/a/status/1${text}` }), JSON.stringify(text))
+  }
+})

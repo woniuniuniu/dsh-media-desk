@@ -114,11 +114,25 @@ export function textLength(text) {
 
 const URL_RUN = /https?:\/\/[^\s]+/g
 
-/** 一键发帖链接，与 src/inbox.js 的 intentUrl 一致；先把孤立代理项换成 U+FFFD，避免 encodeURIComponent 抛错。 */
+/** 与 src/inbox.js 的 safeText 一致：孤立代理项换成 U+FFFD，按码点截断。 */
+export function safeText(text, max) {
+  const raw = String(text ?? '')
+  const whole = raw.toWellFormed ? raw.toWellFormed() : raw
+  if (max === undefined || whole.length <= max) return whole
+  let out = ''
+  let n = 0
+  for (const ch of whole) {
+    if (n === max) break
+    out += ch
+    n += 1
+  }
+  return out
+}
+
+/** 一键发帖链接，与 src/inbox.js 的 intentUrl 一致；文字先过 safeText，encodeURIComponent 不会抛错。 */
 export function intentUrl(candidate) {
-  const wellFormed = value => (value.toWellFormed ? value.toWellFormed() : value)
-  let url = `https://x.com/intent/tweet?text=${encodeURIComponent(wellFormed(candidate.text))}`
-  if (candidate.form === 'quote' && candidate.quoteUrl) url += `&url=${encodeURIComponent(wellFormed(candidate.quoteUrl))}`
+  let url = `https://x.com/intent/tweet?text=${encodeURIComponent(safeText(candidate.text))}`
+  if (candidate.form === 'quote' && candidate.quoteUrl) url += `&url=${encodeURIComponent(safeText(candidate.quoteUrl))}`
   return url
 }
 
