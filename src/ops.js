@@ -2,11 +2,13 @@
 // 模型输出也是不可信输入，所以这里只放行白名单字段。
 import { tr } from './i18n.js'
 import { normalizeStyle } from './style.js'
-import { approve, discard, markSent, unapprove, setText } from './inbox.js'
+import { approve, discard, markSent, unapprove, setText, safeText } from './inbox.js'
 
 const HANDLE = /^[A-Za-z0-9_]{1,15}$/
 const TIERS = ['engage', 'topic']
 const RULE_STATUS = ['active', 'off']
+const MAX_LONGFORMS = 30
+const MAX_LONGFORM_BODY = 20000
 
 let counter = 0
 export function newId(prefix = 'x') {
@@ -24,6 +26,11 @@ function isHttpUrl(value) {
 }
 
 const text = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max) : '')
+
+/** 单行文字：不可信输入先清成合法字符串，空白折成一个空格，按码点截断。 */
+export function oneLine(value, max) {
+  return typeof value === 'string' ? safeText(value.replace(/\s+/g, ' ').trim(), max).trim() : ''
+}
 
 function cleanHandle(value) {
   const handle = String(value ?? '').trim().replace(/^@/, '')
@@ -164,6 +171,49 @@ const HANDLERS = {
     need(state.proposals, op.id, tr('规则建议'))
     state.proposals = state.proposals.filter(entry => entry.id !== op.id)
     return tr('已忽略这条建议')
+  },
+  add_longform(state, op, ctx) {
+    const title = oneLine(op.title, 60)
+    if (!title) throw new Error(tr('选题标题不能为空'))
+    if (state.longforms.length >= MAX_LONGFORMS) throw new Error(tr('长文最多 {n} 篇，先删掉不要的', { n: MAX_LONGFORMS }))
+    const at = ctx.now.toISOString()
+    state.longforms.push({
+      id: newId('l'), title, angle: oneLine(op.angle, 200), typeId: state.voice.types[0]?.id ?? '', body: '', aiBody: '',
+      status: 'idea', createdAt: at, updatedAt: at, revision: 0, error: null,
+    })
+    return tr('已加入选题：{title}', { title })
+  },
+  edit_longform(state, op, ctx) {
+    const row = need(state.longforms, op.id, tr('长文'))
+    let title = row.title
+    let body = row.body
+    if (op.title !== undefined) {
+      title = oneLine(op.title, 60)
+      if (!title) throw new Error(tr('选题标题不能为空'))
+    }
+    if (op.body !== undefined) {
+      if (typeof op.body !== 'string' || !op.body.trim()) throw new Error(tr('正文不能为空'))
+      body = safeText(op.body)
+      if ([...body].length > MAX_LONGFORM_BODY) throw new Error(tr('正文太长，上限 {n} 字', { n: MAX_LONGFORM_BODY }))
+      if (row.status === 'idea') row.status = 'draft'
+    }
+    row.title = title
+    row.body = body
+    row.revision += 1
+    row.updatedAt = ctx.now.toISOString()
+    return tr('已保存长文：{title}', { title })
+  },
+  finish_longform(state, op, ctx) {
+    const row = need(state.longforms, op.id, tr('长文'))
+    if (row.status !== 'draft') throw new Error(tr('只有草稿才能标记完成'))
+    row.status = 'done'
+    row.updatedAt = ctx.now.toISOString()
+    return tr('已标记完成：{title}', { title: row.title })
+  },
+  delete_longform(state, op) {
+    const row = need(state.longforms, op.id, tr('长文'))
+    state.longforms = state.longforms.filter(entry => entry.id !== op.id)
+    return tr('已删除长文：{title}', { title: row.title })
   },
   clear_notices(state) {
     state.runs.notices = []

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { draftPrompts, revisePrompts, rulePrompts, topicPrompts } from '../src/ai.js'
+import { draftPrompts, longformDraftPrompts, longformIdeaPrompts, longformRevisePrompts, revisePrompts, rulePrompts, topicPrompts } from '../src/ai.js'
 import { condensePrompts } from '../src/voice.js'
 import { stylePrompts } from '../src/style.js'
 import { classify, readCompletion, startMock, stopMock } from '../scripts/mock-llm.mjs'
@@ -18,6 +18,29 @@ test('模拟模型的识别措辞与真实提示词一致', () => {
   assert.equal(classify(revisePrompts({ text: '旧稿', instruction: '短一点', voice: '' }).system), 'revise')
   assert.equal(classify(draftPrompts({ title: 't', form: 'post', materials: ['m'], voice: '' }).system), 'draft')
   assert.equal(classify(draftPrompts({ title: 't', form: 'quote', materials: ['m'], voice: '口吻', view: '我觉得' }).system), 'draft')
+})
+
+test('长文三类提示词的第一行与模拟模型一致', () => {
+  assert.equal(classify(longformIdeaPrompts({ bestPosts: ['a'], views: [], types: TYPES }).system), 'longform_ideas')
+  assert.equal(classify(longformDraftPrompts({ title: 't', angle: 'a', materials: ['m'], voice: '口吻，归并成选题 精简版' }).system), 'longform_draft')
+  assert.equal(classify(longformRevisePrompts({ body: 'b', instruction: '短', voice: '改推文草稿' }).system), 'longform_revise')
+})
+
+test('模拟模型的长文回答', async () => {
+  const server = await startMock(0, { delay: 0 })
+  const { port } = server.address()
+  try {
+    const ideas = JSON.parse(await ask(port, longformIdeaPrompts({ bestPosts: ['a'], views: [], types: TYPES })))
+    assert.equal(ideas.length, 2)
+    assert.ok(ideas.every(i => i.title && i.angle && i.typeId))
+    const draft = await ask(port, longformDraftPrompts({ title: 't', angle: 'a', materials: ['m'], voice: '' }))
+    assert.ok(draft.length >= 1500 && draft.length <= 2500)
+    assert.equal(draft.match(/【此处填你的经历】/g).length, 1)
+    const revised = await ask(port, longformRevisePrompts({ body: draft, instruction: '短', voice: '' }))
+    assert.notEqual(revised, draft)
+  } finally {
+    await stopMock(server)
+  }
 })
 
 const ask = async (port, prompts) => (await readCompletion(port, prompts)).text

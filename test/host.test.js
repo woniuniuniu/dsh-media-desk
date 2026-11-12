@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { withTimeout } from '../src/ai.js'
 import { Composer } from '../src/compose.js'
+import { Longform } from '../src/longform.js'
 import { createHandler } from '../src/host.js'
 import { Settings } from '../src/settings.js'
 import { Store } from '../src/store.js'
@@ -25,7 +26,7 @@ async function serve({ rejection = () => undefined, connection = true, callText 
   const store = new Store(root)
   const settings = new Settings(root)
   const composer = new Composer({ store, settings, callText })
-  const desk = { settings, composer, worker: { noteAttempt() {} } }
+  const desk = { settings, composer, longform: new Longform({ store, callText }), worker: { noteAttempt() {} } }
   const ctx = { get: name => (name === 'connection' && connection ? { requestRejection: rejection } : undefined) }
   const server = createServer(createHandler({ ctx, store, desk, callText }))
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -217,4 +218,23 @@ test('GET insights：已鉴权返回复盘数据，未鉴权被拒绝', async ()
   try {
     assert.equal((await denied.call('GET', '/x-desk/insights')).status, 401)
   } finally { await denied.close() }
+})
+
+test('长文路由：没有素材时建议返回原因且不调用模型；未知选题 404；空修改要求 400', async () => {
+  let calls = 0
+  const h = await serve({ callText: async () => { calls += 1; return { text: '[]' } } })
+  try {
+    const r = await h.call('POST', '/x-desk/longform/suggest', { body: {} })
+    assert.equal(r.status, 200)
+    assert.equal(r.data.created, 0)
+    assert.equal(r.data.error, '还没有足够的内容来建议长文选题')
+    assert.deepEqual(r.data.state.longforms, [])
+    assert.equal((await h.call('POST', '/x-desk/longform/draft', { body: { id: 'l_nope' } })).status, 404)
+    await h.store.mutate('seed', s => {
+      s.longforms.push({ id: 'l_1', title: 't', angle: '', typeId: 't_model', body: '正文', aiBody: '正文', status: 'draft', createdAt: '', updatedAt: '', revision: 1, error: null })
+    }, { undoable: false })
+    assert.equal((await h.call('POST', '/x-desk/longform/revise', { body: { id: 'l_1', instruction: '  ' } })).status, 400)
+    assert.equal(calls, 0)
+    assert.equal(h.store.undo.length, 0)
+  } finally { await h.close() }
 })

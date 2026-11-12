@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs'
 import { stat, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import { Composer } from './compose.js'
+import { Longform } from './longform.js'
 import { computeInsights } from './insights.js'
 import { Exchange } from './exchange.js'
 import { Lock } from './lock.js'
@@ -206,6 +207,18 @@ async function route({ ctx, store, desk, callText }, req, res) {
       await desk.composer.revise(body.id, { view: body.view, instruction: body.instruction, typeId: body.typeId }, { undoable: false })
       return json(res, 200, { state: await store.read() })
     }
+    case 'longform/suggest': {
+      const result = await desk.longform.suggest({ undoable: false })
+      return json(res, 200, { ...result, state: await store.read() })
+    }
+    case 'longform/draft': {
+      await desk.longform.draft(body.id, { undoable: false })
+      return json(res, 200, { state: await store.read() })
+    }
+    case 'longform/revise': {
+      await desk.longform.revise(body.id, body.instruction, { undoable: false })
+      return json(res, 200, { state: await store.read() })
+    }
     case 'note/compose': {
       await desk.composer.composeFromNote(body.id, { undoable: false })
       return json(res, 200, { state: await store.read() })
@@ -284,6 +297,7 @@ export default {
     const callText = options => upstream(timed(options))
     const composer = new Composer({ store, settings, callText })
     desk.composer = composer
+    desk.longform = new Longform({ store, callText })
     const worker = new Worker({
       store, settings, composer,
       lock: new Lock(join(store.root, 'worker.lock'), { ttlMs: 600_000 }),
