@@ -89,9 +89,10 @@ export class Store {
     this.mtimeMs = info.mtimeMs
   }
 
-  async persist() {
+  /** @param {string} [text] - 已序列化好的状态，省掉再序列化一次。 */
+  async persist(text = JSON.stringify(this.state)) {
     const tmp = `${this.file}.${process.pid}.tmp`
-    await writeFile(tmp, JSON.stringify(this.state))
+    await writeFile(tmp, text)
     await rename(tmp, this.file)
     this.mtimeMs = (await stat(this.file)).mtimeMs
   }
@@ -119,17 +120,20 @@ export class Store {
   mutate(label, mutate, { undoable = true } = {}) {
     return this.run(async () => {
       await this.refresh()
-      const before = undoable ? JSON.stringify(this.state) : null
+      const before = JSON.stringify(this.state)
       const result = await mutate(this.state)
+      const after = JSON.stringify(this.state)
       if (undoable) {
-        const after = JSON.stringify(this.state)
         // 什么都没改的操作不占撤销位，免得用户点撤销却没反应
         if (after !== before) {
           this.undo.push({ label, before, after })
           if (this.undo.length > MAX_UNDO) this.undo.shift()
         }
+      } else if (after === before) {
+        // 后台每分钟要跑好几次写入，多数什么都没改：不改就不重写文件
+        return result
       }
-      await this.persist()
+      await this.persist(after)
       return result
     })
   }

@@ -61,3 +61,16 @@ test('交换文件夹不能放在原版插件的数据目录里', async () => {
     else process.env.DSH_HOME = saved
   }
 })
+
+test('后台写入什么都没改时不重写文件；改了照常写', async () => {
+  const store = await fresh()
+  await store.mutate('seed', s => { s.notes.push({ id: 'n_1' }) }, { undoable: false })
+  const before = (await stat(store.file)).mtimeMs
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.equal(await store.mutate('no-op', s => s.notes.length, { undoable: false }), 1)
+  assert.equal((await stat(store.file)).mtimeMs, before)
+  await store.mutate('real', s => { s.notes.push({ id: 'n_2' }) }, { undoable: false })
+  assert.notEqual((await stat(store.file)).mtimeMs, before)
+  const reread = new Store(store.root)
+  assert.equal((await reread.read()).notes.length, 2)
+})

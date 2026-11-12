@@ -16,6 +16,10 @@ const KEEP_MINE_MS = 180 * DAY_MS
 const KEEP_REPLIES_MS = 90 * DAY_MS
 const KEEP_FOLLOWERS_MS = 400 * DAY_MS
 export const MAX_MINE = 5000
+/** 已发、丢弃、过期的候选稿保留天数（按 decidedAt，没有就按 createdAt）；待处理和已通过的不清。 */
+export const KEEP_CANDIDATES_DAYS = 180
+const FAR_FUTURE_MS = DAY_MS
+const FAR_FUTURE_WHY = '时间比现在晚一天以上'
 export const MAX_REPLY_DRAFTS = 2000
 export const MAX_FOLLOWERS = 400
 const METRICS = ['likes', 'replies', 'reposts', 'quotes', 'views']
@@ -66,6 +70,8 @@ export class Worker {
     this.inflight = null
     // 停止后置为 true；热重载留下的旧实例在每一步之前看到它就不再写
     this.stopped = false
+    // 上一轮压着没收的条数（按目录）：条数没变就不再提示
+    this.heldBack = { mine: 0, replies: 0 }
   }
 
   /** 记下一次成稿尝试（手动成稿也算），30 分钟内后台不再重试。 */
@@ -180,16 +186,15 @@ export class Worker {
     return this.#guarded('读入自己发出的内容', async () => {
       const mine = await exchange.readNew('mine', { ownHandle: settings.ownHandle })
       const now = this.now()
-      const limit = now.getTime() + SKEW_MS
-      // 发出时间比现在还晚的先不收，文件也不算处理过：时钟快几分钟的机器之后会被正常收下
-      const later = new Set()
-      mine.items.forEach((x, i) => { if (Date.parse(x.mine.postedAt) > limit) later.add(i) })
+      const { later, far } = this.#future(mine, x => x.mine.postedAt, now)
+      const heldChanged = this.#heldChanged('mine', later.size)
       await this.store.mutate('读入自己发出的内容', s => {
         for (const { file, why } of mine.skipped) addNotice(s, `交换文件夹里的 mine/${file} 无法读取：${why}`, now)
-        if (later.size) addNotice(s, `有 ${later.size} 条内容的时间比现在还晚，先不收`, now)
+        for (const i of far) addNotice(s, `交换文件夹里的 mine/${mine.itemFiles[i]} 无法读取：${FAR_FUTURE_WHY}`, now)
+        if (later.size && heldChanged) addNotice(s, `有 ${later.size} 条内容的时间比现在还晚，先不收`, now)
         const byId = new Map(s.mine.map(m => [m.id, m]))
         mine.items.forEach(({ mine: item, followers }, i) => {
-          if (later.has(i)) return
+          if (later.has(i) || far.has(i)) return
           // 抓取时间不会晚于现在；否则一个未来时间会让这条的互动数永远不再更新
           if (Date.parse(item.fetchedAt) > now.getTime()) item.fetchedAt = now.toISOString()
           const have = byId.get(item.id)
@@ -206,6 +211,28 @@ export class Worker {
       }, { undoable: false })
       await mine.commit([...later].map(i => mine.itemFiles[i]))
     })
+  }
+
+  /**
+   * 时间比现在晚的条目：晚 5 分钟到一天之内的先压着（later，文件不算处理过，时钟快的机器之后会被正常收下）；
+   * 晚一天以上的当坏文件（far，提示一次、算处理过）。
+   */
+  #future(batch, time, now) {
+    const later = new Set()
+    const far = new Set()
+    batch.items.forEach((x, i) => {
+      const t = Date.parse(time(x))
+      if (t > now.getTime() + FAR_FUTURE_MS) far.add(i)
+      else if (t > now.getTime() + SKEW_MS) later.add(i)
+    })
+    return { later, far }
+  }
+
+  /** 压着的条数和上一轮不同才提示，免得每分钟重复一条。 */
+  #heldChanged(kind, count) {
+    const changed = count !== this.heldBack[kind]
+    this.heldBack[kind] = count
+    return changed
   }
 
   /** 同一天只留一条：取该天 fetchedAt 最晚的值。 */
@@ -225,16 +252,16 @@ export class Worker {
     return this.#guarded('读入回复草稿', async () => {
       const replies = await exchange.readNew('replies')
       const now = this.now()
-      const limit = now.getTime() + SKEW_MS
-      const later = new Set()
-      replies.items.forEach((x, i) => { if (Date.parse(x.notifiedAt) > limit) later.add(i) })
+      const { later, far } = this.#future(replies, x => x.notifiedAt, now)
+      const heldChanged = this.#heldChanged('replies', later.size)
       await this.store.mutate('读入回复草稿', s => {
         for (const { file, why } of replies.skipped) addNotice(s, `交换文件夹里的 replies/${file} 无法读取：${why}`, now)
-        if (later.size) addNotice(s, `有 ${later.size} 条回复草稿的时间比现在还晚，先不收`, now)
+        for (const i of far) addNotice(s, `交换文件夹里的 replies/${replies.itemFiles[i]} 无法读取：${FAR_FUTURE_WHY}`, now)
+        if (later.size && heldChanged) addNotice(s, `有 ${later.size} 条回复草稿的时间比现在还晚，先不收`, now)
         const key = r => `${r.toPostId}|${r.notifiedAt}`
         const known = new Set(s.replyDrafts.map(key))
         replies.items.forEach((item, i) => {
-          if (later.has(i) || known.has(key(item))) return
+          if (later.has(i) || far.has(i) || known.has(key(item))) return
           known.add(key(item))
           s.replyDrafts.push({ id: newId('r'), ...item })
         })
@@ -254,6 +281,8 @@ export class Worker {
       const today = localDay(now)
       s.mine = capNewest(s.mine.filter(m => Date.parse(m.postedAt) >= t - KEEP_MINE_MS && Date.parse(m.postedAt) <= t + SKEW_MS), MAX_MINE, m => Date.parse(m.postedAt))
       s.replyDrafts = capNewest(s.replyDrafts.filter(r => Date.parse(r.notifiedAt) >= t - KEEP_REPLIES_MS && Date.parse(r.notifiedAt) <= t + SKEW_MS), MAX_REPLY_DRAFTS, r => Date.parse(r.notifiedAt))
+      const keepCandidates = t - KEEP_CANDIDATES_DAYS * DAY_MS
+      s.candidates = s.candidates.filter(c => !['sent', 'discarded', 'expired'].includes(c?.status) || !(Date.parse(c.decidedAt ?? c.createdAt) < keepCandidates))
       s.followers = capNewest(s.followers.filter(f => Date.parse(`${f.day}T00:00:00`) >= t - KEEP_FOLLOWERS_MS && f.day <= today), MAX_FOLLOWERS, f => Date.parse(`${f.day}T00:00:00`))
     }, { undoable: false }))
   }

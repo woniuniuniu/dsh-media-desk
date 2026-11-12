@@ -413,3 +413,16 @@ test('editPairs：自己另写的回复已关联但不成对子；轻改草稿�
   assert.equal(s.mine[0].replyId, 'r_own')
   assert.deepEqual(editPairs(s), [{ aiText: draft, sentText: '这个观点我同意，评测确实要看自己的场景', kind: 'reply' }])
 })
+
+test('性能：5000 条与任何候选稿都不在时间窗内的实发内容，配对在 200 毫秒内完成', { skip: process.env.CI_SLOW ? 'CI_SLOW 已设置：机器太慢，跳过计时测试' : false }, () => {
+  const text = (seed, n) => Array.from({ length: n }, (_, i) => String.fromCodePoint(0x4e00 + ((seed * 7919 + i * 31) % 20000))).join('')
+  const base = NOW
+  const candidates = Array.from({ length: 1300 }, (_, i) => cand(`c_${i}`, text(i, 280), new Date(base - i * 60e3).toISOString()))
+  const oldest = base - 1300 * 60e3
+  const posts = Array.from({ length: 5000 }, (_, i) => mine(`m${i}`, text(i + 50000, 280), new Date(oldest - 97 * 3600e3 - i * 600e3).toISOString()))
+  const s = st({ candidates, mine: posts })
+  const t = performance.now()
+  assert.equal(matchSent(s, { now: NOW }).changed, 0)
+  const took = performance.now() - t
+  assert.ok(took < 200, `用了 ${took.toFixed(0)} 毫秒`)
+})

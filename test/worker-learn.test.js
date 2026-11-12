@@ -12,7 +12,7 @@ import { Store } from '../src/store.js'
 import { Worker, addNotice, localDay } from '../src/worker.js'
 import * as runs from '../src/runs.js'
 import { computeInsights } from '../src/insights.js'
-import { MAX_MINE, MAX_REPLY_DRAFTS } from '../src/worker.js'
+import { KEEP_CANDIDATES_DAYS, MAX_MINE, MAX_REPLY_DRAFTS } from '../src/worker.js'
 
 const NOW = new Date('2026-11-11T11:05:00+08:00') // 周三
 const MONDAY = new Date('2026-11-16T11:05:00+08:00')
@@ -414,4 +414,59 @@ test('matchSent 抛错不会跳过候选稿过期；每一步各自记提示', a
   const s = await store.read()
   assert.equal(s.candidates[0].status, 'expired')
   assert.ok(s.runs.notices.some(n => n.text.startsWith('识别已发内容出错')))
+})
+
+test('M3：时间比现在晚一天以上的文件当坏文件：提示一次、点名文件、算处理过，以后也不收', async () => {
+  const { worker, store, ex, clock } = await setup()
+  await mineFile(ex, 'far.json', { postedAt: minute(2 * 1440).toISOString(), fetchedAt: minute(2 * 1440).toISOString() })
+  await replyFile(ex, 'far.json', { notifiedAt: minute(2 * 1440).toISOString() })
+  await worker.tick()
+  await worker.tick()
+  let s = await store.read()
+  assert.deepEqual(s.runs.notices.filter(n => n.text.includes('far.json')).map(n => n.text), [
+    '交换文件夹里的 mine/far.json 无法读取：时间比现在晚一天以上',
+    '交换文件夹里的 replies/far.json 无法读取：时间比现在晚一天以上',
+  ])
+  assert.ok(!s.runs.notices.some(n => n.text.includes('先不收')))
+  clock.t = minute(3 * 1440)
+  await worker.tick()
+  s = await store.read()
+  assert.equal(s.mine.length, 0)
+  assert.equal(s.replyDrafts.length, 0)
+})
+
+test('M3："先不收"的提示只在压着的条数变化时才出', async () => {
+  const { worker, store, ex } = await setup()
+  await mineFile(ex, 'a.json', { postedAt: minute(10).toISOString(), fetchedAt: minute(10).toISOString() })
+  await worker.tick()
+  // 中间插一条别的提示：相同提示不再靠"与上一条相同"去重
+  await store.mutate('other', s => { addNotice(s, '别的提示', NOW) }, { undoable: false })
+  await worker.tick()
+  let held = (await store.read()).runs.notices.filter(n => n.text.includes('先不收')).map(n => n.text)
+  assert.deepEqual(held, ['有 1 条内容的时间比现在还晚，先不收'])
+  await mineFile(ex, 'b.json', { postId: '1856000000000000002', postedAt: minute(20).toISOString(), fetchedAt: minute(20).toISOString() })
+  await worker.tick()
+  held = (await store.read()).runs.notices.filter(n => n.text.includes('先不收')).map(n => n.text)
+  assert.deepEqual(held, ['有 1 条内容的时间比现在还晚，先不收', '有 2 条内容的时间比现在还晚，先不收'])
+})
+
+test('M7：已发、丢弃、过期超过 180 天的候选稿被清掉；待处理和已通过不论多旧都留', async () => {
+  assert.equal(KEEP_CANDIDATES_DAYS, 180)
+  const { worker, store } = await setup()
+  const old = iso(NOW, -181 * 1440)
+  const recent = iso(NOW, -179 * 1440)
+  await store.mutate('seed', s => {
+    s.candidates.push(
+      cand('c_sent_old', { status: 'sent', createdAt: old, decidedAt: old }),
+      cand('c_disc_old', { status: 'discarded', createdAt: old, decidedAt: null }),
+      cand('c_exp_old', { status: 'expired', createdAt: old, decidedAt: old }),
+      cand('c_sent_new', { status: 'sent', createdAt: old, decidedAt: recent }),
+      cand('c_pend_old', { status: 'pending', createdAt: old }),
+      cand('c_appr_old', { status: 'approved', createdAt: old }),
+    )
+  }, { undoable: false })
+  await worker.tick()
+  const ids = (await store.read()).candidates.map(c => c.id)
+  assert.ok(['c_sent_new', 'c_appr_old'].every(id => ids.includes(id)), ids.join())
+  assert.ok(!ids.some(id => ['c_sent_old', 'c_disc_old', 'c_exp_old'].includes(id)), ids.join())
 })

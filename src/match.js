@@ -58,18 +58,41 @@ export function matchSent(state, { now } = {}) {
   // 第一名和第二名按时间窗内的全部候选稿算（不管状态、是否已配过），只有分配时才限于还能配的；
   // 否则竞争的那条过期、丢弃或配给别人之后，原先分不清的一对就会被配上。
   const matchable = c => ['pending', 'approved', 'sent'].includes(c.status) && !c.sentPostId
+  // 先只比时间（便宜）：按创建时间排好序，二分找出每条实发内容时间窗里的候选稿；
+  // 字的二元组只为窗口里有候选稿的实发内容算，候选稿的每条最多算一次
   const cands = (state.candidates || [])
-    .map(c => ({ c, t: ms(c.createdAt), grams: gramSet(c.text), len: Array.from(normalizeText(c.text)).length, open: matchable(c) }))
+    .map(c => ({ c, t: ms(c.createdAt), grams: null, len: 0, open: matchable(c) }))
     .filter(x => x.t !== null)
-  const posts = mine
-    .filter(m => (m.kind === 'post' || m.kind === 'quote') && !m.candidateId)
-    .map(m => ({ m, t: ms(m.postedAt), grams: gramSet(m.text), len: Array.from(normalizeText(m.text)).length }))
-    .filter(x => x.t !== null)
+    .sort((x, y) => x.t - y.t)
+  const firstAtOrAfter = t => {
+    let lo = 0
+    let hi = cands.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (cands[mid].t < t) lo = mid + 1
+      else hi = mid
+    }
+    return lo
+  }
+  const prepare = x => {
+    if (x.grams === null) {
+      x.grams = gramSet(x.c.text)
+      x.len = Array.from(normalizeText(x.c.text)).length
+    }
+    return x
+  }
   const pairs = []
-  for (const p of posts) {
+  for (const m of mine) {
+    if ((m.kind !== 'post' && m.kind !== 'quote') || m.candidateId) continue
+    const t = ms(m.postedAt)
+    if (t === null) continue
+    const from = firstAtOrAfter(t - WINDOW_MS)
+    const to = firstAtOrAfter(t + SKEW_MS + 1)
+    if (from >= to) continue
+    const p = { m, t, grams: gramSet(m.text), len: Array.from(normalizeText(m.text)).length }
     const scored = []
-    for (const k of cands) {
-      if (k.t > p.t + SKEW_MS || k.t < p.t - WINDOW_MS) continue
+    for (let i = from; i < to; i++) {
+      const k = prepare(cands[i])
       scored.push({ p, k, sim: jaccard(p.grams, k.grams) })
     }
     // 该条实发内容的第一名与第二名（在配对分配之前算好，结果与遍历顺序无关）
