@@ -7,6 +7,7 @@ import { Exchange, parseDecision, parseMine, parsePost, parseReplyDraft } from '
 import { intentUrl } from '../src/inbox.js'
 import { emptyState } from '../src/seed.js'
 import { watchlistJson } from '../src/voice.js'
+import { SKEW_MS } from '../src/runs.js'
 
 const instructions = ['01-read-posts.md', '02-hot-replies.md', '03-deliver-and-collect.md', '04-read-mine.md']
 const documents = ['README.md', ...instructions, 'file-formats.md']
@@ -45,6 +46,69 @@ test('格式文档的 posts、decisions、mine、replies 示例通过解析器',
   assert.ok(parseDecision(raw.decisions))
   assert.ok(parseMine(raw.mine, { ownHandle: 'me' }))
   assert.ok(parseReplyDraft(raw.replies))
+})
+
+test('01、02、04 复制块的每个 JSON 示例保留实际字段值', async () => {
+  for (const [name, parse, expected] of [
+    ['01-read-posts.md', parsePost, { likes: 52, replies: 3, reposts: 7, quotes: 1, views: 6100, isRepost: false }],
+    ['02-hot-replies.md', parseReplyDraft, { toHandle: 'karpathy', toPostId: '1855000000000000001', drafts: ['可以先选十个真实失败案例，再比较改动前后的通过率。', '如果评测集来自旧任务，怎样发现它已经不能代表新用户？'] }],
+    ['04-read-mine.md', raw => parseMine(raw, { ownHandle: 'me' }), { likes: 31, replies: 3, reposts: 2, quotes: 0, views: 4100, inReplyTo: { handle: 'karpathy', postId: '1855000000000000001' } }],
+  ]) {
+    const text = await readDoc(name)
+    const blocks = [...text.matchAll(/^(`{3,})text\n([\s\S]*?)^\1$/gm)]
+    const objects = blocks.flatMap(block => [...block[2].matchAll(/^\{.*\}$/gm)])
+    assert.ok(objects.length > 0, name)
+    for (const [json] of objects) {
+      const parsed = parse(JSON.parse(json))
+      assert.ok(parsed, `${name}: ${json}`)
+      const item = parsed.mine ?? parsed
+      assert.deepEqual(Object.fromEntries(Object.keys(expected).map(key => [key, item[key]])), expected, name)
+      if (name.startsWith('02')) assert.deepEqual(parsed.drafts.length, 2)
+      if (name.startsWith('04')) assert.deepEqual(parsed.followers, 1287)
+    }
+  }
+})
+
+test('格式文档的大小、文件名、文本长度和时间限制与源码一致', async () => {
+  const text = await readDoc('file-formats.md')
+  const source = await readFile(new URL('../src/exchange.js', import.meta.url), 'utf8')
+  const worker = await readFile(new URL('../src/worker.js', import.meta.url), 'utf8')
+  const number = (value, pattern) => {
+    const match = value.match(pattern)
+    assert.ok(match, String(pattern))
+    return Number(match[1])
+  }
+  const bytes = number(source, /const MAX_FILE_BYTES = (\d+)/)
+  assert.equal(number(text, /输入文件最多 (\d+) KB/)*1024, bytes)
+  assert.equal(number(text, /即 (\d+) 字节/), bytes)
+  const nameLength = number(source, /const FILE_NAME = .*\{1,(\d+)\}/)
+  assert.equal(number(text, /总长最多 (\d+) 个字符/), nameLength)
+  assert.equal(number(text, /实际读取器的正则是 .*?\{1,(\d+)\}/), nameLength)
+  assert.equal(number(text, /扩展名前最多 (\d+) 个字符/), nameLength)
+  assert.equal(number(text, /总长最多 (\d+)。/), nameLength + '.json'.length)
+  for (const [section, pattern] of [
+    ['posts', /text: raw\.text\.slice\(0, (\d+)\)/],
+    ['decisions', /text: typeof raw\.text === 'string' \? raw\.text\.slice\(0, (\d+)\)/],
+    ['mine', /text: safeText\(raw\.text, (\d+)\)/],
+    ['replies', /safeText\(d\.trim\(\), (\d+)\)/],
+  ]) {
+    const part = text.split(`## ${section}/`)[1].split('\n## ')[0]
+    const lengths = [...part.matchAll(/(?:保留前 |保留最多 |最多保留 )(\d+)/g)]
+    assert.ok(lengths.length > 0, section)
+    for (const match of lengths) assert.equal(Number(match[1]), number(source, pattern), section)
+  }
+  const age = source.match(/const MAX_AGE_MS = (\d+) \* 24 \* 3600e3/)
+  assert.ok(age)
+  assert.equal(number(text, /超过 (\d+) 天的输入文件/), Number(age[1]))
+  const future = text.split('- 当前未来时间暂缓规则')[1].split('\n')[0]
+  const minutes = [...future.matchAll(/(\d+) 分钟/g)]
+  const days = [...future.matchAll(/(\d+) 天/g)]
+  assert.equal(minutes.length, 2)
+  assert.equal(days.length, 2)
+  for (const match of minutes) assert.equal(Number(match[1]) * 60_000, SKEW_MS)
+  assert.match(worker, /const FAR_FUTURE_MS = DAY_MS\n/)
+  const day = number(worker, /const DAY_MS = (\d+) \* 3600e3/) * 3600e3
+  for (const match of days) assert.equal(Number(match[1]) * 86400_000, day)
 })
 
 test('格式文档的 drafts 字段与 writeDraft 实际文件一致', async () => {
@@ -100,14 +164,21 @@ test('所有 X 预填链接与 intentUrl 的主机、路径和查询入口一致
   assert.ok(count >= 2)
 })
 
-test('搭建说明的同步故障提示逐字匹配源码且覆盖固定原因', async () => {
+test('搭建说明覆盖同步固定原因、动态原因和模板字符串错误前缀', async () => {
   const text = await readDoc('README.md')
   const section = text.split('## 出了问题怎么办')[1]
   assert.ok(section)
   const reasons = [...section.matchAll(/^- 「([^」]+)」/gm)].map(m => m[1])
   const source = await readFile(new URL('../src/sync.js', import.meta.url), 'utf8')
   assert.ok(reasons.length > 0)
-  for (const reason of reasons) assert.ok(source.includes(reason), reason)
+  for (const reason of reasons.filter(reason => !reason.includes('…'))) assert.ok(source.includes(reason), reason)
   const fixed = [...source.matchAll(/(?:refused|failed)\('([^']+)'\)/g)].map(m => m[1])
   for (const reason of fixed) assert.ok(reasons.includes(reason), reason)
+  const templates = [...source.matchAll(/(?:refused|failed)\(`([^`]+)`\)/g)].map(m => m[1])
+  assert.ok(templates.length > 0)
+  for (const template of templates) {
+    const colon = template.indexOf('：')
+    const reason = colon >= 0 ? template.slice(0, colon + 1) : template.replace(/\$\{[^}]*\}/g, '…')
+    assert.ok(reasons.includes(reason), reason)
+  }
 })
