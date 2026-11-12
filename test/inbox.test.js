@@ -1,7 +1,7 @@
 process.env.TZ = 'Asia/Shanghai'
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { intentUrl, tweetLength, nextSlot, approve, discard, markSent, setText, expire, applyDecision } from '../src/inbox.js'
+import { intentUrl, tweetLength, nextSlot, approve, discard, markSent, setText, expire, applyDecision, unapprove } from '../src/inbox.js'
 import { applyOps } from '../src/ops.js'
 
 const NOW = new Date('2026-11-12T10:00:00+08:00')
@@ -162,5 +162,63 @@ test('safeText：按码点截断不拆开 emoji，孤立代理项换成 U+FFFD',
 test('intentUrl 对任何字符串都不抛错', () => {
   for (const text of ['\ud800', '\udc00x', 'a\ud83d', '😀'.slice(0, 1) + 'b', '']) {
     assert.doesNotThrow(() => intentUrl({ form: 'quote', text, quoteUrl: `https://x.com/a/status/1${text}` }), JSON.stringify(text))
+  }
+})
+
+const STATUSES = ['pending', 'approved', 'discarded', 'sent', 'expired']
+const LATER_SLOT = '2026-11-20T01:00:00.000Z'
+const scheduledFor = status => (status === 'approved' ? NOW.toISOString() : null)
+
+test('状态 × 迁移函数：不允许的组合返回 false 且稿子一字不变', () => {
+  const table = [
+    ['approve', s => approve(s, 'c_tbl1', opts), ['pending']],
+    ['approve 改时间', s => approve(s, 'c_tbl1', { ...opts, scheduledAt: LATER_SLOT }), ['pending', 'approved']],
+    ['discard', s => discard(s, 'c_tbl1', { now: NOW }), ['pending', 'approved']],
+    ['markSent', s => markSent(s, 'c_tbl1', { now: NOW }), ['approved']],
+    ['unapprove', s => unapprove(s, 'c_tbl1'), ['approved']],
+    ['setText', s => setText(s, 'c_tbl1', '新文字'), ['pending', 'approved']],
+  ]
+  for (const [name, fn, allowed] of table) {
+    for (const status of STATUSES) {
+      const s = stateWith([cand('c_tbl1', status, { scheduledAt: scheduledFor(status) })])
+      const before = structuredClone(s)
+      const ok = fn(s)
+      assert.equal(ok, allowed.includes(status), `${name} / ${status}`)
+      if (!ok) assert.deepEqual(s, before, `${name} / ${status}`)
+    }
+  }
+})
+
+test('状态 × 处理结果：不允许的返回 ignored 且稿子不变；view/revise 只确认可改', () => {
+  const allowed = { approve: ['pending'], discard: ['pending', 'approved'], sent: ['approved'], view: ['pending', 'approved'], revise: ['pending', 'approved'] }
+  for (const [action, ok] of Object.entries(allowed)) {
+    for (const status of STATUSES) {
+      const s = stateWith([cand('c_tbl1', status, { scheduledAt: scheduledFor(status) })])
+      const before = structuredClone(s)
+      const result = applyDecision(s, { candidateId: 'c_tbl1', action, text: 'x', reason: null }, opts)
+      const expected = ok.includes(status) ? (action === 'view' || action === 'revise' ? 'needs_model' : 'applied') : 'ignored'
+      assert.equal(result, expected, `${action} / ${status}`)
+      if (result !== 'applied') assert.deepEqual(s, before, `${action} / ${status}`)
+    }
+  }
+})
+
+test('状态 × 候选稿操作：不允许的报错且稿子不变', () => {
+  const ops = [
+    [{ op: 'approve_candidate', id: 'c_tbl1' }, ['pending']],
+    [{ op: 'discard_candidate', id: 'c_tbl1' }, ['pending', 'approved']],
+    [{ op: 'mark_sent', id: 'c_tbl1' }, ['approved']],
+    [{ op: 'unapprove_candidate', id: 'c_tbl1' }, ['approved']],
+    [{ op: 'edit_candidate', id: 'c_tbl1', text: '新文字' }, ['pending', 'approved']],
+    [{ op: 'reschedule_candidate', id: 'c_tbl1', scheduledAt: LATER_SLOT }, ['approved']],
+  ]
+  for (const [op, allowed] of ops) {
+    for (const status of STATUSES) {
+      const s = stateWith([cand('c_tbl1', status, { scheduledAt: scheduledFor(status) })])
+      const before = structuredClone(s)
+      const { applied, errors } = applyOps(s, [op], opts)
+      assert.equal(applied.length === 1, allowed.includes(status), `${op.op} / ${status}`)
+      if (errors.length) assert.deepEqual(s, before, `${op.op} / ${status}`)
+    }
   }
 })

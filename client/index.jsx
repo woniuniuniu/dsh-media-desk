@@ -93,6 +93,6 @@ export function apply(ctx) {
     name: 'sidebar.panellist',
     id: PANEL_ID,
     order: 5,
-    label: () => t('自媒体工作台'),
+    label: () => t('X 工作台'),
   }, PanelIcon))
 }

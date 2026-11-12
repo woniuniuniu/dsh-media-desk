@@ -47,6 +47,8 @@ test('防护规则自测：违规的写法都会被抓到', () => {
   assert.deepEqual(violations('src/harvest.js', "import { lookup } from 'node:dns/promises'\nimport { isIP } from 'node:net'"), [])
   assert.deepEqual(violations('src/images.js', 'await fetchImpl(u); const f = fetch'), [])
   assert.deepEqual(violations('src/host.js', "const site = req.headers['sec-fetch-site']"), [])
+  assert.ok(violations('src/store.js', "join(home, 'media-desk')").length > 0)
+  assert.deepEqual(violations('src/settings.js', "join(dshHome(), 'media-desk')"), [])
 })
 
 test('防护规则自测：x.com 的各种写法都会被抓到', () => {

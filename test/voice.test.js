@@ -173,3 +173,11 @@ test('引入 skill 和手改精简版都不占撤销位', async () => {
   await setCondensed({ store }, { layer: 'core', condensed: '手改' })
   assert.equal(store.undo.length, 0)
 })
+test('skill 路径支持 ~/ 开头，按用户主目录展开', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'xdesk-home-'))
+  await mkdir(join(home, '.claude', 'skills', 'demo'), { recursive: true })
+  await writeFile(join(home, '.claude', 'skills', 'demo', 'SKILL.md'), '波浪线主体')
+  assert.match(await loadSkillInput({ path: '~/.claude/skills/demo' }, { home }), /波浪线主体/)
+  assert.match(await loadSkillInput({ path: '  ~/.claude/skills/demo/  ' }, { home }), /波浪线主体/)
+  await assert.rejects(loadSkillInput({ path: '~' }, { home }), /用户主目录之内/)
+})

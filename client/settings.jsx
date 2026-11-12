@@ -1,10 +1,10 @@
-// 设置：开放接入的生图模型和保存位置。
+// 设置：成稿与排期、交换文件夹位置、生图来源。
 import React from 'react'
 import { saveSettings, setDesk, testImage, useDesk } from './desk.js'
 import { Dialog, Icon } from './ui.jsx'
 import { t } from './util.js'
 
-// 常见服务的 OpenAI 兼容地址，模型名以各家文档为准。label 是中文原文，显示时再翻译
+// 常见服务的 OpenAI 兼容地址，模型名以各家文档为准。label 是按钮上显示的名字
 const PRESETS = [
   { id: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-image-1', size: '1536x1024', quality: 'medium', extra: '' },
   { id: 'xai', label: 'xAI', baseUrl: 'https://api.x.ai/v1', model: 'grok-2-image', size: '', quality: '', extra: '' },

@@ -1,7 +1,8 @@
 // 工作台设置。密钥和内容数据分开存放，文件权限 600，也不会返回给浏览器。
 import { chmod, readFile, rename, writeFile } from 'node:fs/promises'
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { tr } from './i18n.js'
+import { dshHome } from './store.js'
 
 const DEFAULTS = {
   image: { source: 'http', baseUrl: '', model: '', apiKey: '', size: '1536x1024', quality: '', toolSize: '1536x1024', toolQuality: '', extra: '' },
@@ -12,8 +13,18 @@ const DEFAULTS = {
   slots: ['09:00', '12:30', '18:00', '21:00', '22:30'],
   dailyCandidates: 7,
   dailyImages: 3,
-  activeFrom: '08:00',
-  activeTo: '22:00',
+}
+
+/** 只取 defaults 里有的字段，旧版本留下的字段一律丢掉。 */
+function known(defaults, saved) {
+  const source = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {}
+  return Object.fromEntries(Object.keys(defaults).map(key => [key, source[key] !== undefined ? source[key] : structuredClone(defaults[key])]))
+}
+
+/** 原版插件的数据目录（本插件绝不读写它），交换文件夹不能设在它里面。 */
+function insideOldPluginDir(dir) {
+  const rel = relative(join(dshHome(), 'media-desk'), resolve(dir))
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
 }
 
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/
@@ -38,7 +49,7 @@ export class Settings {
     // 每次都读文件：桌面版和 Web 版可能同时运行
     try {
       const saved = JSON.parse(await readFile(this.file, 'utf8'))
-      this.value = { ...DEFAULTS, ...saved, image: { ...DEFAULTS.image, ...saved.image }, assistant: { ...DEFAULTS.assistant, ...(saved.assistant ?? {}) } }
+      this.value = { ...known(DEFAULTS, saved), image: known(DEFAULTS.image, saved?.image), assistant: known(DEFAULTS.assistant, saved?.assistant) }
     } catch (err) {
       if (err.code !== 'ENOENT') throw err
       this.value = structuredClone(DEFAULTS)
@@ -97,11 +108,10 @@ export class Settings {
     if (patch.exchangeDir !== undefined) {
       const dir = typeof patch.exchangeDir === 'string' ? patch.exchangeDir.trim() : null
       if (dir === null || dir.length > 500 || (dir && !isAbsolute(dir))) throw Object.assign(new Error(tr('交换文件夹要留空，或填一个绝对路径')), { status: 400 })
+      if (dir && insideOldPluginDir(dir)) throw Object.assign(new Error(tr('交换文件夹不能放在原版插件的数据目录里')), { status: 400 })
       next.exchangeDir = dir
     }
     if (patch.composeAt !== undefined) next.composeAt = checkTime(patch.composeAt, '成稿时间')
-    if (patch.activeFrom !== undefined) next.activeFrom = checkTime(patch.activeFrom, '活跃开始时间')
-    if (patch.activeTo !== undefined) next.activeTo = checkTime(patch.activeTo, '活跃结束时间')
     if (patch.slots !== undefined) {
       if (!Array.isArray(patch.slots) || patch.slots.length < 1 || patch.slots.length > 8) throw Object.assign(new Error(tr('发帖时段要有 1 到 8 个')), { status: 400 })
       next.slots = patch.slots.map(slot => checkTime(slot, '发帖时段'))

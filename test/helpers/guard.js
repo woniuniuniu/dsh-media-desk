@@ -9,6 +9,9 @@ export const X_ALLOWED = new Set(['src/exchange.js', 'src/inbox.js', 'client/uti
 const FETCH_ALLOWED = new Set(['src/images.js'])
 const MODULES_ALLOWED = { 'src/harvest.js': new Set(['dns', 'net']) }
 
+// 原版插件的目录名只允许出现在 settings.js：它要拒绝把交换文件夹设到那个目录里，所以必须知道这个名字（只比较路径，不读写）。
+const OLD_DIR_ALLOWED = new Set(['src/settings.js'])
+
 const FORBIDDEN_MODULE = /^(?:node:)?(http|https|http2|net|tls|dgram|dns|child_process|worker_threads|cluster)(?:\/.*)?$/
 const SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)(['"`])([^'"`]+)\1/g
 const FETCH = /(?<![\w$.-])fetch(?![\w$-])|\.fetch\b|globalThis\s*\[/
@@ -34,7 +37,7 @@ export function violations(path, source) {
     if (REMOTE_SERVICES.test(source)) out.push('禁止出现 X 接口或抓取服务域名')
     if (WRITE_CALLS.test(source)) out.push('禁止出现点赞、发帖、转发、关注的调用')
   }
-  if ((inSrc || path.startsWith('client/')) && /media-desk/.test(source)) out.push('禁止读写原版插件的数据目录')
+  if ((inSrc || path.startsWith('client/')) && /media-desk/.test(source) && !OLD_DIR_ALLOWED.has(path)) out.push('禁止读写原版插件的数据目录')
   if (X_HOST.test(source) && !X_ALLOWED.has(path)) out.push('x.com 或 twitter.com 出现在不允许的文件里')
   return out
 }

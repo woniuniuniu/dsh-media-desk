@@ -148,13 +148,6 @@ export async function testImage(payload) {
   }
 }
 
-export async function uploadFile(file) {
-  const res = await fetch(`${BASE}upload`, { method: 'POST', headers: { 'content-type': file.type }, body: file })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || t('上传失败'))
-  return data
-}
-
 /**
  * 现在就出一批。当天已成功过且没带 force 时返回 { conflict: true }，由界面确认后再带 force 调用。
  * 已有一轮在跑（busy）时只提示，不弹确认。

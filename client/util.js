@@ -29,11 +29,6 @@ export function fmtDate(iso) {
   return `${d.getMonth() + 1}月${d.getDate()}日`
 }
 
-export function fmtWhen(iso) {
-  if (!iso) return t('未排期')
-  return `${fmtDate(iso)} ${fmtTime(iso)}`
-}
-
 export function relativeDay(iso) {
   const diff = Math.round((new Date(dayKey(iso)) - new Date(dayKey(new Date()))) / 86400000)
   if (diff === 0) return t('今天')
@@ -54,62 +49,6 @@ export function compact(n) {
   if (n === null || n === undefined) return '—'
   if (n >= 10000) return `${(n / 10000).toFixed(n >= 100000 ? 0 : 1)}万`
   return n.toLocaleString()
-}
-
-function escapeHtml(text) {
-  return text.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]))
-}
-
-function inline(text) {
-  return escapeHtml(text)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-}
-
-/** 草稿预览用的极简 Markdown：先转义，再处理结构，模型输出里的 HTML 不会被执行。 */
-export function renderMarkdown(source) {
-  const lines = source.split('\n')
-  const out = []
-  let i = 0
-  while (i < lines.length) {
-    const line = lines[i]
-    if (/^\s*$/.test(line)) { i += 1; continue }
-    const heading = /^(#{1,4})\s+(.*)$/.exec(line)
-    if (heading) { out.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`); i += 1; continue }
-    if (/^>\s?/.test(line)) {
-      const quote = []
-      while (i < lines.length && /^>\s?/.test(lines[i])) { quote.push(inline(lines[i].replace(/^>\s?/, ''))); i += 1 }
-      out.push(`<blockquote>${quote.join('<br>')}</blockquote>`)
-      continue
-    }
-    if (/^\|.*\|\s*$/.test(line) && /^\|[\s:|-]+\|\s*$/.test(lines[i + 1] || '')) {
-      const cells = row => row.trim().replace(/^\||\|$/g, '').split('|').map(c => inline(c.trim()))
-      const head = cells(line)
-      i += 2
-      const body = []
-      while (i < lines.length && /^\|.*\|\s*$/.test(lines[i])) { body.push(cells(lines[i])); i += 1 }
-      out.push(`<table><thead><tr>${head.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>${body.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`)
-      continue
-    }
-    if (/^\s*([-*·]|\d+\.)\s+/.test(line)) {
-      const ordered = /^\s*\d+\./.test(line)
-      const rows = []
-      while (i < lines.length && /^\s*([-*·]|\d+\.)\s+/.test(lines[i])) { rows.push(`<li>${inline(lines[i].replace(/^\s*([-*·]|\d+\.)\s+/, ''))}</li>`); i += 1 }
-      out.push(ordered ? `<ol>${rows.join('')}</ol>` : `<ul>${rows.join('')}</ul>`)
-      continue
-    }
-    const para = []
-    while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^(#{1,4}\s|>|\|)/.test(lines[i]) && !/^\s*([-*·]|\d+\.)\s+/.test(lines[i])) { para.push(inline(lines[i])); i += 1 }
-    if (para.length) out.push(`<p>${para.join('<br>')}</p>`)
-    else { out.push(`<p>${inline(line)}</p>`); i += 1 }
-  }
-  return out.join('')
-}
-
-/** 正文长度：按字数，不算空白。 */
-export function textLength(text) {
-  return text.replace(/\s/g, '').length
 }
 
 const URL_RUN = /https?:\/\/[^\s]+/g

@@ -60,9 +60,13 @@ export async function loadSkillInput({ path, text } = {}, { home = homedir() } =
   if (typeof text === 'string' && text.trim()) {
     body = text.trim()
   } else if (typeof path === 'string' && path.trim()) {
+    // 界面上的示例写的是 ~/...，这里按用户主目录展开
+    let raw = path.trim()
+    if (raw === '~') raw = home
+    else if (raw.startsWith('~/')) raw = join(home, raw.slice(2))
     let dir
     try {
-      dir = await realpath(path.trim())
+      dir = await realpath(raw)
       if (!(await stat(dir)).isDirectory()) throw new Error('not dir')
     } catch {
       throw fail(tr('找不到这个 skill 目录'))
