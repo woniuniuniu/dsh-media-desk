@@ -193,6 +193,58 @@ export async function composeNote(id) {
   }
 }
 
+export async function suggestLongform() {
+  try {
+    const data = await api('longform/suggest', {})
+    setDesk({ state: data.state })
+    return { created: data.created, error: data.error, busy: data.busy }
+  } catch (err) {
+    report(err)
+    return null
+  }
+}
+
+export async function draftLongform(id) {
+  try {
+    const data = await api('longform/draft', { id })
+    setDesk({ state: data.state })
+    return true
+  } catch (err) {
+    report(err)
+    return false
+  }
+}
+
+export async function reviseLongform(id, instruction) {
+  try {
+    const data = await api('longform/revise', { id, instruction })
+    setDesk({ state: data.state })
+    return true
+  } catch (err) {
+    report(err)
+    return false
+  }
+}
+
+export async function extractOwnVoice() {
+  try {
+    const data = await api('voice/extract-own', {})
+    return data.style
+  } catch (err) {
+    report(err)
+    return null
+  }
+}
+
+export async function fetchInsights() {
+  try {
+    return await api('insights')
+  } catch (err) {
+    report(err)
+    return null
+  }
+}
+
 /** 给候选稿配图（排期页使用）。 */
 export async function makeImage(id) {
   try {

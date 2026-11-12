@@ -206,3 +206,54 @@ export const PLACEHOLDER = '【此处填你的经历】'
 export function needsStoryConfirm(text) {
   return typeof text === 'string' && text.includes(PLACEHOLDER)
 }
+
+export function linePath(series, width, height, pad = 8) {
+  const rows = (Array.isArray(series) ? series : []).filter(row => Number.isFinite(row?.count)).sort((a, b) => String(a.day).localeCompare(String(b.day)))
+  if (!rows.length) return ''
+  if (![width, height, pad].every(Number.isFinite)) return ''
+  const counts = rows.map(row => row.count)
+  const min = counts.reduce((a, b) => Math.min(a, b))
+  const max = counts.reduce((a, b) => Math.max(a, b))
+  // 先缩放计数，避免两个有限极值相减溢出。
+  const scale = Math.max(Math.abs(min), Math.abs(max), 1)
+  const round = n => Number.isFinite(n) ? Number(n.toFixed(1)) : 0
+  return rows.map((row, i) => {
+    const fraction = rows.length === 1 ? 0.5 : i / (rows.length - 1)
+    const level = min === max ? 0.5 : (row.count / scale - min / scale) / (max / scale - min / scale)
+    const x = pad * (1 - fraction) + (width - pad) * fraction
+    const y = (height - pad) * (1 - level) + pad * level
+    return `${i ? 'L' : 'M'} ${round(x)},${round(y)}`
+  }).join(' ')
+}
+
+export function groupLongforms(longforms) {
+  const groups = { idea: [], draft: [], done: [] }
+  for (const row of longforms) if (Object.hasOwn(groups, row.status)) groups[row.status].push(row)
+  const time = row => Number.isFinite(Date.parse(row.updatedAt)) ? Date.parse(row.updatedAt) : -Infinity
+  for (const rows of Object.values(groups)) rows.sort((a, b) => time(b) - time(a))
+  return groups
+}
+
+export function splitPlaceholder(text) {
+  const parts = text.split(PLACEHOLDER)
+  const segments = []
+  parts.forEach((part, i) => {
+    if (i) segments.push({ text: PLACEHOLDER, mark: true })
+    if (part) segments.push({ text: part, mark: false })
+  })
+  return segments
+}
+
+export function mineLink(mine, ownHandle) {
+  if (typeof mine.url === 'string' && mine.url.startsWith('https://x.com/')) return mine.url
+  return typeof ownHandle === 'string' && HANDLE.test(ownHandle) && /^\d{5,25}$/.test(mine.id)
+    ? `https://x.com/${ownHandle}/status/${mine.id}` : null
+}
+
+export function pct(n) {
+  return Number.isFinite(n) ? `${Math.round(n * 100)}%` : '—'
+}
+
+export function signed(n) {
+  return Number.isFinite(n) ? `${n > 0 ? '+' : ''}${n}` : '—'
+}
