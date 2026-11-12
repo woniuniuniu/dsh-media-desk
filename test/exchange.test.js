@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { Exchange, parseDecision, parsePost } from '../src/exchange.js'
+import { Exchange, parseDecision, parseMine, parsePost, parseReplyDraft } from '../src/exchange.js'
 
 const POST = { schema: 1, handle: 'karpathy', postId: '1855000000000000001', text: 'hello', postedAt: '2026-11-11T01:00:00Z', fetchedAt: '2026-11-11T03:00:00Z', metrics: { likes: 10, replies: 2, reposts: 3, quotes: 1, views: 900 }, isRepost: false, url: 'https://evil.example/x' }
 const LATER = () => Date.now() + 60_000
@@ -182,6 +182,12 @@ test('示例文件都能通过校验，不会过期', async () => {
     assert.ok(d, f)
     assert.equal(d.candidateId, 'c_sample1')
   }
+  const mine = await readdir(new URL('mine/', base))
+  const replies = await readdir(new URL('replies/', base))
+  assert.equal(mine.length, 5)
+  assert.equal(replies.length, 2)
+  for (const f of mine) assert.ok(parseMine(JSON.parse(await readFile(new URL(`mine/${f}`, base), 'utf8'))), f)
+  for (const f of replies) assert.ok(parseReplyDraft(JSON.parse(await readFile(new URL(`replies/${f}`, base), 'utf8'))), f)
 })
 test('点开头的文件和子目录被静默忽略', async () => {
   const ex = await fresh({ now: LATER })

@@ -1,5 +1,6 @@
 import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { safeText } from './inbox.js'
 
 const DIRS = ['posts', 'decisions', 'drafts', 'voice', 'replies', 'mine']
 const MAX_FILE_BYTES = 65536
@@ -64,7 +65,64 @@ export function parseDecision(raw) {
   }
 }
 
-const PARSERS = { posts: parsePost, decisions: parseDecision }
+const MINE_KINDS = new Set(['post', 'reply', 'quote'])
+
+/** 负责人自己账号发出的一条内容。返回 {mine, followers}：粉丝数由调用方记入序列，不属于 mine 本身。 */
+export function parseMine(raw, { ownHandle } = {}) {
+  if (!raw || typeof raw !== 'object' || raw.schema !== 1) return null
+  if (typeof raw.postId !== 'string' || !POST_ID.test(raw.postId)) return null
+  const kind = raw.kind === undefined ? 'post' : raw.kind
+  if (typeof kind !== 'string' || !MINE_KINDS.has(kind)) return null
+  if (typeof raw.text !== 'string') return null
+  const postedAt = isoTime(raw.postedAt)
+  const fetchedAt = isoTime(raw.fetchedAt)
+  if (!postedAt || !fetchedAt) return null
+  const m = raw.metrics && typeof raw.metrics === 'object' ? raw.metrics : {}
+  const r = raw.inReplyTo
+  const inReplyTo =
+    kind === 'reply' && r && typeof r === 'object' && typeof r.handle === 'string' && HANDLE.test(r.handle) && typeof r.postId === 'string' && POST_ID.test(r.postId)
+      ? { handle: r.handle, postId: r.postId }
+      : null
+  const f = raw.followers
+  const followers = Number.isInteger(f) && f >= 0 && f <= 1e9 ? f : null
+  return {
+    mine: {
+      id: raw.postId,
+      kind,
+      text: safeText(raw.text, 4000),
+      url: typeof ownHandle === 'string' && HANDLE.test(ownHandle) ? `https://x.com/${ownHandle}/status/${raw.postId}` : null,
+      postedAt,
+      fetchedAt,
+      likes: count(m.likes),
+      replies: count(m.replies),
+      reposts: count(m.reposts),
+      quotes: count(m.quotes),
+      views: count(m.views),
+      inReplyTo,
+      candidateId: null,
+      replyId: null,
+    },
+    followers,
+  }
+}
+
+/** Grok Bot 起草并通知过的一次回复。id 由调用方分配。 */
+export function parseReplyDraft(raw) {
+  if (!raw || typeof raw !== 'object' || raw.schema !== 1) return null
+  if (typeof raw.toHandle !== 'string' || !HANDLE.test(raw.toHandle)) return null
+  if (typeof raw.toPostId !== 'string' || !POST_ID.test(raw.toPostId)) return null
+  if (!Array.isArray(raw.drafts)) return null
+  const drafts = raw.drafts
+    .filter(d => typeof d === 'string' && d.trim())
+    .slice(0, 3)
+    .map(d => safeText(d.trim(), 1000))
+  if (!drafts.length) return null
+  const notifiedAt = isoTime(raw.notifiedAt)
+  if (!notifiedAt) return null
+  return { toHandle: raw.toHandle, toPostId: raw.toPostId, drafts, notifiedAt, sentText: null, sentAt: null }
+}
+
+const PARSERS = { posts: parsePost, decisions: parseDecision, mine: parseMine, replies: parseReplyDraft }
 
 async function writeAtomic(path, content) {
   const tmp = `${path}.${process.pid}.tmp`
@@ -91,7 +149,7 @@ export class Exchange {
     }
   }
 
-  async readNew(kind) {
+  async readNew(kind, opts = {}) {
     const parse = PARSERS[kind]
     if (!parse) throw new Error(`未知的交换目录：${kind}`)
     const dir = join(this.root, kind)
@@ -137,7 +195,7 @@ export class Exchange {
       let why = '不是有效的 JSON'
       try {
         const parsed = JSON.parse(buf.toString('utf8'))
-        item = parse(parsed)
+        item = parse(parsed, opts)
         if (!item) why = '内容不符合格式'
       } catch {}
       if (item) {

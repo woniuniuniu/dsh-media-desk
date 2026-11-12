@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "postId": "1856000000000000004",
+  "kind": "reply",
+  "text": "Sample: agreed, and the evals are also the best onboarding doc a new teammate can read.",
+  "postedAt": "2026-11-11T09:20:00Z",
+  "fetchedAt": "2026-11-11T14:00:00Z",
+  "metrics": {
+    "likes": 31,
+    "replies": 3,
+    "reposts": 2,
+    "quotes": 0,
+    "views": 4100
+  },
+  "inReplyTo": {
+    "handle": "karpathy",
+    "postId": "1855000000000000001"
+  },
+  "followers": 1287
+}

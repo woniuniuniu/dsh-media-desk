@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "postId": "1856000000000000002",
+  "kind": "post",
+  "text": "Sample: longer context windows do not remove the need to choose what goes in. Curating the prompt is still the work.",
+  "postedAt": "2026-11-11T05:10:00Z",
+  "fetchedAt": "2026-11-11T14:00:00Z",
+  "metrics": {
+    "likes": 142,
+    "replies": 15,
+    "reposts": 21,
+    "quotes": 4,
+    "views": 23800
+  },
+  "followers": 1231
+}

@@ -11,12 +11,33 @@ export function emptyState() {
     candidates: [],
     voice: { core: null, types: defaultTypes() },
     rules: [],
-    runs: { lastComposeDay: null, lastComposeError: null, lastComposeAt: null, lastComposeOutcome: null, notices: [], imagesDay: null, imagesCount: 0 },
+    mine: [],
+    replyDrafts: [],
+    followers: [],
+    proposals: [],
+    longforms: [],
+    runs: {
+      lastComposeDay: null,
+      lastComposeError: null,
+      lastComposeAt: null,
+      lastComposeOutcome: null,
+      notices: [],
+      imagesDay: null,
+      imagesCount: 0,
+      lastLearnDay: null,
+      learnedPairs: 0,
+      ownVoicePrompted: false,
+      lastLongformWeek: null,
+    },
   }
 }
 
 /** 旧版数据不迁移：不是第 2 版就直接从空状态开始。 */
 export function migrateState(raw) {
   if (!raw || typeof raw !== 'object' || raw.version !== 2) return emptyState()
-  return { ...emptyState(), ...raw, runs: { ...emptyState().runs, ...(raw.runs ?? {}) }, voice: { ...emptyState().voice, ...(raw.voice ?? {}) } }
+  const base = emptyState()
+  const candidates = Array.isArray(raw.candidates)
+    ? raw.candidates.map(c => (c && typeof c === 'object' ? { sentText: null, sentPostId: null, sentAt: null, ...c } : c))
+    : raw.candidates
+  return { ...base, ...raw, candidates, runs: { ...base.runs, ...(raw.runs ?? {}) }, voice: { ...base.voice, ...(raw.voice ?? {}) } }
 }

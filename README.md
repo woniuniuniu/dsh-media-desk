@@ -10,9 +10,9 @@
 
 插件和外界交换内容靠一个"交换文件夹"，默认是 `~/.dsh/x-desk/exchange/`，也可以在设置里换成别的目录（不能设在原版插件的数据目录里）。里面按用途分子文件夹，每个文件都是一个小的文本文件（JSON 格式）。
 
-## 交换文件夹里的四种文件
+## 交换文件夹里的六种文件
 
-下面每种各给一个例子，写法与 `scripts/sample-exchange/` 里的示例完全一致。
+下面每种各给一个例子（第 5、6 种已能读入并保存，插件拿它们做什么会在后续步骤里加上），写法与 `scripts/sample-exchange/` 里的示例完全一致。
 
 **1. 帖子文件（放进 `posts/`）**：别人把读到的帖子放进来，插件读入后用来选题。
 
@@ -75,6 +75,36 @@
 ```
 
 `SKILL.md` 是当前写作风格的说明，供外部工具参考：开头是名称和一句描述，正文依次是「风格」（核心风格；引入 skill 的用精简版）、「规则」（当前生效的写作规则）、「边界」（只起草和通知，不代为发送、点赞、转发或关注）。内容类型各自的结构要求不在这里面。
+
+**5. 自己发出的内容（放进 `mine/`）**：外部工具把你自己账号发出的一条内容放进来，插件读入并保存，保留 180 天。`kind` 是 `post`、`reply` 或 `quote`，缺省按 `post`；只有 `reply` 才带 `inReplyTo`；`followers` 是读取时的粉丝数，可省略。链接不读文件里的值，由设置里的"自己的账号名"和 `postId` 拼出，没设置时没有链接。目前只是读入和保存，还没有别的用途。
+
+<!-- example: mine -->
+```json
+{
+  "schema": 1,
+  "postId": "1856000000000000004",
+  "kind": "reply",
+  "text": "Sample: agreed, and the evals are also the best onboarding doc a new teammate can read.",
+  "postedAt": "2026-11-11T09:20:00Z",
+  "fetchedAt": "2026-11-11T14:00:00Z",
+  "metrics": { "likes": 31, "replies": 3, "reposts": 2, "quotes": 0, "views": 4100 },
+  "inReplyTo": { "handle": "karpathy", "postId": "1855000000000000001" },
+  "followers": 1287
+}
+```
+
+**6. 回复草稿（放进 `replies/`）**：外部工具替你起草并通知过的一次回复，1 到 3 条草稿，插件读入并保存，保留 90 天。同样只是读入和保存，还没有别的用途。
+
+<!-- example: replies -->
+```json
+{
+  "schema": 1,
+  "toHandle": "karpathy",
+  "toPostId": "1855000000000000001",
+  "drafts": ["Sample: agreed. Ten real cases written before the first prompt beat a hundred synthetic ones afterwards."],
+  "notifiedAt": "2026-11-11T03:10:00Z"
+}
+```
 
 ## 不连任何外部服务，怎么试一下
 

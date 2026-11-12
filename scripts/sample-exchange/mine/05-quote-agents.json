@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "postId": "1856000000000000005",
+  "kind": "quote",
+  "text": "Sample: the useful part of an agent is the boring loop around the model: retries, checks, and a clear stop condition.",
+  "postedAt": "2026-11-11T11:05:00Z",
+  "fetchedAt": "2026-11-11T14:00:00Z",
+  "metrics": {
+    "likes": 97,
+    "replies": 11,
+    "reposts": 14,
+    "quotes": 3,
+    "views": 17600
+  },
+  "followers": 1322
+}

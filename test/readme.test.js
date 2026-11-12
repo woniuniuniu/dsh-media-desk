@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { Exchange, parseDecision, parsePost } from '../src/exchange.js'
+import { Exchange, parseDecision, parseMine, parsePost, parseReplyDraft } from '../src/exchange.js'
 import { emptyState } from '../src/seed.js'
 import { watchlistJson } from '../src/voice.js'
 
@@ -50,4 +50,17 @@ test('README 的候选稿示例与 writeDraft 写出的字段完全一致', asyn
 test('README 的账号名单示例与 watchlistJson 的字段完全一致', async () => {
   const [example] = await of('watchlist')
   assert.deepEqual(Object.keys(example).sort(), Object.keys(watchlistJson(emptyState())).sort())
+})
+
+test('README 的自己发出内容示例能被 parseMine 读入，且是回复', async () => {
+  const list = await of('mine')
+  assert.ok(list.length >= 1)
+  for (const raw of list) assert.ok(parseMine(raw, { ownHandle: 'me' }), JSON.stringify(raw))
+  assert.ok(parseMine(list[0]).mine.inReplyTo)
+})
+
+test('README 的回复草稿示例能被 parseReplyDraft 读入', async () => {
+  const list = await of('replies')
+  assert.ok(list.length >= 1)
+  for (const raw of list) assert.ok(parseReplyDraft(raw), JSON.stringify(raw))
 })

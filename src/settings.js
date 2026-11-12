@@ -9,6 +9,7 @@ const DEFAULTS = {
   // 助手文字模型：空对象表示跟随 DeepSeek Harness 默认模型
   assistant: { provider: '', model: '' },
   exchangeDir: '',
+  ownHandle: '',
   composeAt: '07:00',
   slots: ['09:00', '12:30', '18:00', '21:00', '22:30'],
   dailyCandidates: 7,
@@ -110,6 +111,11 @@ export class Settings {
       if (dir === null || dir.length > 500 || (dir && !isAbsolute(dir))) throw Object.assign(new Error(tr('交换文件夹要留空，或填一个绝对路径')), { status: 400 })
       if (dir && insideOldPluginDir(dir)) throw Object.assign(new Error(tr('交换文件夹不能放在原版插件的数据目录里')), { status: 400 })
       next.exchangeDir = dir
+    }
+    if (patch.ownHandle !== undefined) {
+      const handle = typeof patch.ownHandle === 'string' ? patch.ownHandle.trim().replace(/^@/, '') : null
+      if (handle === null || (handle && !/^[A-Za-z0-9_]{1,15}$/.test(handle))) throw Object.assign(new Error(tr('账号名只能是字母、数字、下划线，最多 15 个字符')), { status: 400 })
+      next.ownHandle = handle
     }
     if (patch.composeAt !== undefined) next.composeAt = checkTime(patch.composeAt, '成稿时间')
     if (patch.slots !== undefined) {

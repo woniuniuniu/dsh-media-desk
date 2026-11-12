@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "postId": "1856000000000000001",
+  "kind": "post",
+  "text": "Sample: a small model with a clean eval set is easier to trust than a big one nobody measures. Start with ten real cases.",
+  "postedAt": "2026-11-11T02:30:00Z",
+  "fetchedAt": "2026-11-11T14:00:00Z",
+  "metrics": {
+    "likes": 86,
+    "replies": 9,
+    "reposts": 12,
+    "quotes": 2,
+    "views": 14200
+  },
+  "followers": 1204
+}
