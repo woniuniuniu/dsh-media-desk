@@ -1,7 +1,7 @@
 // 后台处理：每分钟读入素材和处理结果，每天定时成稿，并把候选稿写回交换文件夹。
 // 交换文件夹里的内容是不可信数据，这里只做合并和状态迁移；模型调用都在 store.mutate 之外。
 import { isAbsolute, join } from 'node:path'
-import { applyDecision, expire, intentUrl } from './inbox.js'
+import { applyDecision, expire, intentUrl, safeText } from './inbox.js'
 import { newId } from './ops.js'
 import { exportSkillMarkdown, watchlistJson } from './voice.js'
 
@@ -9,6 +9,7 @@ const TICK_MS = 60_000
 const RETRY_MS = 30 * 60_000
 const KEEP_POSTS_MS = 14 * 24 * 3600e3
 const MAX_NOTICES = 50
+const MAX_NOTICE_CHARS = 200
 const TAKEN_NOTICE = '后台处理被另一个进程接管，本轮已停止'
 
 const pad = n => String(n).padStart(2, '0')
@@ -33,8 +34,9 @@ export function countImage(state, now) {
   state.runs.imagesCount = used + 1
 }
 
-/** 在 state.runs.notices 末尾追加一条提示；与上一条相同则不重复，最多留 50 条。 */
-export function addNotice(state, text, now) {
+/** 在 state.runs.notices 末尾追加一条提示（截到 200 字）；与上一条相同则不重复，最多留 50 条。 */
+export function addNotice(state, raw, now) {
+  const text = safeText(raw, MAX_NOTICE_CHARS)
   const notices = state.runs.notices
   if (notices.at(-1)?.text === text) return
   notices.push({ id: newId('n'), at: now.toISOString(), text })
@@ -52,6 +54,8 @@ export class Worker {
     this.lastAttemptAt = null
     this.voiceMemo = null
     this.inflight = null
+    // 停止后置为 true；热重载留下的旧实例在每一步之前看到它就不再写
+    this.stopped = false
   }
 
   /** 记下一次成稿尝试（手动成稿也算），30 分钟内后台不再重试。 */
@@ -60,7 +64,7 @@ export class Worker {
   }
 
   async tick() {
-    if (!(await this.lock.acquire())) return { ran: false }
+    if (this.stopped || !(await this.lock.acquire())) return { ran: false }
     const now = this.now()
     const settings = await this.settings.read()
     const exchange = this.exchangeFor(settings)
@@ -73,6 +77,8 @@ export class Worker {
       await this.#notice(TAKEN_NOTICE)
       return { ran: true, aborted: true }
     }
+    const halted = { ran: true, stopped: true }
+    if (this.stopped) return halted
 
     await this.store.mutate('后台处理', s => {
       const notice = text => addNotice(s, text, now)
@@ -105,6 +111,7 @@ export class Worker {
     await decisions.commit()
 
     for (const decision of pendingModel) {
+      if (this.stopped) return halted
       if (!(await this.lock.acquire())) return abort()
       try {
         if (!decision.text) throw new Error('没有附带文字')
@@ -115,12 +122,14 @@ export class Worker {
       }
     }
 
+    if (this.stopped) return halted
     if (!(await this.lock.acquire())) return abort()
     try {
       await this.#composeIfDue(settings, now)
     } catch (err) {
       await this.#notice(`每日成稿出错：${err.message}`)
     }
+    if (this.stopped) return halted
     if (!(await this.lock.acquire())) return abort()
     await this.#exportAll(exchange)
     return { ran: true }
@@ -135,7 +144,7 @@ export class Worker {
     if (state.runs.lastComposeDay === localDay(now) || localTime(now) < settings.composeAt) return
     if (this.lastAttemptAt !== null && now.getTime() - this.lastAttemptAt < RETRY_MS) return
     this.lastAttemptAt = now.getTime()
-    await this.composer.composeDaily({ undoable: false, beforeCall: () => this.lock.acquire() })
+    await this.composer.composeDaily({ undoable: false, beforeCall: async () => !this.stopped && this.lock.acquire() })
   }
 
   async #exportAll(exchange) {
@@ -152,7 +161,8 @@ export class Worker {
     }
     const watchlist = watchlistJson(state)
     const skillMarkdown = exportSkillMarkdown(state)
-    const memo = JSON.stringify(watchlist) + skillMarkdown
+    // 换了交换文件夹时新文件夹也要写一份
+    const memo = JSON.stringify([exchange.root, watchlist, skillMarkdown])
     if (memo !== this.voiceMemo) {
       await exchange.writeVoice({ watchlist, skillMarkdown })
       this.voiceMemo = memo
@@ -161,8 +171,9 @@ export class Worker {
 
   /** 立即执行一次，之后每 60 秒一次。返回的函数停止定时器并释放锁。 */
   start() {
+    this.stopped = false
     const run = () => {
-      if (this.inflight) return
+      if (this.stopped || this.inflight) return
       this.inflight = this.tick()
         .catch(err => this.#notice(`后台处理出错：${err.message}`).catch(() => {}))
         .finally(() => { this.inflight = null })
@@ -171,6 +182,7 @@ export class Worker {
     const timer = setInterval(run, TICK_MS)
     timer.unref?.()
     return () => {
+      this.stopped = true
       clearInterval(timer)
       return Promise.resolve(this.inflight).catch(() => {}).then(() => this.lock.release()).catch(() => {})
     }

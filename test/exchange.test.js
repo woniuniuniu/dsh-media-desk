@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -60,21 +60,60 @@ test('Review Focus 1：坏文件被跳过并报告，好文件照常读入，且
   assert.equal(second.items.length, 0)
   assert.equal(second.skipped.length, 0)
 })
-test('已处理记录只保留最近 5000 个名字，按文件名升序读入', async () => {
+test('已处理记录按文件名升序读入；不设条数上限，几千个文件也不会被反复读', async () => {
   const ex = await fresh({ now: LATER })
   await writeFile(join(ex.root, 'posts', 'b.json'), JSON.stringify({ ...POST, postId: '1855000000000000002' }))
   await writeFile(join(ex.root, 'posts', 'a.json'), JSON.stringify(POST))
   const r = await ex.readNew('posts')
   assert.deepEqual(r.items.map(p => p.id), ['1855000000000000001', '1855000000000000002'])
   await r.commit()
-  const seen = JSON.parse(await readFile(join(ex.root, '.seen-posts.json'), 'utf8'))
-  assert.deepEqual(seen, ['a.json', 'b.json'])
-  await writeFile(join(ex.root, '.seen-posts.json'), JSON.stringify(Array.from({ length: 6000 }, (_, i) => `n${i}.json`)))
-  await writeFile(join(ex.root, 'posts', 'c.json'), JSON.stringify(POST))
+  assert.deepEqual(JSON.parse(await readFile(join(ex.root, '.seen-posts.json'), 'utf8')), ['a.json', 'b.json'])
+  const body = JSON.stringify(POST)
+  for (let i = 0; i < 6000; i += 1) await writeFile(join(ex.root, 'decisions', `d${String(i).padStart(4, '0')}.json`), body.replace('"schema":1', '"schema":2'))
+  const first = await ex.readNew('decisions')
+  assert.equal(first.skipped.length, 6000)
+  await first.commit()
+  assert.equal(JSON.parse(await readFile(join(ex.root, '.seen-decisions.json'), 'utf8')).length, 6000)
+  for (const round of [2, 3]) {
+    const again = await ex.readNew('decisions')
+    assert.deepEqual(plain(again), { items: [], skipped: [] }, `第 ${round} 次`)
+    await again.commit()
+  }
+})
+test('修改时间超过 30 天的文件完全忽略：不读、不报、不记', async () => {
+  const ex = await fresh({ now: LATER })
+  const old = join(ex.root, 'posts', 'old.json')
+  await writeFile(old, JSON.stringify(POST))
+  await writeFile(join(ex.root, 'posts', 'old bad name.json'), '{oops')
+  const past = new Date(Date.now() - 31 * 24 * 3600e3)
+  await utimes(old, past, past)
+  await utimes(join(ex.root, 'posts', 'old bad name.json'), past, past)
+  await writeFile(join(ex.root, 'posts', 'new.json'), JSON.stringify(POST))
+  const r = await ex.readNew('posts')
+  assert.equal(r.items.length, 1)
+  assert.deepEqual(r.skipped, [])
+  await r.commit()
+  assert.deepEqual(JSON.parse(await readFile(join(ex.root, '.seen-posts.json'), 'utf8')), ['new.json'])
+})
+test('已处理记录在 commit 时去掉已删除或超过 30 天的文件名', async () => {
+  const ex = await fresh({ now: LATER })
+  for (const n of ['a', 'b', 'c']) await writeFile(join(ex.root, 'posts', `${n}.json`), JSON.stringify(POST))
   await (await ex.readNew('posts')).commit()
-  const trimmed = JSON.parse(await readFile(join(ex.root, '.seen-posts.json'), 'utf8'))
-  assert.equal(trimmed.length, 5000)
-  assert.equal(trimmed.at(-1), 'c.json')
+  await rm(join(ex.root, 'posts', 'a.json'))
+  const past = new Date(Date.now() - 31 * 24 * 3600e3)
+  await utimes(join(ex.root, 'posts', 'b.json'), past, past)
+  await writeFile(join(ex.root, 'posts', 'd.json'), JSON.stringify(POST))
+  const r = await ex.readNew('posts')
+  assert.equal(r.items.length, 1)
+  await r.commit()
+  assert.deepEqual(JSON.parse(await readFile(join(ex.root, '.seen-posts.json'), 'utf8')), ['c.json', 'd.json'])
+  assert.deepEqual(plain(await ex.readNew('posts')), { items: [], skipped: [] })
+})
+test('互动数最多记到 1e12', () => {
+  const p = parsePost({ ...POST, metrics: { likes: 1e300, views: 5e12, replies: 7 } })
+  assert.equal(p.likes, 1e12)
+  assert.equal(p.views, 1e12)
+  assert.equal(p.replies, 7)
 })
 test('decisions 目录同样读入并校验', async () => {
   const ex = await fresh({ now: LATER })

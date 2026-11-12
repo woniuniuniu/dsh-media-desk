@@ -345,3 +345,41 @@ test('一条候选稿写不出去不影响其他稿子，留一条点名的提�
   assert.ok((await store.read()).runs.notices.some(n => n.text.includes('c_bad1') && n.text.includes('写坏了')))
   assert.ok((await readFile(join(ex.root, 'voice', 'SKILL.md'), 'utf8')).length > 0)
 })
+
+test('提示文字最多 200 字', () => {
+  const s = { runs: { notices: [] } }
+  addNotice(s, '错'.repeat(500), NOW)
+  assert.equal(s.runs.notices[0].text.length, 200)
+})
+
+test('换了交换文件夹后，新文件夹里也会写出 voice/', async () => {
+  const { worker, store, root, ex } = await setup({ samples: false, exchangeFor: () => holder.current })
+  const holder = { current: ex }
+  worker.exchangeFor = () => holder.current
+  await store.mutate('seed', s => { s.runs.lastComposeDay = TODAY }, { undoable: false })
+  await worker.tick()
+  holder.current = new Exchange(join(root, 'other-exchange'))
+  await worker.tick()
+  assert.ok((await readFile(join(root, 'other-exchange', 'voice', 'SKILL.md'), 'utf8')).includes('不代为发送'))
+})
+
+test('停止之后旧实例不再写任何东西，进行中的这一轮在下一步之前停下', async () => {
+  const { worker, store, ex } = await setup({ samples: false })
+  await store.mutate('seed', s => { s.candidates.push(candidate('c_real1')); s.runs.lastComposeDay = TODAY }, { undoable: false })
+  await decisionFile(ex, 'v.json', { candidateId: 'c_real1', action: 'view', text: '看法' })
+  const stop = worker.start()
+  await stop()
+  await writeFile(join(ex.root, 'posts', 'p.json'), await readFile(join(SAMPLES, SAMPLE_FILES[0]), 'utf8'))
+  assert.equal((await worker.tick()).ran, false)
+  assert.equal((await store.read()).posts.length, 0)
+
+  const fresh = await setup({ samples: false })
+  await fresh.store.mutate('seed', s => { s.candidates.push(candidate('c_real1')); s.runs.lastComposeDay = TODAY }, { undoable: false })
+  await decisionFile(fresh.ex, 'v.json', { candidateId: 'c_real1', action: 'view', text: '看法' })
+  let stopFresh
+  fresh.worker.composer.revise = async () => { await stopFresh() }
+  stopFresh = () => { fresh.worker.stopped = true; return Promise.resolve() }
+  await fresh.worker.tick()
+  assert.deepEqual(await readdir(join(fresh.ex.root, 'drafts')), [])
+  assert.ok(!(await fresh.store.read()).runs.notices.some(n => n.text.includes('接管')))
+})

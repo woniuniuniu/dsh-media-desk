@@ -3,7 +3,8 @@ import { join } from 'node:path'
 
 const DIRS = ['posts', 'decisions', 'drafts', 'voice', 'replies', 'mine']
 const MAX_FILE_BYTES = 65536
-const MAX_SEEN = 5000
+const MAX_AGE_MS = 30 * 24 * 3600e3
+const MAX_COUNT = 1e12
 const FRESH_MS = 10_000
 const FILE_NAME = /^[\w.-]{1,120}\.json$/
 const HANDLE = /^[A-Za-z0-9_]{1,15}$/
@@ -19,7 +20,7 @@ function isoTime(v) {
 }
 
 function count(v) {
-  return Number.isInteger(v) && v > 0 ? v : 0
+  return Number.isInteger(v) && v > 0 ? Math.min(v, MAX_COUNT) : 0
 }
 
 export function parsePost(raw) {
@@ -105,16 +106,23 @@ export class Exchange {
     const skipped = []
     const processed = []
     for (const name of names) {
+      const path = join(dir, name)
+      let info
+      try {
+        info = await stat(path)
+      } catch (e) {
+        if (e.code !== 'ENOENT') skipped.push({ file: name, why: '读取失败' })
+        continue
+      }
+      // 超过 30 天的文件完全忽略：不读、不报、不记，已处理记录因此不会无限增长
+      if (this.now() - info.mtimeMs > MAX_AGE_MS) continue
       if (!FILE_NAME.test(name)) {
         skipped.push({ file: name, why: '文件名不合规' })
         processed.push(name)
         continue
       }
-      const path = join(dir, name)
-      let info
       let buf
       try {
-        info = await stat(path)
         if (info.size <= MAX_FILE_BYTES) buf = await readFile(path)
       } catch (e) {
         if (e.code !== 'ENOENT') skipped.push({ file: name, why: '读取失败' })
@@ -145,7 +153,15 @@ export class Exchange {
     const commit = async () => {
       if (done || !processed.length) return
       done = true
-      const next = [...(await this.#loadSeen(kind)), ...processed].slice(-MAX_SEEN)
+      // 只留目录里还在、且 30 天内的文件名：记录的长度由目录内容决定，不设条数上限
+      const next = []
+      for (const name of new Set([...(await this.#loadSeen(kind)), ...processed])) {
+        try {
+          if (this.now() - (await stat(join(dir, name))).mtimeMs <= MAX_AGE_MS) next.push(name)
+        } catch (e) {
+          if (e.code !== 'ENOENT') next.push(name)
+        }
+      }
       await writeAtomic(join(this.root, `.seen-${kind}.json`), JSON.stringify(next))
     }
     return { items, skipped, commit }
