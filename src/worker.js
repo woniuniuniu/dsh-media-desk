@@ -5,7 +5,7 @@ import { applyDecision, expire, intentUrl } from './inbox.js'
 import { isoWeek } from './longform.js'
 import { matchSent } from './match.js'
 import { newId } from './ops.js'
-import { addNotice, localDay } from './runs.js'
+import { addNotice, localDay, SKEW_MS } from './runs.js'
 import { exportSkillMarkdown, watchlistJson } from './voice.js'
 
 const TICK_MS = 60_000
@@ -15,6 +15,9 @@ const DAY_MS = 24 * 3600e3
 const KEEP_MINE_MS = 180 * DAY_MS
 const KEEP_REPLIES_MS = 90 * DAY_MS
 const KEEP_FOLLOWERS_MS = 400 * DAY_MS
+export const MAX_MINE = 5000
+export const MAX_REPLY_DRAFTS = 2000
+export const MAX_FOLLOWERS = 400
 const METRICS = ['likes', 'replies', 'reposts', 'quotes', 'views']
 const TAKEN_NOTICE = '后台处理被另一个进程接管，本轮已停止'
 
@@ -39,6 +42,13 @@ export function countImage(state, now) {
   const used = imagesUsedToday(state, now)
   state.runs.imagesDay = localDay(now)
   state.runs.imagesCount = used + 1
+}
+
+/** 超过 cap 条时丢掉最旧的，其余保持原有顺序。 */
+function capNewest(rows, cap, time) {
+  if (rows.length <= cap) return rows
+  const keep = new Set([...rows].sort((a, b) => time(b) - time(a)).slice(0, cap))
+  return rows.filter(r => keep.has(r))
 }
 
 export class Worker {
@@ -170,10 +180,18 @@ export class Worker {
     return this.#guarded('读入自己发出的内容', async () => {
       const mine = await exchange.readNew('mine', { ownHandle: settings.ownHandle })
       const now = this.now()
+      const limit = now.getTime() + SKEW_MS
+      // 发出时间比现在还晚的先不收，文件也不算处理过：时钟快几分钟的机器之后会被正常收下
+      const later = new Set()
+      mine.items.forEach((x, i) => { if (Date.parse(x.mine.postedAt) > limit) later.add(i) })
       await this.store.mutate('读入自己发出的内容', s => {
         for (const { file, why } of mine.skipped) addNotice(s, `交换文件夹里的 mine/${file} 无法读取：${why}`, now)
+        if (later.size) addNotice(s, `有 ${later.size} 条内容的时间比现在还晚，先不收`, now)
         const byId = new Map(s.mine.map(m => [m.id, m]))
-        for (const { mine: item, followers } of mine.items) {
+        mine.items.forEach(({ mine: item, followers }, i) => {
+          if (later.has(i)) return
+          // 抓取时间不会晚于现在；否则一个未来时间会让这条的互动数永远不再更新
+          if (Date.parse(item.fetchedAt) > now.getTime()) item.fetchedAt = now.toISOString()
           const have = byId.get(item.id)
           if (!have) {
             s.mine.push(item)
@@ -184,9 +202,9 @@ export class Worker {
             have.fetchedAt = item.fetchedAt
           }
           if (followers !== null) this.#recordFollowers(s, followers, item.fetchedAt)
-        }
+        })
       }, { undoable: false })
-      await mine.commit()
+      await mine.commit([...later].map(i => mine.itemFiles[i]))
     })
   }
 
@@ -207,30 +225,36 @@ export class Worker {
     return this.#guarded('读入回复草稿', async () => {
       const replies = await exchange.readNew('replies')
       const now = this.now()
+      const limit = now.getTime() + SKEW_MS
+      const later = new Set()
+      replies.items.forEach((x, i) => { if (Date.parse(x.notifiedAt) > limit) later.add(i) })
       await this.store.mutate('读入回复草稿', s => {
         for (const { file, why } of replies.skipped) addNotice(s, `交换文件夹里的 replies/${file} 无法读取：${why}`, now)
+        if (later.size) addNotice(s, `有 ${later.size} 条回复草稿的时间比现在还晚，先不收`, now)
         const key = r => `${r.toPostId}|${r.notifiedAt}`
         const known = new Set(s.replyDrafts.map(key))
-        for (const item of replies.items) {
-          if (known.has(key(item))) continue
+        replies.items.forEach((item, i) => {
+          if (later.has(i) || known.has(key(item))) return
           known.add(key(item))
           s.replyDrafts.push({ id: newId('r'), ...item })
-        }
+        })
       }, { undoable: false })
-      await replies.commit()
+      await replies.commit([...later].map(i => replies.itemFiles[i]))
     })
   }
 
-  /** 认出已发的候选稿和回复、让过期的候选稿过期，并裁掉超过保留期的记录。 */
-  #matchAndTrim(now) {
-    return this.#guarded('识别已发内容', () => this.store.mutate('识别已发内容', s => {
-      matchSent(s, { now })
-      expire(s, now)
-      // 保留期一律按时间裁剪：不为仍指向某条 mine 的候选稿特意多留，那样的候选稿早已过期
+  /** 认出已发的候选稿和回复、让过期的候选稿过期、裁掉超过保留期的记录；三步各自出错各自记提示。 */
+  async #matchAndTrim(now) {
+    await this.#guarded('识别已发内容', () => this.store.mutate('识别已发内容', s => { matchSent(s, { now }) }, { undoable: false }))
+    await this.#guarded('候选稿过期', () => this.store.mutate('候选稿过期', s => { expire(s, now) }, { undoable: false }))
+    await this.#guarded('清理旧记录', () => this.store.mutate('清理旧记录', s => {
+      // 保留期一律按时间裁剪：不为仍指向某条 mine 的候选稿特意多留，那样的候选稿早已过期。
+      // 比现在还晚的（坏文件或时钟错乱）也丢掉；再按条数封顶，先丢最旧的。
       const t = now.getTime()
-      s.mine = s.mine.filter(m => Date.parse(m.postedAt) >= t - KEEP_MINE_MS)
-      s.replyDrafts = s.replyDrafts.filter(r => Date.parse(r.notifiedAt) >= t - KEEP_REPLIES_MS)
-      s.followers = s.followers.filter(f => Date.parse(`${f.day}T00:00:00`) >= t - KEEP_FOLLOWERS_MS)
+      const today = localDay(now)
+      s.mine = capNewest(s.mine.filter(m => Date.parse(m.postedAt) >= t - KEEP_MINE_MS && Date.parse(m.postedAt) <= t + SKEW_MS), MAX_MINE, m => Date.parse(m.postedAt))
+      s.replyDrafts = capNewest(s.replyDrafts.filter(r => Date.parse(r.notifiedAt) >= t - KEEP_REPLIES_MS && Date.parse(r.notifiedAt) <= t + SKEW_MS), MAX_REPLY_DRAFTS, r => Date.parse(r.notifiedAt))
+      s.followers = capNewest(s.followers.filter(f => Date.parse(`${f.day}T00:00:00`) >= t - KEEP_FOLLOWERS_MS && f.day <= today), MAX_FOLLOWERS, f => Date.parse(`${f.day}T00:00:00`))
     }, { undoable: false }))
   }
 

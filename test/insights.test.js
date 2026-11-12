@@ -199,3 +199,11 @@ test('改稿长度比：aiText 或 sentText 不是字符串的配对被跳过', 
   ]
   assert.equal(computeInsights(state, NOW).edits.medianLengthRatio, 1.5)
 })
+
+test('top：设置了 ownHandle 时按它拼链接，旧链接随设置纠正；没设置时用存下来的', () => {
+  const state = emptyState()
+  state.mine = [{ id: '1856000000000000001', kind: 'post', text: 'x', url: 'https://x.com/old/status/1856000000000000001', postedAt: new Date(NOW - 3600e3).toISOString(), fetchedAt: new Date(NOW).toISOString(), likes: 1, replies: 0, reposts: 0, quotes: 0, views: 5, inReplyTo: null, candidateId: null, replyId: null }]
+  assert.equal(computeInsights(state, NOW, { ownHandle: 'new_me' }).top[0].url, 'https://x.com/new_me/status/1856000000000000001')
+  assert.equal(computeInsights(state, NOW, { ownHandle: '' }).top[0].url, 'https://x.com/old/status/1856000000000000001')
+  assert.equal(computeInsights(state, NOW).top[0].url, 'https://x.com/old/status/1856000000000000001')
+})

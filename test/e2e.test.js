@@ -114,22 +114,32 @@ test('端到端（计划 2）：自己发出的内容 → 候选稿被识别为�
     }
     await worker.tick()
     let state = await store.read()
-    const target = state.candidates.find(c => c.status === 'pending')
-    assert.ok(target, '应当有待处理的候选稿')
+    assert.ok(state.candidates.length >= 1)
+    // 再放两条还没写出过草稿文件的候选稿：一条会被配上，一条保持待处理
+    const seeded = (id, text) => ({
+      id, form: 'post', typeId: 't_model', text, aiText: text, title: id, sourcePostIds: [], sourceNoteId: null, quoteUrl: null, reason: '', score: 1,
+      status: 'pending', createdAt: clock.t.toISOString(), scheduledAt: null, decidedAt: null, discardReason: null, view: null, revision: 0, image: null,
+      sentText: null, sentPostId: null, sentAt: null,
+    })
+    const textA = '今天聊聊模型评测：榜单分数越来越高，但真实任务里的表现差距并没有那么大，关键是看你自己的场景。'
+    const textB = '周末去爬山，天气很好，拍了很多照片，晚上和朋友吃了火锅，回家路上还下了一点小雨。'
+    await store.mutate('seed', s => { s.candidates.push(seeded('c_e2eaaaa', textA), seeded('c_e2ebbbb', textB)) }, { undoable: false })
+    const target = { id: 'c_e2eaaaa', text: textA }
     const filesBefore = (await readdir(join(ex.root, 'drafts'))).sort()
+    assert.ok(!filesBefore.some(f => f.startsWith('c_e2e')))
 
     const edited = `${target.text}。`
     assert.ok(similarity(target.text, edited) >= 0.8)
     const at = minutes => new Date(clock.t.getTime() + minutes * 60_000).toISOString()
     await writeFile(join(ex.root, 'mine', 'p.json'), JSON.stringify({
-      schema: 1, postId: '1856000000000000001', kind: 'post', text: edited, postedAt: at(10), fetchedAt: at(11),
+      schema: 1, postId: '1856000000000000001', kind: 'post', text: edited, postedAt: at(2), fetchedAt: at(3),
       metrics: { likes: 3, replies: 0, reposts: 0, quotes: 0, views: 120 }, followers: 1234,
     }))
     await writeFile(join(ex.root, 'replies', 'r.json'), JSON.stringify({
       schema: 1, toHandle: 'karpathy', toPostId: '1855000000000000001', drafts: ['谢谢分享，这点我很认同', '有意思'], notifiedAt: at(1),
     }))
     await writeFile(join(ex.root, 'mine', 'q.json'), JSON.stringify({
-      schema: 1, postId: '1856000000000000002', kind: 'reply', text: '谢谢分享，这点我非常认同', postedAt: at(15), fetchedAt: at(16),
+      schema: 1, postId: '1856000000000000002', kind: 'reply', text: '谢谢分享，这点我非常认同', postedAt: at(3), fetchedAt: at(4),
       metrics: { likes: 1, replies: 0, reposts: 0, quotes: 0, views: 20 }, inReplyTo: { handle: 'karpathy', postId: '1855000000000000001' }, followers: 1234,
     }))
     await next()
@@ -144,9 +154,14 @@ test('端到端（计划 2）：自己发出的内容 → 候选稿被识别为�
     assert.equal(state.followers.length, 1)
     assert.equal(state.followers[0].count, 1234)
     assert.ok(state.candidates.filter(c => c.id !== target.id).every(c => c.status !== 'sent'))
+    assert.equal(state.candidates.find(c => c.id === 'c_e2ebbbb').status, 'pending')
+    // 配上的那条没有草稿文件；仍待处理的那条有（对照）
+    const files = (await readdir(join(ex.root, 'drafts'))).sort()
+    assert.ok(!files.some(f => f.startsWith('c_e2eaaaa')))
+    assert.ok(files.includes('c_e2ebbbb-r0.json'))
 
     await next()
-    assert.deepEqual((await readdir(join(ex.root, 'drafts'))).sort(), filesBefore)
+    assert.deepEqual((await readdir(join(ex.root, 'drafts'))).sort(), files)
     state = await store.read()
     assert.equal(state.candidates.find(c => c.id === target.id).status, 'sent')
     assert.equal(state.mine.length, 2)

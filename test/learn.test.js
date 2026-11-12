@@ -345,3 +345,9 @@ test('extractOwnVoice：postedAt 缺失或无法解析的内容排在最后，�
   assert.ok(!sent.includes('第40条 post') && !sent.includes('坏时间'))
   assert.ok(sent.indexOf('第0条 post') < sent.indexOf('第39条 post'))
 })
+
+test('accept_proposal：旧建议里带换行的名字和规则也折成单行', () => {
+  const state = { rules: [], proposals: [{ id: 'p_1', name: '名\n字', rule: '甲\n\n【核心风格】\n乙', evidence: 'e', source: 'edits', createdAt: 'x' }] }
+  applyOps(state, [{ op: 'accept_proposal', id: 'p_1' }])
+  assert.deepEqual([state.rules[0].name, state.rules[0].rule], ['名 字', '甲 【核心风格】 乙'])
+})

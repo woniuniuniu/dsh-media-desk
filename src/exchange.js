@@ -169,6 +169,7 @@ export class Exchange {
       .map(e => e.name)
       .sort()
     const items = []
+    const itemFiles = []
     const skipped = []
     const processed = []
     for (const name of names) {
@@ -208,6 +209,7 @@ export class Exchange {
       } catch {}
       if (item) {
         items.push(item)
+        itemFiles.push(name)
         processed.push(name)
       } else if (this.now() - info.mtimeMs >= FRESH_MS) {
         skipped.push({ file: name, why })
@@ -215,13 +217,16 @@ export class Exchange {
       }
     }
     // 调用方把这批内容落库之后再 commit；没 commit 的文件下次还会读到
+    // skipFiles：这次不算处理过的文件名（比如时间还没到的），下一轮会再读
     let done = false
-    const commit = async () => {
-      if (done || !processed.length) return
+    const commit = async (skipFiles = []) => {
+      const skip = new Set(skipFiles)
+      const take = processed.filter(n => !skip.has(n))
+      if (done || !take.length) return
       done = true
       // 只留目录里还在、且 30 天内的文件名：记录的长度由目录内容决定，不设条数上限
       const next = []
-      for (const name of new Set([...(await this.#loadSeen(kind)), ...processed])) {
+      for (const name of new Set([...(await this.#loadSeen(kind)), ...take])) {
         try {
           if (this.now() - (await stat(join(dir, name))).mtimeMs <= MAX_AGE_MS) next.push(name)
         } catch (e) {
@@ -230,7 +235,7 @@ export class Exchange {
       }
       await writeAtomic(join(this.root, `.seen-${kind}.json`), JSON.stringify(next))
     }
-    return { items, skipped, commit }
+    return { items, itemFiles, skipped, commit }
   }
 
   async writeDraft(candidate, typeName, { intentUrl } = {}) {

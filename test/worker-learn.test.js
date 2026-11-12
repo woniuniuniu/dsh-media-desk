@@ -11,6 +11,8 @@ import { Settings } from '../src/settings.js'
 import { Store } from '../src/store.js'
 import { Worker, addNotice, localDay } from '../src/worker.js'
 import * as runs from '../src/runs.js'
+import { computeInsights } from '../src/insights.js'
+import { MAX_MINE, MAX_REPLY_DRAFTS } from '../src/worker.js'
 
 const NOW = new Date('2026-11-11T11:05:00+08:00') // 周三
 const MONDAY = new Date('2026-11-16T11:05:00+08:00')
@@ -281,4 +283,112 @@ test('addNotice 仍可用', () => {
   const s = { runs: { notices: [] } }
   addNotice(s, '一条', NOW)
   assert.equal(s.runs.notices.length, 1)
+})
+
+const FUTURE = '2099-01-01T00:00:00Z'
+const minute = (n, from = NOW) => new Date(from.getTime() + n * 60_000)
+
+test('fetchedAt 在 2099：存下来的是"现在"，之后真实的读取照常更新互动数', async () => {
+  const { worker, store, ex, clock } = await setup()
+  await mineFile(ex, 'a.json', { fetchedAt: FUTURE })
+  await worker.tick()
+  let s = await store.read()
+  assert.equal(s.mine[0].fetchedAt, NOW.toISOString())
+  assert.equal(s.mine[0].likes, 1)
+  clock.t = minute(5)
+  await mineFile(ex, 'b.json', { fetchedAt: minute(4).toISOString(), metrics: { likes: 9, replies: 2, reposts: 3, quotes: 4, views: 50 } })
+  await worker.tick()
+  s = await store.read()
+  assert.equal(s.mine[0].likes, 9)
+  assert.equal(s.mine[0].fetchedAt, minute(4).toISOString())
+})
+
+test('粉丝数读取时间在 2099：不产生未来的日期，复盘里的当前粉丝数是真实的最新值', async () => {
+  const { worker, store, ex, clock } = await setup()
+  await mineFile(ex, 'a.json', { fetchedAt: FUTURE, followers: 999 })
+  await worker.tick()
+  let s = await store.read()
+  assert.deepEqual(s.followers.map(f => f.day), [TODAY])
+  assert.equal(s.followers[0].at, NOW.toISOString())
+  clock.t = minute(5)
+  await mineFile(ex, 'b.json', { postId: '1856000000000000002', fetchedAt: minute(4).toISOString(), followers: 1234 })
+  await worker.tick()
+  s = await store.read()
+  assert.deepEqual(s.followers.map(f => [f.day, f.count]), [[TODAY, 1234]])
+  assert.equal(computeInsights(s, clock.t).followers.now, 1234)
+})
+
+test('postedAt 比现在晚 10 分钟：不收、只记一条提示、文件不算处理过；时间到了之后被收下', async () => {
+  const { worker, store, ex, clock } = await setup()
+  await mineFile(ex, 'a.json', { postedAt: minute(10).toISOString(), fetchedAt: minute(10).toISOString(), followers: 5 })
+  await worker.tick()
+  await worker.tick()
+  let s = await store.read()
+  assert.equal(s.mine.length, 0)
+  assert.equal(s.followers.length, 0)
+  assert.deepEqual(s.runs.notices.filter(n => n.text.includes('时间比现在还晚')).map(n => n.text), ['有 1 条内容的时间比现在还晚，先不收'])
+  clock.t = minute(11)
+  await worker.tick()
+  s = await store.read()
+  assert.equal(s.mine.length, 1)
+  assert.equal(s.mine[0].id, ID)
+  assert.equal(s.followers.length, 1)
+})
+
+test('postedAt 只比现在晚 2 分钟：正常收下', async () => {
+  const { worker, store, ex } = await setup()
+  await mineFile(ex, 'a.json', { postedAt: minute(2).toISOString(), fetchedAt: minute(2).toISOString() })
+  await worker.tick()
+  const s = await store.read()
+  assert.equal(s.mine.length, 1)
+  assert.equal(s.mine[0].fetchedAt, NOW.toISOString())
+  assert.ok(!s.runs.notices.some(n => n.text.includes('时间比现在还晚')))
+})
+
+test('回复草稿的 notifiedAt 比现在晚 10 分钟：不收、记提示、之后收下；晚 2 分钟直接收', async () => {
+  const { worker, store, ex, clock } = await setup()
+  await replyFile(ex, 'a.json', { notifiedAt: minute(10).toISOString() })
+  await replyFile(ex, 'b.json', { toPostId: '1855000000000000002', notifiedAt: minute(2).toISOString() })
+  await worker.tick()
+  let s = await store.read()
+  assert.deepEqual(s.replyDrafts.map(r => r.toPostId), ['1855000000000000002'])
+  assert.ok(s.runs.notices.some(n => n.text === '有 1 条回复草稿的时间比现在还晚，先不收'))
+  clock.t = minute(11)
+  await worker.tick()
+  s = await store.read()
+  assert.equal(s.replyDrafts.length, 2)
+})
+
+test('保留期之外：比现在还晚的记录被丢；条数封顶时先丢最旧的', async () => {
+  const { worker, store } = await setup()
+  const row = (i, postedAt) => ({ id: `18560000000${String(i).padStart(8, '0')}`, kind: 'post', text: 'x', url: null, postedAt, fetchedAt: postedAt, likes: 0, replies: 0, reposts: 0, quotes: 0, views: 0, inReplyTo: null, candidateId: null, replyId: null })
+  await store.mutate('seed', s => {
+    s.mine = Array.from({ length: MAX_MINE + 1 }, (_, i) => row(i, iso(NOW, -(i + 1))))
+    s.mine.push(row(99999, iso(NOW, 60)))
+    s.replyDrafts = Array.from({ length: MAX_REPLY_DRAFTS + 1 }, (_, i) => ({ id: `r_${i}`, toHandle: 'a', toPostId: '1', drafts: ['x'], notifiedAt: iso(NOW, -(i + 1)), sentText: null, sentAt: null }))
+    s.replyDrafts.push({ id: 'r_future', toHandle: 'a', toPostId: '1', drafts: ['x'], notifiedAt: iso(NOW, 60), sentText: null, sentAt: null })
+    s.followers = [{ day: '2026-11-12', count: 5, at: iso(NOW, 1440) }, { day: TODAY, count: 7, at: iso(NOW) }]
+  }, { undoable: false })
+  await worker.tick()
+  const s = await store.read()
+  assert.equal(s.mine.length, MAX_MINE)
+  assert.ok(!s.mine.some(m => m.id.endsWith('99999')))
+  assert.ok(!s.mine.some(m => m.id === row(MAX_MINE, '').id), '最旧的一条被丢')
+  assert.ok(s.mine.some(m => m.id === row(MAX_MINE - 1, '').id))
+  assert.equal(s.replyDrafts.length, MAX_REPLY_DRAFTS)
+  assert.ok(!s.replyDrafts.some(r => r.id === 'r_future' || r.id === `r_${MAX_REPLY_DRAFTS}`))
+  assert.deepEqual(s.followers.map(f => f.day), [TODAY])
+})
+
+test('matchSent 抛错不会跳过候选稿过期；每一步各自记提示', async () => {
+  const { worker, store } = await setup()
+  await store.mutate('seed', s => {
+    s.candidates.push(cand('c_old', { createdAt: '2026-11-01T00:00:00.000Z' }))
+    s.replyDrafts = [null]
+    s.mine = [{ id: ID, kind: 'reply', text: 'x', url: null, postedAt: iso(NOW, -5), fetchedAt: iso(NOW, -5), likes: 0, replies: 0, reposts: 0, quotes: 0, views: 0, inReplyTo: { handle: 'a', postId: '1' }, candidateId: null, replyId: null }]
+  }, { undoable: false })
+  await worker.tick()
+  const s = await store.read()
+  assert.equal(s.candidates[0].status, 'expired')
+  assert.ok(s.runs.notices.some(n => n.text.startsWith('识别已发内容出错')))
 })

@@ -2,6 +2,8 @@
 import { safeText } from './inbox.js'
 import { newId } from './ops.js'
 
+/** 允许的时钟偏差：交换文件里的时间比现在晚不超过这个数就当作正常。 */
+export const SKEW_MS = 5 * 60 * 1000
 const MAX_NOTICES = 50
 const MAX_NOTICE_CHARS = 200
 

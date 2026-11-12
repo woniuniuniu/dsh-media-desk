@@ -90,7 +90,7 @@ export function computeInsights(state, now, { ownHandle } = {}) {
     .map(({ m }) => {
       const c = m.candidateId == null ? null : candById.get(m.candidateId)
       return {
-        id: m.id, text: safeText(m.text, 80), url: m.url ?? mineUrl(m, ownHandle), views: metric(m.views), likes: metric(m.likes),
+        id: m.id, text: safeText(m.text, 80), url: mineUrl(m, ownHandle) ?? m.url ?? null, views: metric(m.views), likes: metric(m.likes),
         replies: metric(m.replies), reposts: metric(m.reposts), typeName: c ? typeName(c.typeId) : null,
       }
     })

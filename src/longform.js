@@ -3,7 +3,7 @@
 import { extractJson, longformDraftPrompts, longformIdeaPrompts, longformRevisePrompts } from './ai.js'
 import { tr } from './i18n.js'
 import { safeText } from './inbox.js'
-import { newId, oneLine } from './ops.js'
+import { MAX_LONGFORMS, newId, oneLine } from './ops.js'
 import { engagement } from './score.js'
 import { voiceFor } from './voice.js'
 
@@ -11,7 +11,6 @@ const DAY = 86400e3
 const MAX_BODY = 20000
 const MAX_ERROR = 200
 const MAX_IDEAS = 6
-export const MAX_LONGFORMS = 30
 const fail = (message, status = 400) => Object.assign(new Error(message), { status })
 
 /** 本地日期所在的 ISO 8601 周，形如 '2026-W46'。 */

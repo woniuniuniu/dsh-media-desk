@@ -1,13 +1,13 @@
 // 工作台的唯一写入口：界面操作都走这里，统一校验字段并产出结果。
 // 模型输出也是不可信输入，所以这里只放行白名单字段。
 import { tr } from './i18n.js'
-import { MAX_LONGFORMS } from './longform.js'
 import { normalizeStyle } from './style.js'
 import { approve, discard, markSent, unapprove, setText, safeText } from './inbox.js'
 
 const HANDLE = /^[A-Za-z0-9_]{1,15}$/
 const TIERS = ['engage', 'topic']
 const RULE_STATUS = ['active', 'off']
+export const MAX_LONGFORMS = 30
 const MAX_DISMISSED = 50
 const MAX_LONGFORM_BODY = 20000
 
@@ -164,9 +164,12 @@ const HANDLERS = {
   },
   accept_proposal(state, op) {
     const row = need(state.proposals, op.id, tr('规则建议'))
-    state.rules.push({ id: newId('r'), name: row.name, rule: row.rule, status: 'active', evidence: row.evidence })
+    // 清理规则文字之前创建的旧建议可能带换行
+    const name = oneLine(row.name, 60)
+    const rule = oneLine(row.rule, 500)
+    state.rules.push({ id: newId('r'), name, rule, status: 'active', evidence: row.evidence })
     state.proposals = state.proposals.filter(entry => entry.id !== op.id)
-    return tr('已采纳规则：{name}', { name: row.name })
+    return tr('已采纳规则：{name}', { name })
   },
   dismiss_proposal(state, op) {
     const row = need(state.proposals, op.id, tr('规则建议'))
