@@ -288,7 +288,7 @@ async function producerFixture({ callText, generate, ready = true }) {
   await store.read()
   const settings = new Settings(dir)
   await settings.update({ imageCount: 1, shotCount: 2, voice: '短句，爱用比喻', ...(ready ? { image: { baseUrl: 'https://i.example/v1', model: 'm', apiKey: 'k' } } : {}) })
-  return { dir, store, producer: new Producer({ store, settings, callText, generate }) }
+  return { dir, store, settings, producer: new Producer({ store, settings, callText, generate }) }
 }
 
 async function waitDone(producer, id) {
@@ -332,6 +332,67 @@ test('Producer 跑完整条线：文章、规划、全部图片，语气进入�
     assert.ok(systems.every(x => x.includes('短句，爱用比喻')))
     assert.ok(isPlan(systems[0]))
     assert.equal((await stat(join(dir, 'files', p.cover.src.split('/').pop()))).size, PNG.length)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('Producer 关闭生图时只写文字，资产全部 skipped，之后可以单张补画', async () => {
+  let generated = 0
+  const callText = async ({ system }) => (isPlan(system) ? { text: PLAN, model: 'd' } : { text: '# T\n\n正文', model: 'd' })
+  const generate = async () => {
+    generated += 1
+    return { buffer: PNG, ext: '.png' }
+  }
+  const { dir, store, producer } = await producerFixture({ callText, generate })
+  try {
+    await producer.start('seed_2', { withImages: false })
+    await waitDone(producer, 'seed_2')
+    let p = (await store.read()).items.find(i => i.id === 'seed_2').production
+    assert.equal(p.withImages, false)
+    assert.equal(p.status, 'done')
+    assert.match(p.article, /正文/)
+    assert.equal(p.cover.status, 'skipped')
+    assert.equal(p.images.length, 1)
+    assert.equal(p.images[0].status, 'skipped')
+    assert.equal(p.shots.length, 2)
+    assert.ok(p.shots.every(s => s.status === 'skipped' && s.voice && s.prompt))
+    assert.equal(p.needsProvider, undefined)
+    assert.equal(generated, 0)
+
+    // 之后想补画某一张，仍然可以单独发起
+    await producer.regenerate('seed_2', 'cover')
+    await new Promise(r => setTimeout(r, 40))
+    p = (await store.read()).items.find(i => i.id === 'seed_2').production
+    assert.equal(p.cover.status, 'done')
+    assert.equal(generated, 1)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('设置里的默认生图开关生效，单次选择可以覆盖', async () => {
+  let generated = 0
+  const callText = async ({ system }) => (isPlan(system) ? { text: PLAN, model: 'd' } : { text: '# T\n正文', model: 'd' })
+  const generate = async () => {
+    generated += 1
+    return { buffer: PNG, ext: '.png' }
+  }
+  const { dir, store, settings, producer } = await producerFixture({ callText, generate })
+  try {
+    assert.equal((await settings.read()).generateImages, true)
+    await settings.update({ generateImages: false })
+    await producer.start('seed_2')
+    await waitDone(producer, 'seed_2')
+    let p = (await store.read()).items.find(i => i.id === 'seed_2').production
+    assert.equal(p.withImages, false)
+    assert.equal(generated, 0)
+
+    await producer.start('seed_3', { withImages: true })
+    await waitDone(producer, 'seed_3')
+    p = (await store.read()).items.find(i => i.id === 'seed_3').production
+    assert.equal(p.withImages, true)
+    assert.ok(generated > 0)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -924,4 +985,39 @@ test('状态规则：发布时间、排期与取消排期、清空示例不留�
   applyOps(state, [{ op: 'clear_samples' }])
   assert.equal(state.items.find(row => row.id === child.target).parentId, null)
   assert.equal(state.metrics.length, 0)
+})
+
+test('体裁：脚本一句一行，文章按自然段；set_format 记在状态上，成稿时带进提示词', () => {
+  const state = seed()
+  const item = state.items[0]
+  assert.match(articlePrompts(state, item, '').system, /一句话占一行/)
+  const { receipts } = applyOps(state, [{ op: 'set_format', format: 'article' }])
+  assert.equal(state.draftFormat, 'article')
+  assert.ok(receipts[0].text)
+  const article = articlePrompts(state, item, '').system
+  assert.match(article, /按自然段写/)
+  assert.doesNotMatch(article, /一句话占一行/)
+  // 已经开写的稿子按它自己的体裁，不跟着后来的选择变
+  assert.match(articlePrompts(state, { ...item, production: { format: 'script' } }, '').system, /一句话占一行/)
+  applyOps(state, [{ op: 'set_format', format: '乱写' }])
+  assert.equal(state.draftFormat, 'script')
+})
+
+test('参考内容：风格卡带上断句、逻辑、讲述和衔接；原文只进正文提示词', () => {
+  const style = normalizeStyle({ name: '我', logic: '先讲反例', story: '从一件小事讲起', flow: '用「然后呢」接', samples: ['一', '二', '三', '四', '五', '六', '七'] })
+  assert.equal(style.samples.length, 6)
+  assert.match(styleToVoice(style), /逻辑：先讲反例/)
+  assert.match(styleToVoice(style), /衔接：用「然后呢」接/)
+  const state = seed()
+  const item = state.items[0]
+  state.styles = [{ id: 'st_x', ...style, reference: '然后呢，我就真去试了。' }]
+  state.activeStyleId = 'st_x'
+  const { system } = articlePrompts(state, item, '')
+  assert.match(system, /断句/)
+  assert.match(system, /口头禅/)
+  assert.match(system, /<reference>然后呢，我就真去试了。<\/reference>/)
+  assert.doesNotMatch(planPrompts(state, item, { imageCount: 1, shotCount: 1 }).system, /<reference>/)
+  // 手动填的语气同样按这个标准贴近
+  state.activeStyleId = null
+  assert.match(articlePrompts(state, item, '我说话爱用反问').system, /看问题的逻辑[\s\S]*我说话爱用反问/)
 })

@@ -4,11 +4,12 @@ import { join } from 'node:path'
 import { tr } from './i18n.js'
 
 const DEFAULTS = {
-  image: { source: 'http', baseUrl: '', model: '', apiKey: '', size: '1536x1024', quality: '', toolSize: '1536x1024', toolQuality: '', extra: '' },
+  image: { source: 'http', protocol: 'openai', baseUrl: '', model: '', apiKey: '', size: '1536x1024', quality: '', toolSize: '1536x1024', toolQuality: '', extra: '' },
   // 助手文字模型：空对象表示跟随 DeepSeek Harness 默认模型
   assistant: { provider: '', model: '' },
   voice: '',
   exportDir: '',
+  generateImages: true,
   imageCount: 2,
   shotCount: 6,
   language: 'auto',
@@ -46,6 +47,10 @@ export class Settings {
       if (!['http', 'tool'].includes(image.source)) throw Object.assign(new Error(tr('生图来源无效')), { status: 400 })
       next.image.source = image.source
     }
+    if (image.protocol !== undefined) {
+      if (!['openai', 'bailian', 'wan'].includes(image.protocol)) throw Object.assign(new Error(tr('生图协议无效')), { status: 400 })
+      next.image.protocol = image.protocol
+    }
     for (const key of ['model', 'size', 'quality']) {
       if (typeof image[key] === 'string') next.image[key] = image[key].trim().slice(0, 200)
     }
@@ -59,7 +64,15 @@ export class Settings {
       }
     }
     if (typeof image.baseUrl === 'string') {
-      const url = image.baseUrl.trim().replace(/\/+$/, '').replace(/\/images\/generations$/, '')
+      let url = image.baseUrl.trim().replace(/\/+$/, '')
+      if (next.image.protocol === 'bailian') {
+        // 百炼可能被贴成完整端点或带 /api/v1，统一存域名
+        url = url.replace(/\/api\/v1\/services\/aigc\/multimodal-generation\/generation$/i, '').replace(/\/api\/v1$/i, '')
+      } else if (next.image.protocol === 'wan') {
+        url = url.replace(/\/api\/v1\/(?:services\/aigc\/text2image\/image-synthesis|tasks\/[^/]+)$/i, '').replace(/\/api\/v1$/i, '')
+      } else {
+        url = url.replace(/\/images\/generations$/, '')
+      }
       if (url && !/^https?:\/\/[^\s]+$/i.test(url)) throw Object.assign(new Error(tr('接口地址要以 http:// 或 https:// 开头')), { status: 400 })
       next.image.baseUrl = url
     }
@@ -87,6 +100,7 @@ export class Settings {
     }
     if (typeof patch.voice === 'string') next.voice = patch.voice.slice(0, 8000)
     if (typeof patch.exportDir === 'string') next.exportDir = patch.exportDir.trim().slice(0, 500)
+    if (typeof patch.generateImages === 'boolean') next.generateImages = patch.generateImages
     if (patch.imageCount !== undefined) next.imageCount = clamp(patch.imageCount, 0, 4, current.imageCount)
     if (['auto', 'zh', 'en'].includes(patch.language)) next.language = patch.language
     if (patch.shotCount !== undefined) next.shotCount = clamp(patch.shotCount, 0, 12, current.shotCount)

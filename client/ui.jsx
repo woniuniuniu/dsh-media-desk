@@ -123,21 +123,32 @@ export function FormDialog() {
   return (
     <Dialog title={dialog.title} onClose={close}>
       <form onSubmit={submit} className="md-form">
-        {dialog.fields.map(field => (
-          field.type === 'hidden' ? <p key={field.name} className="md-muted">{field.label}</p> : <label key={field.name} className="md-field">
-            <span>{field.label}</span>
-            {field.type === 'textarea' ? (
-              <textarea rows={field.rows ?? 3} value={values[field.name] ?? ''} placeholder={field.placeholder} required={field.required} onChange={e => setValues(v => ({ ...v, [field.name]: e.target.value }))} />
-            ) : field.type === 'select' ? (
-              <select value={values[field.name] ?? ''} required={field.required} onChange={e => setValues(v => ({ ...v, [field.name]: e.target.value }))}>
-                {field.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            ) : (
-              <input type={field.type ?? 'text'} value={values[field.name] ?? ''} placeholder={field.placeholder} required={field.required} onChange={e => setValues(v => ({ ...v, [field.name]: e.target.value }))} />
-            )}
-            {field.hint ? <small>{field.hint}</small> : null}
-          </label>
-        ))}
+        {dialog.fields.map((field) => {
+          if (field.type === 'hidden') return <p key={field.name} className="md-muted">{field.label}</p>
+          if (field.type === 'checkbox') {
+            return (
+              <label key={field.name} className="md-check">
+                <input type="checkbox" checked={Boolean(values[field.name])} onChange={e => setValues(v => ({ ...v, [field.name]: e.target.checked }))} />
+                <span>{field.label}</span>
+              </label>
+            )
+          }
+          return (
+            <label key={field.name} className="md-field">
+              <span>{field.label}</span>
+              {field.type === 'textarea' ? (
+                <textarea rows={field.rows ?? 3} value={values[field.name] ?? ''} placeholder={field.placeholder} required={field.required} onChange={e => setValues(v => ({ ...v, [field.name]: e.target.value }))} />
+              ) : field.type === 'select' ? (
+                <select value={values[field.name] ?? ''} required={field.required} onChange={e => setValues(v => ({ ...v, [field.name]: e.target.value }))}>
+                  {field.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              ) : (
+                <input type={field.type ?? 'text'} value={values[field.name] ?? ''} placeholder={field.placeholder} required={field.required} onChange={e => setValues(v => ({ ...v, [field.name]: e.target.value }))} />
+              )}
+              {field.hint ? <small>{field.hint}</small> : null}
+            </label>
+          )
+        })}
         <div className="md-form-foot">
           {dialog.onDelete ? <button type="button" className="md-btn is-danger" onClick={() => { dialog.onDelete(); close() }}>{t('删除')}</button> : null}
           <span style={{ flex: 1 }} />

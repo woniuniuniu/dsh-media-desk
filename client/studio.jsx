@@ -55,7 +55,7 @@ function Plate({ asset, paper = false, mark = null, alt = '', onOpen, onRetry })
 /** 进度：放在对话栏里，像助手在汇报。 */
 function ProgressCard({ production, live, settings }) {
   const running = production.status === 'running'
-  const ready = settings?.imageReady
+  const ready = settings?.imageReady && production.withImages !== false
   const words = textLength(production.article || live?.text || '')
   const visuals = [production.cover, ...(production.images ?? [])].filter(Boolean)
   const shots = production.shots ?? []
@@ -82,19 +82,60 @@ function ProgressCard({ production, live, settings }) {
   )
 }
 
+/** 灵感的正文：墙上卡片里看得见的那段，进了工作区也要在。长的先收起几行。 */
+function IdeaBody({ item, disabled }) {
+  const body = item.body ?? ''
+  const long = body.length > 90 || body.split('\n').length > 4
+  const [open, setOpen] = React.useState(false)
+  React.useEffect(() => setOpen(false), [item.id])
+  if (!body) return null
+  return (
+    <div className="md-idea-body-wrap">
+      <div className={`md-idea-body-clip ${long && !open ? 'is-clipped' : ''}`} onFocus={() => setOpen(true)}>
+        <AutoText className="md-idea-body" label={t('灵感正文')} value={body} disabled={disabled} onCommit={next => dispatchOps([{ op: 'update_item', id: item.id, body: next }], { label: t('修改正文'), silent: true })} />
+      </div>
+      {long ? <button type="button" className="md-link-btn" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? t('收起') : t('展开全文')}</button> : null}
+    </div>
+  )
+}
+
+const FORMAT_OPTIONS = [
+  { id: 'script', label: '脚本', hint: '口播脚本：一句话一行，一段一段' },
+  { id: 'article', label: '文章', hint: '文章：一个一个自然段' },
+]
+
 /** 对话栏顶部：这条灵感，以及唯一的入口。 */
 function IdeaCard({ item, live, settings }) {
   const production = item.production
   const running = production?.status === 'running'
   const styles = useDesk(s => s.state.styles ?? [])
   const activeId = useDesk(s => item.accountId ? s.allState.accounts.find(a=>a.id===item.accountId)?.defaultStyleId : s.allState.activeStyleId)
+  const [draw, setDraw] = React.useState(null)
+  React.useEffect(() => setDraw(null), [item.id])
+  // 单次选择优先，其次沿用这条成稿上次的选择，最后取设置里的默认值
+  const withImages = draw ?? (production?.withImages !== undefined ? production.withImages : settings?.generateImages !== false)
+  const canStart = !production || !['running', 'done'].includes(production.status)
+  const format = useDesk(s => s.allState.accounts.find(a => a.id === item.accountId)?.draftFormat ?? s.allState.draftFormat) === 'article' ? 'article' : 'script'
   return (
     <div className="md-idea-card">
       <span className="md-idea-label">{t('灵感')} · {fmtDate(item.createdAt)}</span>
       <AutoText className="md-idea-text" label={t('灵感')} value={item.title} disabled={running} onCommit={title => dispatchOps([{ op: 'update_item', id: item.id, title }], { label: t('修改灵感'), silent: true })} />
       <AccountAssignment item={item} />
+      <IdeaBody item={item} disabled={running} />
       {!running ? (
-        <label className="md-style-pick">
+        <div className="md-style-pick" role="radiogroup" aria-label={t('体裁')}>
+          <span>{t('体裁')}</span>
+          <div className="md-format-seg">
+            {FORMAT_OPTIONS.map(option => (
+              <button type="button" key={option.id} role="radio" aria-checked={format === option.id} className={format === option.id ? 'is-on' : ''} title={t(option.hint)}
+                onClick={() => { if (format !== option.id) dispatchOps([{ op: 'set_format', format: option.id, accountId: item.accountId ?? null }], { label: t('切换体裁'), silent: true, accountId: item.accountId ?? null }) }}>{t(option.label)}</button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {!running && production?.status === 'done' && (production.format ?? 'script') !== format ? <p className="md-idea-hint">{t('这篇是按另一种体裁写的，重新成稿后生效。')}</p> : null}
+      {!running ? (
+        <label className="md-style-pick is-follow">
           <span>{t('风格')}</span>
           <select aria-label={t('风格')} value={activeId ?? ''} onChange={e => dispatchOps([{ op: 'set_style', id: e.target.value || null, ...(item.accountId?{accountId:item.accountId}:{}) }], { label: t('切换风格'), silent: true, accountId:item.accountId??undefined })}>
             <option value="">{t('默认')}</option>
@@ -103,10 +144,19 @@ function IdeaCard({ item, live, settings }) {
           </select>
         </label>
       ) : null}
-      {!production || !['running', 'done'].includes(production.status) ? <button type="button" className="md-go" onClick={() => runProduce(item.id)}>{t('一键成稿')}</button> : null}
+      {canStart ? (
+        <div className="md-go-row">
+          <button type="button" className="md-go" onClick={() => runProduce(item.id, { withImages })}>{t('一键成稿')}</button>
+          <label className="md-go-option">
+            <input type="checkbox" checked={withImages} onChange={e => setDraw(e.target.checked)} />
+            {t('生成图片')}
+          </label>
+        </div>
+      ) : null}
       {running ? <ProgressCard production={{ ...production, id: item.id }} live={live} settings={settings} /> : null}
       {production?.status === 'failed' ? <p className="md-idea-hint is-error">{production.error}</p> : null}
-      {!running && !settings?.imageReady ? <p className="md-idea-hint">{t('接入生图模型后，封面和分镜也会画好。')}<button type="button" onClick={() => setDesk({ settingsOpen: true })}>{t('去接入')}</button></p> : null}
+      {canStart && !withImages ? <p className="md-idea-hint">{t('这次只出文字版，之后仍可以单张补画。')}</p> : null}
+      {canStart && withImages && !settings?.imageReady ? <p className="md-idea-hint">{t('接入生图模型后，封面和分镜也会画好。')}<button type="button" onClick={() => setDesk({ settingsOpen: true })}>{t('去接入')}</button></p> : null}
       {production?.notice ? <p className="md-idea-hint">{production.notice}</p> : null}
     </div>
   )
@@ -143,11 +193,11 @@ function HeroTile({ item, live, onView }) {
   const images = production?.images ?? []
   const done = production?.status === 'done'
   const pictures = [production?.cover, ...images].filter(a => a?.src).length
-  const showFigures = settings?.imageReady || images.some(a => a?.src)
+  const showFigures = (settings?.imageReady && production?.withImages !== false) || images.some(a => a?.src)
   const [saving, setSaving] = React.useState(false)
   const copy = async () => {
     await navigator.clipboard.writeText(`# ${production.title}\n\n${production.article}`)
-    toast(t('脚本已复制'))
+    toast(production.format === 'article' ? t('文章已复制') : t('脚本已复制'))
   }
   const save = async () => {
     setSaving(true)
@@ -158,8 +208,12 @@ function HeroTile({ item, live, onView }) {
     dialog: {
       title: t('重新成稿'),
       submitLabel: t('重新生成'),
-      fields: [{ name: 'note', label: t('现在的文章、封面和分镜会被替换，也会再消耗一次模型额度。'), type: 'hidden' }],
-      onSubmit: () => runProduce(item.id),
+      initial: { withImages: production?.withImages !== false },
+      fields: [
+        { name: 'note', label: t('现在的文章、封面和分镜会被替换，也会再消耗一次模型额度。'), type: 'hidden' },
+        { name: 'withImages', label: t('同时生成封面、配图和分镜图'), type: 'checkbox' },
+      ],
+      onSubmit: values => runProduce(item.id, { withImages: values.withImages !== false }),
     },
   })
   const figures = images.length ? images : [null, null].slice(0, settings?.imageCount ?? 2)
@@ -175,7 +229,7 @@ function HeroTile({ item, live, onView }) {
         </div>
         {done ? (
           <div className="md-hero-actions">
-            <button type="button" className="md-pill is-primary" onClick={copy}><Icon name="copy" size={14} />{t('复制脚本')}</button>
+            <button type="button" className="md-pill is-primary" onClick={copy}><Icon name="copy" size={14} />{production?.format === 'article' ? t('复制文章') : t('复制脚本')}</button>
             <button type="button" className="md-pill" onClick={save} disabled={saving}><Icon name="save" size={14} />{saving ? t('保存中…') : t('保存')}</button>
             <button type="button" className="md-pill" onClick={() => downloadCover({ src: production.cover?.src, text: production.coverText || production.title }, production.title).catch(err => toast(err.message, { error: true }))}><Icon name="image" size={14} />{t('下载封面')}</button>
             <label className="md-pill md-date-pill">
@@ -206,7 +260,7 @@ function HeroTile({ item, live, onView }) {
 }
 
 /** 把配图插回文章：优先放到对应小标题那一节的末尾。 */
-function ArticleBody({ production, text, onView }) {
+function ArticleBody({ production, text, onView, proseClass = 'md-prose' }) {
   const sections = React.useMemo(() => text.split(/\n(?=##\s)/).map(part => ({ text: part, heading: /^##\s+(.+)/.exec(part)?.[1]?.trim() ?? '' })), [text])
   const images = production?.images ?? []
   const placed = React.useMemo(() => {
@@ -225,7 +279,7 @@ function ArticleBody({ production, text, onView }) {
       {sections.map((section, index) => (
         <React.Fragment key={index}>
           {/* renderMarkdown 会先转义，模型输出里的 HTML 不会执行 */}
-          <div className="md-prose" dangerouslySetInnerHTML={{ __html: renderMarkdown(section.text) }} />
+          <div className={proseClass} dangerouslySetInnerHTML={{ __html: renderMarkdown(section.text) }} />
           {(placed.get(index) ?? []).map(({ image, i }) => (
             <figure key={i} className="md-article-figure">
               <Plate asset={image} alt={image.caption} onOpen={() => onView(`image:${i}`)} />
@@ -261,8 +315,8 @@ function ArticleTile({ item, live, open, onToggle, onView, tileRef }) {
     setEditing(false)
   }
   const copy = async () => {
-    await navigator.clipboard.writeText(article)
-    toast(t('脚本已复制'))
+    await navigator.clipboard.writeText(`# ${production?.title || item.title}\n\n${article}`)
+    toast(production?.format === 'article' ? t('文章已复制') : t('脚本已复制'))
   }
   // 选中一段，交给助手改
   const onMouseUp = () => {
@@ -277,24 +331,31 @@ function ArticleTile({ item, live, open, onToggle, onView, tileRef }) {
     setPicked({ text: value, x: Math.max(70, Math.min(rect.left - box.left + rect.width / 2, box.width - 70)), y: rect.top - box.top })
   }
   const words = textLength(text)
+  // 正在写和写好的稿子看它自己的体裁；还没写的看当前选的
+  const chosen = useDesk(s => s.allState.accounts.find(a => a.id === item.accountId)?.draftFormat ?? s.allState.draftFormat)
+  const isArticle = (production?.format ?? chosen) === 'article'
+  const name = isArticle ? t('文章') : t('脚本')
+  const heading = production?.title || item.title
+  const proseClass = `md-prose ${isArticle ? 'is-article' : 'is-script'}`
   return (
     <>
       <header className="md-tile-head">
-        <h2>{t('脚本')}</h2>
+        <h2>{name}</h2>
         <span className="md-grow" />
         {article ? (
           <>
             {editing ? <button type="button" className="md-btn is-small" onClick={save}><Icon name="check" size={13} />{t('完成')}</button> : <IconButton icon="edit" label={t('直接修改')} onClick={() => setEditing(true)} />}
-            <IconButton icon="copy" label={t('复制脚本')} onClick={copy} />
+            <IconButton icon="copy" label={isArticle ? t('复制文章') : t('复制脚本')} onClick={copy} />
             <IconButton icon={open ? 'close' : 'expand'} label={open ? t('收起') : t('放大阅读')} onClick={onToggle} />
           </>
         ) : null}
       </header>
       {editing ? (
-        <textarea className="md-article-edit" aria-label={t('脚本')} value={draft} onChange={e => setDraft(e.target.value)} onBlur={save} />
+        <textarea className="md-article-edit" aria-label={name} value={draft} onChange={e => setDraft(e.target.value)} onBlur={save} />
       ) : text ? (
         <div className="md-article-scroll" ref={scroller} onMouseUp={onMouseUp} onScroll={() => setPicked(null)}>
-          {open ? <ArticleBody production={production} text={text} onView={onView} /> : <div className="md-prose" dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />}
+          <h1 className="md-article-title">{heading}</h1>
+          {open ? <ArticleBody production={production} text={text} onView={onView} proseClass={proseClass} /> : <div className={proseClass} dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />}
         </div>
       ) : (
         <div className={`md-skeleton ${running ? '' : 'is-still'}`} aria-hidden="true">{Array.from({ length: 12 }, (_, i) => <i key={i} />)}</div>

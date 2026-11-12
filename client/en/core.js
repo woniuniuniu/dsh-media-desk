@@ -2,6 +2,7 @@
 export const CORE = {
   // 侧栏和顶栏
   '自媒体工作台': 'Media Desk',
+  '灵感、内容、排期、复盘、风格': 'Ideas, content, schedule, insights, styles',
   '工作台导航': 'Desk navigation',
   '灵感（导航）': 'Ideas',
   '灵感': 'Idea',

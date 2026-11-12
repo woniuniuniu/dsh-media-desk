@@ -1,6 +1,6 @@
 # Local Media Desk automation
 
-Version `2.6.2-accounts.3` includes a CLI, official MCP stdio server and an explicitly started authenticated HTTP adapter for the **installed desktop workbench**. Start DeepSeek Harness and open Media Desk first. The adapter uses the Host's existing Store, Settings and Producer; it never starts another Harness or borrows browser cookies. Ordinary authoring uses `assist` with the workbench selected/subscription model; structured operations remain direct, and importing a finished external draft is an explicit no-extra-generation option.
+Version `2.7.0-accounts.1` includes a CLI, official MCP stdio server and an explicitly started authenticated HTTP adapter for the **installed desktop workbench**. Start DeepSeek Harness and open Media Desk first. The adapter uses the Host's existing Store, Settings and Producer; it never starts another Harness or borrows browser cookies. Ordinary authoring uses `assist` with the workbench selected/subscription model; structured operations remain direct, and importing a finished external draft is an explicit no-extra-generation option.
 
 ## Run
 
@@ -25,11 +25,11 @@ Default stdout is one compact JSON envelope. Diagnostics use stderr. Exit codes:
 
 ## Account scope
 
-Version `2.6.2-accounts.3` adds editorial profiles for many accounts, including multiple accounts on the same platform and manual Kuaishou accounts. These profiles do not log into or publish to social platforms. Manual CRUD, archive/restore, default-style selection, assignment and external-draft import require no model or Monid call. Kuaishou supports manual entry, CSV imports and structured API metrics. Monid's supported platforms remain unchanged; automatic Kuaishou fetching is unavailable.
+Version `2.7.0-accounts.1` adds editorial profiles for many accounts, including multiple accounts on the same platform and manual Kuaishou accounts. These profiles do not log into or publish to social platforms. Manual CRUD, archive/restore, default-style/format selection, assignment and external-draft import require no model or Monid call. Kuaishou supports manual entry, CSV imports and structured API metrics. Monid's supported platforms remain unchanged; automatic Kuaishou fetching is unavailable.
 
 Discover IDs with `accounts list` / `accounts get ID`. Names and platforms are not unique IDs. The desktop opens at the account list, with search, platform/group filters, archive/restore, 50-row pagination and CSV add (at most 100 rows, with failed rows retained). Choose one account, All accounts or Unassigned to enter Content, then use the nested Inspiration / Content / Schedule / Insights / Account / Styles tabs. The Account tab edits only the selected profile; virtual scopes explain that they have no profile. The Account list breadcrumb returns to the main menu and clears transient selections. The hub has no child tabs or assistant. All existing unattributed content remains Unassigned; migration never guesses ownership from a platform. Deleting a profile detaches content, metrics, rules and chat without deleting content; use archive for routine retirement.
 
-Every relevant request accepts optional `accountId`: **omitted = All/backward compatibility**, **null = Unassigned**, **string = one account ID**. Selection in the desktop frontend is local to that frontend. There is no mutable shared server account selection, so concurrent robots must include the target account on each request. Focused assistant requests derive the item's account when omitted; an explicit mismatch fails before the model call. Scoped model context/history, returned operations and production actions stay within that account. Production always uses its item's account positioning, audience and independent default style through the existing selected/subscription model.
+Every relevant request accepts optional `accountId`: **omitted = All/backward compatibility**, **null = Unassigned**, **string = one account ID**. Selection in the desktop frontend is local to that frontend. There is no mutable shared server account selection, so concurrent robots must include the target account on each request. Focused assistant requests derive the item's account when omitted; an explicit mismatch fails before the model call. Scoped model context/history, returned operations and production actions stay within that account. Production always uses its item's account positioning, audience independent default style and script/article preference through the existing selected/subscription model.
 
 ```sh
 media-desk accounts list --input '{"limit":20}'
@@ -44,7 +44,7 @@ media-desk call media_desk_apply_ops --request-id account-default-001 --input '{
 media-desk call media_desk_apply_ops --request-id assignment-001 --input '{"accountId":"SOURCE_ACCOUNT_ID","ops":[{"op":"assign_items","ids":["ITEM_ID"],"accountId":"TARGET_ACCOUNT_ID","updatePlatform":true}]}'
 ```
 
-Account operations are `add_account`, `update_account`, `delete_account` and `assign_items`. Archive/restore uses `update_account.archived`; defaults use `defaultStyleId` or scoped `set_style`. `assign_items` validates the whole list (1–100 distinct item IDs) and target before making any assignment; null unassigns. It updates linked metric attribution, preserves dates/status, and leaves descendants in place. Cross-platform moves require `updatePlatform:true`. Account changes and deletion are refused during active production/assets. Existing content cannot change ownership through `update_item.accountId`.
+Account operations are `add_account`, `update_account`, `delete_account` and `assign_items`. Archive/restore uses `update_account.archived`; defaults use `defaultStyleId` or scoped `set_style`, and `draftFormat` (`script`, `article`, or `null` to inherit the global preference) or scoped `set_format`. `set_format` accepts only `script` or `article` through CLI/MCP. `assign_items` validates the whole list (1–100 distinct item IDs) and target before making any assignment; null unassigns. It updates linked metric attribution, preserves dates/status, and leaves descendants in place. Cross-platform moves require `updatePlatform:true`. Account changes and deletion are refused during active production/assets. Existing content cannot change ownership through `update_item.accountId`.
 
 New account items inherit its platform, and new branches inherit the parent account unless explicitly assigned consistently. Linked metrics follow the item's attribution. New exports use immutable account-ID folders, separating identical titles on different accounts. Existing saved locations are retained for their original attribution; after reassignment, a new folder prevents overwriting the old account's export. GUI and automation share this behavior. Monid reimports reuse the resolved external identity, retain user-edited text and existing attribution, and validate an explicit manual target before paid fetches.
 
@@ -91,27 +91,41 @@ A remote MCP client running only in the cloud cannot directly reach the desktop 
 | --- | --- |
 | `media_desk_status` | Protocol/plugin version, availability and supportedPlatforms |
 | `media_desk_list_accounts` | Search/query, platform/group/archive filters; default 20, max 100; offset/nextOffset; compact account metadata and counts |
-| `media_desk_get_account` | One account profile, positioning/audience/default style and counts; no credentials |
+| `media_desk_get_account` | One account profile, positioning/audience/default style/format and counts; no credentials |
 | `media_desk_list_items` | Query/status/platform filters; default 20, max 100; offset/nextOffset pagination; metadata only |
 | `media_desk_get_item` | One item's metadata; opt into `fields: ["body","article","production"]`; `maxChars` default 8000, max 200000 per selected field; explicit `truncated` flags |
 | `media_desk_apply_ops` | Up to 100 explicit whitelisted operations using the existing validation/receipts and undo semantics |
 | `media_desk_assist` | Default authoring/revision through the existing assistant and selected/subscription model; starts requested production jobs once; open/nav actions are returned as UI hints |
 | `media_desk_write_draft` | External title/article/cover text/textual storyboard directly into studio/export; zero model calls; retains existing assets; keeps published items published |
-| `media_desk_produce` | Existing configured Producer; may incur model/image costs |
-| `media_desk_production_status` | One job/production's stored and live status without changing it; no streaming article text |
+| `media_desk_produce` | Existing configured Producer; optional boolean `withImages` overrides the image default; may incur model/image costs |
+| `media_desk_production_status` | One job/production's stored and live status, format and image choice without changing it; no streaming article text |
 | `media_desk_cancel_production` | Requests cancellation; inspect status for completion |
 | `media_desk_regenerate_asset` | One existing `cover`, `image:0` or `shot:0` asset; may incur model/image costs |
 | `media_desk_export` | Existing configured save location and repeat-save behavior; script, storyboard/assets and 1920×1080 composited JPEG cover |
 | `media_desk_get_insights` | Bounded insights for accountId, optionally filtered by canonical platform |
-| `media_desk_list_styles` | Bounded style cards and active style |
+| `media_desk_list_styles` | Bounded style cards (including logic/story/flow) and active style; raw reference text omitted |
 | `media_desk_models` | Provider/model identifiers, no keys or full settings |
 | `media_desk_request_status` | Durable mutation status and compact recorded result |
 
-`apply_ops` supports item add/update/delete/status/schedule/draft/production text, styles add/update/delete/select, rules (`*_skill`) add/update/delete, and metrics add. Unknown operations/fields, arbitrary media paths and `savedPath` are rejected. Use `tools media_desk_apply_ops` for the exact JSON schema. Schedule timestamps must include `Z` or an explicit timezone offset; `null` cancels scheduling. Scheduling changes only the local editorial calendar. It does not post to social platforms.
+`apply_ops` supports item add/update/delete/status/schedule/draft/production text, styles add/update/delete/select, script/article format selection, rules (`*_skill`) add/update/delete, and metrics add. Unknown operations/fields, arbitrary media paths and `savedPath` are rejected. Use `tools media_desk_apply_ops` for the exact JSON schema. Schedule timestamps must include `Z` or an explicit timezone offset; `null` cancels scheduling. Scheduling changes only the local editorial calendar. It does not post to social platforms.
 
 `assist` (CLI `assist` or `write`) uses the same workbench assistant as the UI and then executes requested production jobs server-side once. Existing revisions/asset regeneration inside that turn are not repeated. The compact response includes reply, receipts/errors, started jobs and UI hints; it never includes chat history or full workspace state. Poll production status for background jobs. If the configured model is unavailable, the existing UI fallback is reported through `modelUsed:false` and its notice. Provider errors remain private.
 
-`write_draft` (CLI `write-draft ID --input JSON`) explicitly imports a finished externally authored draft without another generation. It accepts text only. Asset references cannot be submitted through it; legitimate existing cover, images and corresponding storyboard images remain. It refuses writes during active production. Existing Producer's own provider rate-limit handling is preserved; the adapter adds no generation or dispatch retries.
+`write_draft` (CLI `write-draft ID --input JSON`) explicitly imports a finished externally authored draft without another generation. It accepts text only, with optional `format:"script"|"article"`. If omitted, it retains the existing production format or uses the item account's effective preference for a new draft. Asset references cannot be submitted through it; legitimate existing cover, images and corresponding storyboard images remain. It refuses writes during active production. Existing Producer's own provider rate-limit handling is preserved; the adapter adds no generation or dispatch retries.
+
+## Format and image choices
+
+The studio format picker and scoped `set_format` change only the item account's preference. `update_account.draftFormat:null` restores inheritance from the global preference; Unassigned and unscoped global operations retain the old global behavior. Migration adds nullable preferences without rewriting existing articles or production formats. Production snapshots the effective format at start, so changing an account preference while a job runs cannot retarget that job. Undoing an older draft import preserves the complete newer production, both while it runs and after completion; ordinary edits within the same production and unrelated changes remain undoable.
+
+```sh
+media-desk call media_desk_apply_ops --request-id format-001 --input '{"accountId":"ACCOUNT_ID","ops":[{"op":"set_format","format":"article"}]}'
+media-desk produce ITEM_ID --request-id text-only-001 --input '{"accountId":"ACCOUNT_ID","withImages":false}'
+media-desk write-draft ITEM_ID --request-id external-article-001 --input '{"accountId":"ACCOUNT_ID","format":"article","article":"A finished article"}'
+```
+
+`produce.withImages` is optional and strictly boolean. Omit it to follow the existing `generateImages` setting. `false` still creates the script/article and textual storyboard with planned assets marked skipped; `regenerate_asset` can draw individual assets later. Scope is checked before provider work and again before continuation writes. Concurrent starts for one item reserve one job before asynchronous settings reads, preventing duplicate model/image pipelines. Production status and bounded production reads include the saved `format` and `withImages` when present.
+
+Style operations and compact reads include `logic`, `story` and `flow`. Extraction stores a bounded reference excerpt and activates the style for the targeted account; compact automation reads omit raw reference material.
 
 ## Durable requests and partial results
 

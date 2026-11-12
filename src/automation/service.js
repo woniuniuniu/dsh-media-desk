@@ -1,5 +1,6 @@
 import { allAccountCounts, accountCounts, normalizedAccountId, requireAccount, requireMembership, resolveChatScope, scopeState, scopedActions } from '../accounts.js'
 import Ajv from 'ajv'
+import { draftFormat } from '../style.js'
 import { catalog, PLUGIN_VERSION, PROTOCOL_VERSION } from './catalog.js'
 import { failure, invalid } from './errors.js'
 import { MutationJournal } from './journal.js'
@@ -17,7 +18,7 @@ const clipped = (v, n = 500) => typeof v === 'string' ? v.slice(0, n) : v
 function metadata(row) { const out = pick(row, META); out.title = clipped(out.title, 300); out.tags = out.tags?.slice(0, 24).map(x => clipped(x, 100)); out.productionStatus = row.production?.status ?? null; return out }
 function productionStatus(item, producer) {
   const p = item.production
-  return { id: item.id, status: item.status, production: p ? { ...pick(p, ['status', 'stage', 'startedAt', 'finishedAt', 'savedAt']), title: clipped(p.title, 300), error: p.error ? 'Production failed. Inspect the workbench for details.' : null, assets: [p.cover, ...p.images ?? [], ...p.shots ?? []].filter(Boolean).map(a => ({ status: a.status, error: a.error ? 'Asset generation failed. Inspect the workbench for details.' : null })) } : null, live: pick(producer.status(item.id), ['running', 'stage']) }
+  return { id: item.id, status: item.status, production: p ? { ...pick(p, ['status', 'stage', 'startedAt', 'finishedAt', 'savedAt', 'format', 'withImages']), title: clipped(p.title, 300), error: p.error ? 'Production failed. Inspect the workbench for details.' : null, assets: [p.cover, ...p.images ?? [], ...p.shots ?? []].filter(Boolean).map(a => ({ status: a.status, error: a.error ? 'Asset generation failed. Inspect the workbench for details.' : null })) } : null, live: pick(producer.status(item.id), ['running', 'stage']) }
 }
 function validateSchedule(input) {
   for (const op of input.ops ?? []) {
@@ -35,9 +36,9 @@ export function createAutomationService({ store, settings, producer, assist, mod
     if (input.accountId !== undefined) requireAccount(await store.read(),input.accountId)
     switch (tool) {
       case 'media_desk_list_accounts': {
-        const state=await store.read();const counts=allAccountCounts(state); const q=input.query?.toLocaleLowerCase(); const rows=state.accounts.filter(a=>(!q||`${a.handle} ${a.platform} ${a.group} ${a.id}`.toLocaleLowerCase().includes(q))&&(input.platform===undefined||a.platform===input.platform)&&(input.group===undefined||a.group===input.group)&&(input.archived===undefined||Boolean(a.archived)===input.archived));const offset=input.offset??0,limit=input.limit??20;return {accounts:rows.slice(offset,offset+limit).map(a=>({...Object.fromEntries(Object.entries(pick(a,['id','handle','platform','group','archived','defaultStyleId'])).map(([k,v])=>[k,clipped(v,300)])),counts:counts.get(a.id)??{items:0,published:0,scheduled:0,metrics:0}})),total:rows.length,offset,nextOffset:offset+limit<rows.length?offset+limit:null}
+        const state=await store.read();const counts=allAccountCounts(state); const q=input.query?.toLocaleLowerCase(); const rows=state.accounts.filter(a=>(!q||`${a.handle} ${a.platform} ${a.group} ${a.id}`.toLocaleLowerCase().includes(q))&&(input.platform===undefined||a.platform===input.platform)&&(input.group===undefined||a.group===input.group)&&(input.archived===undefined||Boolean(a.archived)===input.archived));const offset=input.offset??0,limit=input.limit??20;return {accounts:rows.slice(offset,offset+limit).map(a=>({...Object.fromEntries(Object.entries(pick(a,['id','handle','platform','group','archived','defaultStyleId','draftFormat'])).map(([k,v])=>[k,clipped(v,300)])),counts:counts.get(a.id)??{items:0,published:0,scheduled:0,metrics:0}})),total:rows.length,offset,nextOffset:offset+limit<rows.length?offset+limit:null}
       }
-      case 'media_desk_get_account': {const state=await store.read();const a=requireAccount(state,input.id);return {...Object.fromEntries(Object.entries(pick(a,['id','handle','platform','url','group','positioning','audience','defaultStyleId','archived','note','followers','createdAt'])).map(([k,v])=>[k,clipped(v,4000)])),counts:accountCounts(state,a.id)} }
+      case 'media_desk_get_account': {const state=await store.read();const a=requireAccount(state,input.id);return {...Object.fromEntries(Object.entries(pick(a,['id','handle','platform','url','group','positioning','audience','defaultStyleId','draftFormat','archived','note','followers','createdAt'])).map(([k,v])=>[k,clipped(v,4000)])),counts:accountCounts(state,a.id)} }
       case 'media_desk_status': return { protocolVersion: PROTOCOL_VERSION, pluginVersion: PLUGIN_VERSION, available: true, readOnly, supportedPlatforms: PLATFORMS }
       case 'media_desk_list_items': {
         const query = input.query?.toLocaleLowerCase()
@@ -52,7 +53,7 @@ export function createAutomationService({ store, settings, producer, assist, mod
             const p = row.production
             if (!p) { result.production = null; continue }
             // Text-only snapshot. Omit internal paths, engine responses and unrelated state.
-            const safe = pick(p, ['status', 'stage', 'title', 'coverText', 'characters', 'facts', 'outline', 'article', 'cover', 'images', 'shots'])
+            const safe = pick(p, ['status', 'stage', 'format', 'withImages', 'title', 'coverText', 'characters', 'facts', 'outline', 'article', 'cover', 'images', 'shots'])
             for (const key of ['cover', 'images', 'shots']) {
               const asset = a => a ? pick(a, ['no', 'shot', 'seconds', 'visual', 'voice', 'caption', 'anchor', 'prompt', 'src', 'status']) : null
               if (Array.isArray(safe[key])) safe[key] = safe[key].slice(0, 24).map(asset)
@@ -87,7 +88,7 @@ export function createAutomationService({ store, settings, producer, assist, mod
         for (const action of actions.slice(0, 100)) {
           if (action?.type === 'produce' && typeof action.id === 'string' && action.id.length <= 200 && !seen.has(action.id)) {
             seen.add(action.id)
-            try { jobs.push({ id: action.id, started: await producer.start(action.id,accountId) }) } catch { errors.push('A requested production job could not start. Inspect the item status before further action.') }
+            try { jobs.push({ id: action.id, started: await producer.start(action.id, { accountId }) }) } catch { errors.push('A requested production job could not start. Inspect the item status before further action.') }
           } else if (action?.type === 'open' && typeof action.id === 'string') uiHints.push({ type: 'open', id: action.id.slice(0, 200) })
           else if (action?.type === 'nav' && typeof action.view === 'string') uiHints.push({ type: 'nav', view: action.view.slice(0, 100) })
         }
@@ -102,7 +103,7 @@ export function createAutomationService({ store, settings, producer, assist, mod
           const item = requireMembership(state,input.id,input.accountId)
           if (!item) throw Object.assign(new Error('Item not found.'), { code: 'NOT_FOUND' })
           const previous = item.production ?? {}
-          const p = { ...previous, status: 'done', stage: 'done', title: input.title ?? previous.title ?? item.title, article: input.article ?? previous.article ?? '', coverText: input.coverText ?? previous.coverText ?? input.title ?? item.title, finishedAt: new Date().toISOString(), images: previous.images ?? [], cover: previous.cover ?? null, shots: previous.shots ?? [] }
+          const p = { ...previous, status: 'done', stage: 'done', format: input.format ?? previous.format ?? draftFormat(scopeState(state, normalizedAccountId(item)).draftFormat), title: input.title ?? previous.title ?? item.title, article: input.article ?? previous.article ?? '', coverText: input.coverText ?? previous.coverText ?? input.title ?? item.title, finishedAt: new Date().toISOString(), images: previous.images ?? [], cover: previous.cover ?? null, shots: previous.shots ?? [] }
           for (const key of ['characters', 'facts', 'outline']) if (input[key] !== undefined) p[key] = input[key]
           if (input.shots) p.shots = input.shots.map((shot, index) => ({ ...previous.shots?.[index], ...shot, no: index + 1 }))
           delete p.error
@@ -112,7 +113,7 @@ export function createAutomationService({ store, settings, producer, assist, mod
         })
         return { id: input.id, saved: true, modelCalls: 0 }
       }
-      case 'media_desk_produce': await find(input.id,input.accountId); return { id: input.id, started: await producer.start(input.id,input.accountId) }
+      case 'media_desk_produce': await find(input.id,input.accountId); return { id: input.id, started: await producer.start(input.id, { accountId: input.accountId, withImages: input.withImages }) }
       case 'media_desk_production_status': return productionStatus(await find(input.id,input.accountId), producer)
       case 'media_desk_cancel_production': await find(input.id,input.accountId); await producer.cancel(input.id); return { id: input.id, cancellationRequested: true }
       case 'media_desk_regenerate_asset': await find(input.id,input.accountId); await producer.regenerate(input.id, input.target,input.accountId); return { id: input.id, target: input.target, requested: true }
@@ -137,7 +138,7 @@ export function createAutomationService({ store, settings, producer, assist, mod
       }
       case 'media_desk_list_styles': {
         const s = scopeState(await store.read(),input.accountId); const offset = input.offset ?? 0; const limit = input.limit ?? 20
-        return { activeStyleId: s.activeStyleId ?? null, total: (s.styles ?? []).length, styles: (s.styles ?? []).slice(offset, offset + limit).map(row => Object.fromEntries(Object.entries(pick(row, ['id', 'name', 'icon', 'summary', 'tone', 'sentences', 'opening', 'structure', 'words', 'avoid', 'samples'])).map(([k, v]) => [k, Array.isArray(v) ? v.slice(0, 10).map(x => clipped(x, 300)) : clipped(v, 800)]))) }
+        return { activeStyleId: s.activeStyleId ?? null, total: (s.styles ?? []).length, styles: (s.styles ?? []).slice(offset, offset + limit).map(row => Object.fromEntries(Object.entries(pick(row, ['id', 'name', 'icon', 'summary', 'tone', 'sentences', 'opening', 'structure', 'logic', 'story', 'flow', 'words', 'avoid', 'samples'])).map(([k, v]) => [k, Array.isArray(v) ? v.slice(0, 10).map(x => clipped(x, 300)) : clipped(v, 800)]))) }
       }
       case 'media_desk_models': return models()
       case 'media_desk_request_status': return journal.status(input.requestId)

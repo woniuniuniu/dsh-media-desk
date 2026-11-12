@@ -20,7 +20,7 @@ export function requireMembership(state, id, accountId) {
 }
 export function migrateAccounts(state) {
   state.accounts ??= []
-  for (const row of state.accounts) for (const [key,value] of Object.entries({group:'',positioning:'',audience:'',defaultStyleId:null,archived:false})) if (row[key] === undefined) row[key] = value
+  for (const row of state.accounts) for (const [key,value] of Object.entries({group:'',positioning:'',audience:'',defaultStyleId:null,draftFormat:null,archived:false})) if (row[key] === undefined) row[key] = value
   for (const key of ['items','metrics','chat','skills']) for (const row of state[key] ?? []) if (row.accountId === undefined) row.accountId = null
   return state
 }
@@ -32,6 +32,7 @@ export function scopeState(state, accountId) {
   const account = requireAccount(state, accountId)
   const itemAccounts = new Map(state.items.map(i=>[i.id,normalizedAccountId(i)]))
   return { ...state, accountId, account, activeStyleId: account ? account.defaultStyleId ?? null : state.activeStyleId,
+    draftFormat: account?.draftFormat ?? state.draftFormat,
     items: state.items.filter(i => normalizedAccountId(i) === accountId),
     metrics: state.metrics.filter(m => (m.itemId ? itemAccounts.get(m.itemId) ?? null : normalizedAccountId(m)) === accountId),
     chat: state.chat.filter(c => normalizedAccountId(c) === accountId),

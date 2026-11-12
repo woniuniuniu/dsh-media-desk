@@ -12,6 +12,14 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value)
 const keyed = list => list.every(row => isObject(row) && typeof row.id === 'string')
 
+// A later generation owns its complete snapshot, including equal-valued metadata.
+// Legacy runs have no UUID, so their persisted start time is the identity fallback.
+function differentProduction(after, current) {
+  if (!isObject(current)) return false
+  if (typeof current.generationId === 'string' && current.generationId) return current.generationId !== after?.generationId
+  return typeof current.startedAt === 'string' && Boolean(current.startedAt) && current.startedAt !== after?.startedAt
+}
+
 function revertList(before, after, current) {
   const was = new Map(before.map(row => [row.id, row]))
   const now = new Map(after.map(row => [row.id, row]))
@@ -43,7 +51,8 @@ export function revertChange(before, after, current) {
   if (isObject(before) && isObject(after) && isObject(current)) {
     const result = { ...current }
     for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
-      const value = revertChange(before[key], after[key], current[key])
+      const value = key === 'production' && differentProduction(after[key], current[key])
+        ? current[key] : revertChange(before[key], after[key], current[key])
       if (value === undefined) delete result[key]
       else result[key] = value
     }

@@ -123,3 +123,35 @@ test('insights request carries explicit account and Kuaishou platform; CSV accep
     assert.equal(result.ops[0].views, 100)
   }
 })
+
+test('studio opened from All reads the item account format and changes only that account', async () => {
+  const requests = []
+  const state = { accounts: [{ id: 'a', draftFormat: 'article' }, { id: 'b', draftFormat: 'script' }], draftFormat: 'script', items: [{ id: 'mine', title: 'A idea', accountId: 'a' }], metrics: [], skills: [], chat: [], styles: [] }
+  const api = await client({ contents: "export * from './client/studio.jsx'; export * from './client/desk.js'" }, async (url, options) => {
+    requests.push({ url, body: JSON.parse(options.body) })
+    return { ok: true, json: async () => ({ state, receipts: [] }) }
+  })
+  api.setDesk({ state })
+  api.selectAccount(undefined)
+  api.openItem('mine')
+  const top = elements(api.Studio()).find(node => node.type?.name === 'ChatPanel').props.top
+  const card = top.type(top.props)
+  const radios = elements(card).filter(node => node.props.role === 'radio')
+  assert.equal(radios.find(node => textOf(node) === '文章').props['aria-checked'], true)
+  radios.find(node => textOf(node) === '脚本').props.onClick()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(requests[0].body.accountId, 'a')
+  assert.deepEqual(requests[0].body.ops[0], { op: 'set_format', format: 'script', accountId: 'a' })
+  await api.runProduce('mine', { withImages: false })
+  assert.equal(requests[1].body.accountId, 'a')
+  assert.equal(requests[1].body.withImages, false)
+})
+
+test('client accepts explicit legacy Unassigned production origin together with image options', async () => {
+  let payload
+  const state = { accounts: [{ id: 'a' }], items: [{ id: 'legacy', accountId: null }], metrics: [], skills: [], chat: [] }
+  const api = await client('client/desk.js', async (url, options) => { payload = JSON.parse(options.body); return { ok: true, json: async () => ({ state }) } })
+  api.setDesk({ state })
+  await api.runProduce('legacy', null)
+  assert.equal(payload.accountId, null)
+})

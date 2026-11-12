@@ -2,6 +2,7 @@
 // 模型输出也是不可信输入，所以这里只放行白名单字段。
 import { accountError, detachAccounts, hasActiveProduction, normalizedAccountId, requireAccount, requireMembership, requireStyle } from './accounts.js'
 import { currentLang, platformName, tr } from './i18n.js'
+import { draftFormat } from './style.js'
 
 export const STATUSES = ['idea', 'outline', 'draft', 'ready', 'published']
 export const STATUS_LABEL = { idea: '灵感', outline: '大纲', draft: '草稿', ready: '待发布', published: '已发布' }
@@ -20,10 +21,10 @@ const ITEM_FIELDS = {
 }
 const PERSON_FIELDS = { name: 'text', role: 'text', note: 'text', traits: 'list', tone: 'num' }
 const ANGLE_FIELDS = { name: 'text', hook: 'text', prompt: 'text' }
-const STYLE_FIELDS = { name: 'text', icon: 'text', summary: 'text', tone: 'text', sentences: 'text', opening: 'text', structure: 'text', words: 'list', avoid: 'list', samples: 'list' }
+const STYLE_FIELDS = { name: 'text', icon: 'text', summary: 'text', tone: 'text', sentences: 'text', opening: 'text', structure: 'text', logic: 'text', story: 'text', flow: 'text', words: 'list', avoid: 'list', samples: 'list' }
 const SKILL_FIELDS = { accountId: 'id', name: 'text', rule: 'text', source: 'text', status: 'text', confidence: 'num', evidence: 'text' }
 const METRIC_FIELDS = { accountId: 'id', itemId: 'id', platform: 'platform', date: 'date', views: 'num', likes: 'num', comments: 'num', shares: 'num', saves: 'num' }
-const ACCOUNT_FIELDS = { group: 'text', positioning: 'text', audience: 'text', defaultStyleId: 'id', archived: 'bool', platform: 'platform', handle: 'text', url: 'url', followers: 'num', note: 'text', title: 'text', description: 'text', avatar: 'url', fetchedAt: 'date', fetchError: 'text' }
+const ACCOUNT_FIELDS = { group: 'text', positioning: 'text', audience: 'text', defaultStyleId: 'id', draftFormat: 'format', archived: 'bool', platform: 'platform', handle: 'text', url: 'url', followers: 'num', note: 'text', title: 'text', description: 'text', avatar: 'url', fetchedAt: 'date', fetchError: 'text' }
 
 let counter = 0
 export function newId(prefix = 'x') {
@@ -46,6 +47,7 @@ function coerce(type, value) {
     case 'id': return value === null || typeof value === 'string' ? value : undefined
     case 'kind': return KINDS.includes(value) ? value : undefined
     case 'status': return STATUSES.includes(value) ? value : undefined
+    case 'format': return value === null || ['script', 'article'].includes(value) ? value : undefined
     case 'platform': return value === null || PLATFORMS.includes(value) ? value : undefined
     case 'list': return Array.isArray(value) ? value.filter(v => typeof v === 'string').slice(0, 24) : undefined
     case 'bool': return typeof value === 'boolean' ? value : undefined
@@ -267,6 +269,16 @@ const handlers = {
     state.activeStyleId = style.id
     return { text: tr('之后按「{name}」的风格写', { name: style.name }) }
   },
+  set_format(state, op) {
+    const format = draftFormat(op.format)
+    if (op.accountId !== undefined && op.accountId !== null) {
+      const account = requireAccount(state, op.accountId)
+      account.draftFormat = format
+      return { text: format === 'article' ? tr('之后写成文章') : tr('之后写成口播脚本'), target: account.id, kind: 'account' }
+    }
+    state.draftFormat = format
+    return { text: format === 'article' ? tr('之后写成文章') : tr('之后写成口播脚本') }
+  },
   add_skill(state, op, now) {
     requireAccount(state,op.accountId)
     const skill = { id: newId('s'), accountId: null, name: '', rule: '', source: tr('对话'), status: 'proposed', confidence: 0.5, createdAt: now, ...pick(SKILL_FIELDS, op) }
@@ -296,7 +308,7 @@ const handlers = {
     return { text: tr('记录 {platform} 数据 {views} 阅读', { platform: platformName(metric.platform), views: metric.views }) }
   },
   add_account(state, op, now) {
-    const account = { id: newId('ac'), group: '', positioning: '', audience: '', defaultStyleId: null, archived: false, platform: '', handle: '', url: null, followers: null, createdAt: now, ...pick(ACCOUNT_FIELDS, op) }
+    const account = { id: newId('ac'), group: '', positioning: '', audience: '', defaultStyleId: null, draftFormat: null, archived: false, platform: '', handle: '', url: null, followers: null, createdAt: now, ...pick(ACCOUNT_FIELDS, op) }
     if (op.defaultStyleId !== undefined) requireStyle(state,op.defaultStyleId)
     if (op.platform !== undefined && !PLATFORMS.includes(op.platform)) throw accountError('Invalid account platform.')
     if (!account.platform && !account.handle && !account.url) throw new Error(tr('账号信息为空'))
@@ -374,7 +386,7 @@ export function applyOps(state, ops, { accountId } = {}) {
         const itemOps = ['update_item','delete_item','schedule_item','set_status','save_draft','update_production']
         if (itemOps.includes(op.op)) requireMembership(state,op.id,accountId)
         if (op.op === 'assign_items') for (const id of op.ids ?? []) requireMembership(state,id,accountId)
-        if (['add_item','add_metric','add_skill','set_style'].includes(op.op)) { if (op.accountId !== undefined && op.accountId !== accountId) throw accountError('Operation belongs to another account.'); scoped.accountId = accountId }
+        if (['add_item','add_metric','add_skill','set_style','set_format'].includes(op.op)) { if (op.accountId !== undefined && op.accountId !== accountId) throw accountError('Operation belongs to another account.'); scoped.accountId = accountId }
         if (op.op === 'add_metric' && op.itemId) requireMembership(state,op.itemId,accountId)
         if (['update_account','delete_account'].includes(op.op) && op.id !== accountId) throw accountError('Account belongs to another scope.')
         if (['add_account','clear_samples','delete_style','update_style','add_person','update_person','delete_person','add_angle','update_angle','delete_angle'].includes(op.op)) throw accountError('Global operation is unavailable in account scope.')

@@ -219,4 +219,32 @@ export function apply(ctx) {
     const off = subscribeLang(mount)
     return () => { off(); release?.() }
   }, 'dsh-media-desk: sidebar entry')
+  mountBetterSidebar(ctx)
+}
+
+/**
+ * 装了 dsh-better-sidebar 就再挂一个右侧栏的页面（#10）：左侧栏被别的插件整个接管时，
+ * 这是唯一还点得到的入口。没装就什么都不做——它是软依赖，不进顶层的 inject。
+ */
+function mountBetterSidebar(ctx) {
+  const register = inner => {
+    const sidebar = inner.betterSidebar ?? inner.get?.('betterSidebar')
+    if (typeof sidebar?.registerTab !== 'function') return
+    inner.effect(() => sidebar.registerTab({
+      id: `${PANEL_ID}:workbench`,
+      title: () => t('自媒体工作台'),
+      description: () => t('灵感、内容、排期、复盘、风格'),
+      icon: size => <PanelIcon size={size} />,
+      order: 60,
+      single: true,
+      component: Desk,
+    }), 'dsh-media-desk: better-sidebar tab')
+  }
+  try {
+    // 服务晚于我们就绪、或者中途被卸掉再装回，子作用域都会跟着重来
+    if (typeof ctx.inject === 'function') ctx.inject(['betterSidebar'], register)
+    else register(ctx)
+  } catch (error) {
+    console.warn('[dsh-media-desk] better-sidebar tab skipped:', error)
+  }
 }

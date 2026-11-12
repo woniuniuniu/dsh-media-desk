@@ -16,7 +16,7 @@ import { createMonidRunner, fetchAccount, importPosts, monidStatus, postsToMater
 import { applyOps, newId } from './ops.js'
 import { applyRevision, Producer } from './produce.js'
 import { publicSettings, Settings, imageReady } from './settings.js'
-import { normalizeStyle, stylePrompts } from './style.js'
+import { normalizeStyle, referenceExcerpt, stylePrompts } from './style.js'
 import { dshHome, Store } from './store.js'
 import { currentLang, platformName, tr, withLang } from './i18n.js'
 import { localizeSamples, samplesNeedLocale } from './seed.js'
@@ -142,7 +142,7 @@ export async function chatTurn(ctx, store, desk, body) {
       if (production && op?.op === 'update_item' && op.id === focusId && typeof op.title === 'string') return { op: 'update_production', id: focusId, title: op.title }
       return op
     })
-    const allowed = accountId === undefined ? ops : ops.filter(op=>['add_item','update_item','delete_item','schedule_item','set_status','save_draft','update_production','set_style','add_skill','update_skill','delete_skill','add_metric'].includes(op?.op))
+    const allowed = accountId === undefined ? ops : ops.filter(op=>['add_item','update_item','delete_item','schedule_item','set_status','save_draft','update_production','set_style','set_format','add_skill','update_skill','delete_skill','add_metric'].includes(op?.op))
     const { receipts, errors } = applyOps(draft, allowed,{accountId})
     if(allowed.length!==ops.length) errors.push('An operation outside this account scope was blocked.')
     let targets = []
@@ -177,6 +177,7 @@ export async function chatTurn(ctx, store, desk, body) {
 }
 
 async function extractStyle(ctx, store, body) {
+  requireAccount(await store.read(), body.accountId)
   const urls = (Array.isArray(body.urls) ? body.urls : []).map(row => String(row).trim()).filter(Boolean).slice(0, 5)
   const parts = [String(body.text ?? '').trim()].filter(Boolean)
   const failures = []
@@ -200,6 +201,7 @@ async function extractStyle(ctx, store, body) {
 
 /** 提炼一张风格卡并设为当前风格。同一个账号再抓一次时更新原来那张。 */
 async function styleFromMaterial(ctx, store, { material, name, source, sourceUrls = [], failures = [], accountKey = null, accountId }) {
+  requireAccount(await store.read(), accountId)
   let style
   try {
     const { system, user } = stylePrompts(material, name)
@@ -211,7 +213,7 @@ async function styleFromMaterial(ctx, store, { material, name, source, sourceUrl
   return store.mutate(tr('提炼风格「{name}」', { name: style.name }), (draft) => {
     const existing = accountKey ? (draft.styles ?? []).find(row => row.accountKey === accountKey) : null
     const id = existing?.id ?? newId('st')
-    const row = { id, ...style, ...(accountId!==undefined?{accountId}:{}), source, sourceUrls, ...(accountKey ? { accountKey } : {}), createdAt: existing?.createdAt ?? new Date().toISOString() }
+    const row = { id, ...style, reference: referenceExcerpt(material), ...(accountId!==undefined?{accountId}:{}), source, sourceUrls, ...(accountKey ? { accountKey } : {}), createdAt: existing?.createdAt ?? new Date().toISOString() }
     draft.styles = existing ? draft.styles.map(entry => (entry.id === id ? row : entry)) : [row, ...(draft.styles ?? [])]
     if(accountId!==undefined && accountId!==null) requireAccount(draft,accountId).defaultStyleId=id
     else draft.activeStyleId = id
@@ -365,11 +367,12 @@ async function route(ctx, store, desk, req, res) {
       return json(res, 200, { state })
     }
     case 'produce': {
-      requireMembership(await store.read(),String(body.id),body.accountId)
-      const started = await desk.producer.start(String(body.id),body.accountId)
+      requireMembership(await store.read(), String(body.id), body.accountId)
+      const started = await desk.producer.start(String(body.id), { accountId: body.accountId, withImages: body.withImages })
       return json(res, 200, { started, state: await store.read() })
     }
     case 'produce/cancel':
+      requireMembership(await store.read(), String(body.id), body.accountId)
       await desk.producer.cancel(String(body.id))
       return json(res, 200, { ok: true })
     case 'produce/regen':

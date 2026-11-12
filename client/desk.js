@@ -105,9 +105,10 @@ export function closeItem() {
 }
 
 /** 一键成稿。任务在 Host 里跑，这里只负责启动和看进度。 */
-export async function runProduce(id, accountId = snapshot.state.items.find(i=>i.id===id)?.accountId) {
+export async function runProduce(id, options = {}) {
+  const { accountId = snapshot.state.items.find(i => i.id === id)?.accountId, withImages } = typeof options === 'string' || options === null ? { accountId: options } : options
   try {
-    const data = await request('produce', { id, accountId })
+    const data = await request('produce', { id, accountId, ...(typeof withImages === 'boolean' ? { withImages } : {}) })
     setDesk({ state: data.state })
   } catch (err) {
     report(err)
@@ -204,7 +205,7 @@ function runActions(actions, origin, actionAccountId) {
     if(actionAccountId!==undefined && action.id && !snapshot.state.items.some(i=>i.id===action.id&&(i.accountId??null)===actionAccountId))continue
     if (action.type === 'produce' && action.id) {
       openItem(action.id)
-      runProduce(action.id,actionAccountId)
+      runProduce(action.id, { accountId: actionAccountId })
     }
     if (action.type === 'open' && action.id) openItem(action.id)
     if (action.type === 'nav' && action.view) setDesk({ view: action.view })

@@ -12,11 +12,12 @@ async function fixture(t) {
   const { startAutomationServer } = await import('../src/automation/server.js')
   const { createAutomationService } = await import('../src/automation/service.js')
   const store = new Store(join(home, 'media-desk')); await store.mutate('empty', s => { s.items = [] })
-  const service = createAutomationService({ store, producer: { isRunning: () => false, anyAssetActive: () => false }, settings: {}, assist: async body => ({ answer: { text: `assisted: ${body.message}`, engine: 'synthetic-selected-model' }, actions: [] }) })
+  const starts = []
+  const service = createAutomationService({ store, producer: { isRunning: () => false, anyAssetActive: () => false, start: async (...args) => { starts.push(args); return true } }, settings: {}, assist: async body => ({ answer: { text: `assisted: ${body.message}`, engine: 'synthetic-selected-model' }, actions: [] }) })
   const server = await startAutomationServer({ home, service })
   t.after(() => server.dispose())
   const { AutomationClient } = await import('../src/automation/client.js')
-  return { home, server, service, store, client: new AutomationClient({ home }) }
+  return { home, server, service, store, starts, client: new AutomationClient({ home }) }
 }
 function raw(socketPath, headers = {}, body = '{}') {
   return new Promise((resolve, reject) => { const req = http.request({ socketPath, method: 'POST', path: '/rpc', headers }, res => { let data = ''; res.on('data', b => { data += b }); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(data) })) }); req.on('error', reject); req.end(body) })
@@ -253,4 +254,40 @@ test('assist client timeout exceeds Host editing window and explicit timeouts ov
   const custom = new AutomationClient({ timeout: 25 })
   assert.equal(custom.timeoutFor('media_desk_assist'), 25)
   assert.equal(custom.timeoutFor('media_desk_list_items'), 25)
+})
+
+
+test('CLI and official MCP transport preserve scoped 2.7 format and image options with 17 tools', async t => {
+  const { home, store, starts } = await fixture(t)
+  const { applyOps } = await import('../src/ops.js')
+  let accountId, id
+  await store.mutate('setup account', s => {
+    accountId = applyOps(s, [{ op: 'add_account', platform: '快手', handle: 'Transport account' }]).receipts[0].target
+    id = applyOps(s, [{ op: 'add_item', accountId, title: 'Transport idea' }]).receipts[0].target
+  })
+  const preference = await cli(['--home', home, 'call', 'media_desk_apply_ops', '--request-id', 'cli-format', '--input', JSON.stringify({ accountId, ops: [{ op: 'set_format', format: 'article' }] })])
+  assert.equal(preference.code, 0, preference.stdout)
+  const production = await cli(['--home', home, 'produce', id, '--request-id', 'cli-text-only', '--input', JSON.stringify({ accountId, withImages: false })])
+  assert.equal(production.code, 0, production.stdout)
+  assert.deepEqual(starts, [[id, { accountId, withImages: false }]])
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
+  const client = new Client({ name: 'port270-test', version: '1' })
+  t.after(() => client.close())
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(process.cwd(), 'bin/media-desk.js'), '--home', home, 'mcp'], stderr: 'pipe' }))
+  const tools = await client.listTools()
+  assert.equal(tools.tools.length, 17)
+  assert.equal(tools.tools.find(t => t.name === 'media_desk_produce').inputSchema.properties.withImages.type, 'boolean')
+  const imported = await client.callTool({ name: 'media_desk_write_draft', arguments: { requestId: 'mcp-article', id, accountId, format: 'article', article: 'Transport body stays intact' } })
+  assert.equal(imported.structuredContent.ok, true)
+  const item = (await store.read()).items.find(row => row.id === id)
+  assert.equal(item.production.format, 'article')
+  assert.equal(item.production.article, 'Transport body stays intact')
+  const drawn = await client.callTool({ name: 'media_desk_produce', arguments: { requestId: 'mcp-images', id, accountId, withImages: true } })
+  assert.equal(drawn.structuredContent.ok, true)
+  assert.deepEqual(starts[1], [id, { accountId, withImages: true }])
+  const bad = await client.callTool({ name: 'media_desk_apply_ops', arguments: { requestId: 'mcp-bad-format', accountId, ops: [{ op: 'set_format', format: 'ebook' }] } })
+  assert.equal(bad.isError, true)
+  assert.equal((await store.read()).draftFormat, undefined)
+  assert.equal((await store.read()).accounts.find(a => a.id === accountId).draftFormat, 'article')
 })

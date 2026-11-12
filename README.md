@@ -33,6 +33,8 @@
 
 账号列表是总菜单，支持搜索、分组、批量添加和归档。账号内有六个子页面：**灵感 · 内容 · 排期 · 复盘 · 账号 · 风格**；「账号」只编辑当前档案，点击「账号列表」返回总菜单。「全部账号」和「未归属」保留汇总与旧内容入口。界面有中文和英文，默认跟随 DeepSeek Harness 的语言，也可以在插件设置里固定；切到英文后，脚本、标题和分镜也用英文写。网页版在手机浏览器里也能打开。
 
+`2.7.0-accounts.1` 整合上游 2.7.0：每个账号可独立选择脚本或文章，生成开始后固定这次体裁；图片开关可按次覆盖，文字稿之后仍可单张补画。保留风格原文参考、逻辑/讲述/衔接、百炼/万相和 better-sidebar 支持。已有正文、归属和设置在迁移时保留。
+
 除了小红书、抖音、B 站、公众号，也支持快手、TikTok、Instagram、YouTube 和 X。快手可用于手动或 CSV 指标录入、排期、复盘筛选及 CLI/MCP，Monid 自动抓取维持原有平台范围。详见[多账号工作区与快手支持](docs/multi-account-workspaces.md)。
 
 <br>
@@ -50,6 +52,8 @@
 <td valign="top">
 <p><b>整页一起长出来。</b></p>
 <p>点开灵感，稿面的格子一开始就排好了。标题、脚本、视频封面、配图和六格分镜同时生成，一边生成一边填满。</p>
+<p><b>脚本还是文章，你来选。</b></p>
+<p>脚本一句话一行、一段一段，照着念就行；文章按自然段写，可以直接发。两种都带大标题，也都会贴着你选的风格和参考内容来写。</p>
 <p><b>说一句，就改。</b></p>
 <p>「表达再直接一点」「第 3 镜换成俯拍」「封面字更有冲击力」，右边实时更新，每一步都能撤销。</p>
 <p><b>拿走就能用。</b></p>
@@ -149,9 +153,23 @@
 
 要求 DeepSeek Harness `0.2.1-rc.5` 及以上的 `0.2.x`，已在 `0.2.2-rc.1` 的桌面版和网页版上测过。
 
-**1. 安装。** 打开 DeepSeek Harness 桌面版，进「插件」→「添加插件」，输入包名 `dsh-media-desk`，点安装。
+**1. 安装。** 打开 DeepSeek Harness 侧栏的「插件」，先打开实验性的索引功能：DSH `0.2.2` 及以上在「实验性插件」下启用「自定义插件索引」；`0.2.1` 系列里它叫「自定义插件市场」，在「实验性插件」旁的「更多」里。打开后页面会多出「已安装」和「发现」两个标签。
 
-也可以用命令行。桌面版要先完全退出（⌘Q）再装，装好重新打开；网页版装好后重启 `dsh web`。终端里没有 `dsh` 的话，先在桌面版菜单里选「管理 dsh 命令」。
+切到「发现」，添加这条索引地址（加一次就够）：
+
+```
+https://raw.githubusercontent.com/woniuniuniu/dsh-media-desk/main/index.json
+```
+
+GitHub 直连不通时，换成这个 CDN 镜像，代价是它最多可能比最新发布晚 12 小时：
+
+```
+https://cdn.jsdelivr.net/gh/woniuniuniu/dsh-media-desk@main/index.json
+```
+
+列表里会出现「自媒体工作台」，点安装即可。它装的就是同一个 npm 包 `dsh-media-desk`，索引只是省掉手输包名这一步。
+
+不想加索引，也可以在「插件」→「添加插件」里输入包名 `dsh-media-desk` 点安装，或者用命令行。桌面版要先完全退出（⌘Q）再装，装好重新打开；网页版装好后重启 `dsh web`。终端里没有 `dsh` 的话，先在桌面版菜单里选「管理 dsh 命令」。
 
 ```bash
 dsh plugin --profile desktop add dsh-media-desk
@@ -161,7 +179,7 @@ dsh plugin --profile desktop add dsh-media-desk
 dsh plugin --profile web add dsh-media-desk
 ```
 
-**2. 更新。** 有新版本时，在插件页点更新，或者重新执行一次上面的命令。想离线安装的话，也可以到 [Releases](https://github.com/woniuniuniu/dsh-media-desk/releases/latest) 下载 `dsh-media-desk-*.tgz`，把包名换成 `"file:$PWD/dsh-media-desk-版本号.tgz"`。
+**2. 更新。** 有新版本时，插件页会显示可更新，点一下就行；用命令行装的重跑一次上面的命令。想离线安装的话，也可以到 [Releases](https://github.com/woniuniuniu/dsh-media-desk/releases/latest) 下载 `dsh-media-desk-*.tgz`，把包名换成 `"file:$PWD/dsh-media-desk-版本号.tgz"`。
 
 **3. 打开。** 侧栏会出现「自媒体工作台」。第一次看到的都是示例数据，方便你先看看每个页面长什么样；点右上角「示例数据 · 清空」，换成自己的。
 
@@ -179,7 +197,7 @@ dsh plugin --profile web add dsh-media-desk
 | **画封面、配图、分镜** | 自己的生图 API Key，或 DSH 已注册的订阅生图工具，在插件设置里选 | 脚本和分镜文案照常，封面变成纯文字版 |
 | **导入自己的账号**（可选） | 第三方服务 Monid，按次计费：小红书一个账号约 0.02 美元（一毛多），抖音、B 站、TikTok、Instagram、X 不到 1 美分 | 手动录数据，或贴内容提炼风格 |
 
-生图支持任何兼容 OpenAI 图片接口（`POST {接口地址}/images/generations`）的服务，设置里预填了 OpenAI、xAI、火山方舟、智谱、硅基流动，也可以自定义。填好点「试画一张」就知道通没通。一次成稿默认 9 张图，数量可调。密钥只存在本机的 `settings.json`，权限 600，不进内容数据，也不会发给文字模型。
+生图支持 OpenAI 兼容图片接口（`POST {接口地址}/images/generations`），也支持阿里云百炼：千问图像走同步接口，万相 2.5 及以下走异步任务接口。设置里预填了 OpenAI、xAI、火山方舟、智谱、硅基流动、阿里云百炼、百炼 Token Plan 和百炼万相（异步），也可以自定义。填好点「试画一张」就知道通没通。一次成稿默认 9 张图，数量可调；也可以在「一键成稿」前取消「生成图片」，这次只出文字版，之后仍能单张补画。密钥只存在本机的 `settings.json`，权限 600，不进内容数据，也不会发给文字模型。
 
 <br>
 
@@ -244,6 +262,14 @@ dsh plugin --profile web add dsh-media-desk
 </details>
 
 <details>
+<summary><b>每次成稿都必须生成图片吗？</b></summary>
+<br>
+
+不是。灵感卡上的「一键成稿」旁可以取消「生成图片」，这次只生成标题、封面大字、脚本和分镜文字；设置里也能改默认值。之后想补图，点单张的「画封面」「画这张」就行。没有接生图模型时本来就会跳过画图，保存时会用封面大字合成一张纯文字封面。
+
+</details>
+
+<details>
 <summary><b>这是 DeepSeek 做的吗？</b></summary>
 <br>
 
@@ -273,6 +299,10 @@ dsh plugin --profile web add dsh-media-desk
 - [chenxupeng1990-eng](https://github.com/chenxupeng1990-eng)：让助手可以在工作台里自选模型，不必跟随 DSH 默认模型（[#5](https://github.com/woniuniuniu/dsh-media-desk/pull/5)）
 - [dsh-agent-sixtyseven](https://github.com/dsh-agent-sixtyseven)：查清 Windows 上导入账号一直显示「还没装好 Monid」的两处根因，并修好了定位和调用（[#7](https://github.com/woniuniuniu/dsh-media-desk/issues/7)、[#8](https://github.com/woniuniuniu/dsh-media-desk/pull/8)）
 - [smallflycar](https://github.com/smallflycar)：让工作台可以直接用 GPT 订阅生图，不用再另配图片 API（[#9](https://github.com/woniuniuniu/dsh-media-desk/pull/9)）
+- [cofftea114](https://github.com/cofftea114)：指出左侧栏被别的插件接管后工作台没有入口，并给出挂到 dsh-better-sidebar 右侧栏的做法（[#10](https://github.com/woniuniuniu/dsh-media-desk/issues/10)）
+- [Feahter](https://github.com/Feahter)：做了插件市场索引，粘一条地址就能在「发现」里一键安装，还带上了校验和测试（[#11](https://github.com/woniuniuniu/dsh-media-desk/pull/11)）
+- [TerryWang9112（Terry）](https://github.com/TerryWang9112)：接入阿里云百炼和万相生图，并让每次成稿可以选择只出文字、不画图（[#12](https://github.com/woniuniuniu/dsh-media-desk/pull/12)）
+- [ytzhangFTD（小虾米）](https://github.com/ytzhangFTD)：发现灵感的正文进了成稿工作区就看不到，并定位到是哪一处没有渲染（[#13](https://github.com/woniuniuniu/dsh-media-desk/issues/13)）
 
 欢迎大家继续[提 issue](https://github.com/woniuniuniu/dsh-media-desk/issues)，每一条都会认真看。
 
@@ -287,10 +317,13 @@ dsh plugin --profile web add dsh-media-desk
 ```bash
 npm install && npm test        # Host 逻辑测试
 npm run watch                  # 监听 client/ 并重新打包
+npm run index                  # 发布后更新 index.json 的版本和发布时间
 scripts/dev-sandbox.sh         # 在隔离的 DSH_HOME 里跑网页版，不碰 ~/.dsh
 node scripts/mock-llm.mjs      # 模拟文字和生图模型，不花额度
 npm pack                       # 打出可安装的 tgz
 ```
+
+`index.json` 是插件市场索引，`npm run index` 会按 npm 上的最新发布刷新里面的版本号和发布时间，所以每次公开发版后跑一次，索引里才是新版本。自定义分支当前未发布到 npm，索引保留上游已公开的 `2.7.0`。
 
 `scripts/mock-monid.mjs` 是假的 `monid` 命令，内容全是编的，用来不花钱测导入流程：包成名为 `monid` 的可执行文件放到 `PATH` 最前面。
 
@@ -298,7 +331,7 @@ npm pack                       # 打出可安装的 tgz
 | --- | --- |
 | `client/` | 界面：灵感墙、成稿、对话、内容、排期、复盘、风格、设置 |
 | `src/` | Host 接口、成稿流水线、提示词、生图、风格提炼、Monid 导入、本地存储 |
-| `scripts/` | 打包、沙盒、模拟模型、示例素材生成 |
+| `scripts/` | 打包、沙盒、模拟模型、示例素材生成、插件市场索引 |
 | `assets/` | 示例图片和视频，全部由 `scripts/gen-assets.py` 程序绘制 |
 | `docs/assets/` | 本页的展示图 |
 
