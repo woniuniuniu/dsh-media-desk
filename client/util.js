@@ -232,3 +232,38 @@ export function composeStatus(runs, composeAt, now, composing = false) {
   }
   return { kind: 'waiting', composeAt }
 }
+
+/**
+ * 一次 ops 请求之后要弹的提示。接口返回 { applied: string[], errors: string[] }：有错误时提示第一条错误，
+ * 否则（不 silent 时）提示第一条成功说明，可撤销的操作带撤销按钮。
+ * @param {{applied?: string[], errors?: string[]}|null} data - 接口返回。
+ * @param {{undoable?: boolean, silent?: boolean}} [options]
+ * @returns {{text: string, undo: boolean, error: boolean}|null} 不需要提示时为 null。
+ */
+export function opsToast(data, { undoable = true, silent = false } = {}) {
+  if (data?.errors?.length) return { text: String(data.errors[0]), undo: false, error: true }
+  if (!silent && data?.applied?.length) return { text: String(data.applied[0]), undo: undoable, error: false }
+  return null
+}
+
+const DESK_KEYS = ['state', 'model', 'modelOk', 'modelError', 'canUndo', 'exchangeDir', 'composing']
+
+/** GET state 的返回 → 界面状态里对应的几个字段。 */
+export function deskFromState(data) {
+  return {
+    state: data.state, model: data.model ?? null, modelOk: data.modelOk ?? null, modelError: data.modelError ?? null,
+    canUndo: data.canUndo === true, exchangeDir: data.exchangeDir ?? null, composing: data.composing === true,
+  }
+}
+
+/** 定时刷新拿到的内容和界面里现有的一样时不更新，免得无谓重绘。 */
+export function sameDesk(snapshot, patch) {
+  return DESK_KEYS.every(key => JSON.stringify(snapshot[key] ?? null) === JSON.stringify(patch[key] ?? null))
+}
+
+export const PLACEHOLDER = '【此处填你的经历】'
+
+/** 正文里还留着需要本人填写的经历时，通过前要先确认。 */
+export function needsStoryConfirm(text) {
+  return typeof text === 'string' && text.includes(PLACEHOLDER)
+}

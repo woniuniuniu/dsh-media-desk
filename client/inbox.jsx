@@ -1,10 +1,9 @@
 // 收件箱：今天的成稿状态、待处理的候选稿、手动素材。
 import React from 'react'
 import { composeNote, dispatchOps, reviseCandidate, runCompose, toast, useDesk } from './desk.js'
-import { compact, composeStatus, dayKey, fmtDate, fmtTime, t, tweetLength } from './util.js'
+import { PLACEHOLDER, compact, composeStatus, dayKey, fmtDate, fmtTime, needsStoryConfirm, t, tweetLength } from './util.js'
 import { Dialog, Empty, Icon } from './ui.jsx'
 
-const PLACEHOLDER = '【此处填你的经历】'
 const MAX_TWEET = 280
 const STATUS_LABEL = { approved: '已通过', discarded: '已丢掉', sent: '已发出', expired: '已过期' }
 const DISCARD_REASONS = [
@@ -76,6 +75,7 @@ function Notices() {
   return (
     <details className="md-inbox-fold">
       <summary>{t('{n} 条提示', { n: notices.length })}</summary>
+      <button type="button" className="md-btn is-small" onClick={() => dispatchOps([{ op: 'clear_notices' }], { label: t('清空了提示') })}>{t('知道了，清空')}</button>
       <ul>
         {[...notices].sort((a, b) => String(b.at).localeCompare(String(a.at))).map(row => (
           <li key={row.id}><time>{fmtStamp(row.at)}</time><span>{row.text}</span></li>
@@ -116,10 +116,12 @@ function Card({ candidate }) {
   const [draft, setDraft] = React.useState(candidate.text)
   const [busy, setBusy] = React.useState(false)
   const [discarding, setDiscarding] = React.useState(false)
+  const [confirmingApprove, setConfirmingApprove] = React.useState(false)
   const [view, setView] = React.useState('')
   const [instruction, setInstruction] = React.useState('')
   const areaRef = React.useRef(null)
 
+  // 只在稿子文字真的变了（改稿、别处改过）时才同步到输入框；定时刷新拿到同样的文字不会冲掉正在改的内容
   React.useEffect(() => { setDraft(candidate.text) }, [candidate.text])
   React.useLayoutEffect(() => {
     const el = areaRef.current
@@ -151,6 +153,10 @@ function Card({ candidate }) {
   }
   const submitView = () => { if (view.trim()) revise({ view: view.trim() }, () => setView('')) }
   const submitInstruction = () => { if (instruction.trim()) revise({ instruction: instruction.trim() }, () => setInstruction('')) }
+  const approve = () => {
+    setConfirmingApprove(false)
+    dispatchOps([{ op: 'approve_candidate', id: candidate.id }], { label: t('通过了一条稿子') })
+  }
   const discard = (reason) => {
     setDiscarding(false)
     dispatchOps([{ op: 'discard_candidate', id: candidate.id, ...(reason ? { reason } : {}) }], { label: t('丢掉了一条稿子') })
@@ -178,7 +184,7 @@ function Card({ candidate }) {
       <input className="md-inbox-hero-input" aria-label={t('加一句我的看法')} placeholder={t('加一句你自己的看法，稿子会围绕它重写')} value={view} disabled={busy} onChange={event => setView(event.target.value)} onKeyDown={onEnter(submitView)} />
 
       <div className="md-inbox-actions">
-        <button type="button" className="md-btn is-primary" disabled={busy} onClick={() => dispatchOps([{ op: 'approve_candidate', id: candidate.id }], { label: t('通过了一条稿子') })}>
+        <button type="button" className="md-btn is-primary" disabled={busy} onClick={() => (needsStoryConfirm(draft) ? setConfirmingApprove(true) : approve())}>
           <Icon name="check" size={14} />{t('通过')}
         </button>
         <input aria-label={t('说一句来改')} placeholder={t('说一句来改，比如：再短一点')} value={instruction} disabled={busy} onChange={event => setInstruction(event.target.value)} onKeyDown={onEnter(submitInstruction)} />
@@ -191,6 +197,16 @@ function Card({ candidate }) {
         ) : <button type="button" className="md-btn is-danger" disabled={busy} onClick={() => setDiscarding(true)}>{t('丢掉')}</button>}
       </div>
 
+      {confirmingApprove ? (
+        <Dialog title={t('还没填经历')} onClose={() => setConfirmingApprove(false)}>
+          <p className="md-muted">{t('这条稿子里还有需要你自己填的经历，确定就这样通过吗？')}</p>
+          <div className="md-form-foot">
+            <span style={{ flex: 1 }} />
+            <button type="button" className="md-btn" onClick={() => setConfirmingApprove(false)}>{t('回去改')}</button>
+            <button type="button" className="md-btn is-primary" onClick={approve}>{t('就这样通过')}</button>
+          </div>
+        </Dialog>
+      ) : null}
       <Sources candidate={candidate} />
       {candidate.reason ? (
         <details className="md-inbox-fold">

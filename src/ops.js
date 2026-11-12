@@ -154,6 +154,10 @@ const HANDLERS = {
     state.voice.types = state.voice.types.filter(entry => entry.id !== op.id)
     return tr('已删除类型：{name}', { name: row.name })
   },
+  clear_notices(state) {
+    state.runs.notices = []
+    return tr('已清空提示')
+  },
   approve_candidate: candidateOp('已通过，已排好发帖时间', (state, op, ctx) => approve(state, op.id, { ...ctx, scheduledAt: op.scheduledAt })),
   discard_candidate: candidateOp('已丢弃', (state, op, ctx) => discard(state, op.id, { now: ctx.now, reason: op.reason })),
   mark_sent: candidateOp('已标记为已发', (state, op, ctx) => markSent(state, op.id, { now: ctx.now })),

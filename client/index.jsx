@@ -1,7 +1,7 @@
 // dsh-x-desk 浏览器半片：侧栏入口 + main 全局面板。
 import React from 'react'
 import { InboxView } from './inbox.jsx'
-import { loadDesk, setDesk, undo, useDesk } from './desk.js'
+import { loadDesk, setDesk, startAutoRefresh, undo, useDesk } from './desk.js'
 import { ModelButton, ModelPicker } from './modelpick.jsx'
 import { ScheduleView } from './schedule.jsx'
 import { SettingsDialog } from './settings.jsx'
@@ -30,6 +30,7 @@ function Desk() {
   const narrow = width < 1020
 
   React.useEffect(() => { loadDesk() }, [])
+  React.useEffect(() => startAutoRefresh(), [])
   React.useEffect(() => {
     const el = rootRef.current
     if (!el) return undefined

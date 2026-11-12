@@ -159,7 +159,8 @@ test('配图成功后撤销不会退回额度，也不占用户的撤销位', as
   try {
     await h.store.mutate('seed', s => { s.candidates.push(candidate('c_appr1', { status: 'approved', scheduledAt: new Date().toISOString() })) }, { undoable: false })
     await h.settings.update({ image: { baseUrl: `http://127.0.0.1:${images.address().port}/v1`, model: 'm', apiKey: 'k' }, dailyImages: 1 })
-    await h.call('POST', '/x-desk/ops', { body: { ops: [{ op: 'add_note', text: '用户自己的一步' }], label: '记笔记' } })
+    const op = await h.call('POST', '/x-desk/ops', { body: { ops: [{ op: 'add_note', text: '用户自己的一步' }], label: '记笔记' } })
+    assert.deepEqual([op.data.applied, op.data.canUndo], [['已记下笔记'], true])
     const r = await h.call('POST', '/x-desk/candidate/image', { body: { id: 'c_appr1' } })
     assert.equal(r.status, 200)
     assert.equal(r.data.state.runs.imagesCount, 1)

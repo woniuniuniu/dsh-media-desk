@@ -149,7 +149,7 @@ async function route({ ctx, store, desk, callText }, req, res) {
         const applied = applyOps(draft, body.ops, { now: new Date(), slots })
         return { ...applied, state: draft }
       }, { undoable: body.undoable !== false })
-      return json(res, 200, result)
+      return json(res, 200, { ...result, canUndo: store.undo.length > 0 })
     }
     case 'voice/import': {
       const condense = async prompts => (await callText({ ...prompts, maxTokens: 1500, light: true })).text

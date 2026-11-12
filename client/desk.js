@@ -1,6 +1,6 @@
 // 浏览器侧的状态：Host 状态的本地镜像，加上只属于界面的视图、弹窗等。
 import React from 'react'
-import { t } from './util.js'
+import { deskFromState, opsToast, sameDesk, t } from './util.js'
 
 const BASE = 'x-desk/'
 
@@ -52,18 +52,43 @@ export async function loadDesk() {
   try {
     const settings = await api('settings')
     const data = await api('state')
-    setDesk({ settings, state: data.state, model: data.model, modelOk: data.modelOk, modelError: data.modelError, canUndo: data.canUndo, exchangeDir: data.exchangeDir ?? null, composing: data.composing === true, error: null })
+    setDesk({ settings, ...deskFromState(data), error: null })
   } catch (err) {
     setDesk({ error: err.message })
+  }
+}
+
+const REFRESH_MS = 30_000
+
+/** 重新取一次 Host 状态（后台出的稿、手机端的处理结果都靠它显示出来）；内容没变就不更新界面。失败静默，下次再试。 */
+export async function refreshState() {
+  if (!snapshot.state) return
+  try {
+    const patch = deskFromState(await api('state'))
+    if (!sameDesk(snapshot, patch)) setDesk(patch)
+  } catch {
+    // 网络或 Host 暂时不可用：下一轮再取
+  }
+}
+
+/** 面板可见时每 30 秒刷新一次，切回面板时立即刷新。返回停止函数。 */
+export function startAutoRefresh() {
+  const visible = () => document.visibilityState === 'visible'
+  const timer = setInterval(() => { if (visible()) refreshState() }, REFRESH_MS)
+  const onVisible = () => { if (visible()) refreshState() }
+  document.addEventListener('visibilitychange', onVisible)
+  return () => {
+    clearInterval(timer)
+    document.removeEventListener('visibilitychange', onVisible)
   }
 }
 
 export async function dispatchOps(ops, { label = t('操作'), undoable = true, silent = false } = {}) {
   try {
     const data = await api('ops', { ops, label, undoable })
-    setDesk({ state: data.state, canUndo: undoable || snapshot.canUndo })
-    if (data.errors?.length) toast(data.errors[0], { error: true })
-    else if (!silent && data.receipts?.[0]) toast(data.receipts[0].text, { undo: undoable })
+    setDesk({ state: data.state, canUndo: data.canUndo === true })
+    const note = opsToast(data, { undoable, silent })
+    if (note) toast(note.text, { undo: note.undo, error: note.error })
     return data
   } catch (err) {
     report(err)
