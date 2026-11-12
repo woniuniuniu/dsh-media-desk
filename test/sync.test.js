@@ -608,11 +608,29 @@ function manualWorker(store, settings) {
   })
 }
 
-integration('I6: first sync refuses local-only gitignore when upstream has advanced', async () => {
-  const { a, b, sync } = await fixture()
-  await publish(b, 'posts/new.json')
+integration('I6: first sync pulls advanced upstream and pushes local-only gitignore', async () => {
+  const { a, b, remote, sync } = await fixture()
+  await assert.rejects(readFile(join(a, '.gitignore')), { code: 'ENOENT' })
+  await publish(b, 'posts/x.json')
   const result = await sync.syncOnce()
+  assert.equal(result.ok, true, result.error)
+  assert.ok(result.pulled >= 1)
+  assert.equal(await readFile(join(a, 'posts/x.json'), 'utf8'), '{}')
+  assert.equal(await readFile(join(a, '.gitignore'), 'utf8'), '.seen-*.json\n*.tmp\n')
+  assert.equal(await git(remote, 'show', 'main:.gitignore'), '.seen-*.json\n*.tmp')
+})
+
+integration('I6: remote gitignore change after a common base is refused', async () => {
+  const { a, b, sync } = await fixture()
+  assert.equal((await sync.syncOnce()).ok, true)
+  await git(b, 'pull')
+  await publish(b, '.gitignore', '.seen-*.json\n*.tmp\n# remote change\n')
+  await put(a, 'drafts/local.json')
+  const calls = [], run = sync.run
+  sync.run = (argv, options) => { calls.push(commandArgs(argv)); return run(argv, options) }
+  const result = await sync.syncOnce()
+  assert.equal(result.ok, false)
   assert.equal(result.error, '远端改动了不该改的文件（.gitignore），已停止同步')
   assert.equal(await readFile(join(a, '.gitignore'), 'utf8'), '.seen-*.json\n*.tmp\n')
-  await assert.rejects(readFile(join(a, 'posts/new.json')), { code: 'ENOENT' })
+  assert.ok(!calls.some(args => ['merge', 'push'].includes(args[0])))
 })

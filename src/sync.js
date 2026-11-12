@@ -116,7 +116,7 @@ export class Sync {
       if (fetched.code !== 0) return failed(`拉取失败：${failureText(fetched)}`)
       const { behind } = await this.#counts()
       if (behind > 0) {
-        const protectedFiles = await this.#git(['diff', '--name-only', 'HEAD', '@{u}', '--', '.gitignore', '.gitattributes', ':(glob).seen-*.json'])
+        const protectedFiles = await this.#git(['diff', '--name-only', 'HEAD...@{u}', '--', '.gitignore', '.gitattributes', ':(glob).seen-*.json'])
         if (protectedFiles.code !== 0) return failed(failureText(protectedFiles))
         const names = protectedFiles.stdout.split('\n').filter(Boolean)
         if (names.length) return failed(`远端改动了不该改的文件（${names.slice(0, 3).join('、')}），已停止同步`)
