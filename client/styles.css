@@ -862,3 +862,22 @@ button.md-receipt:hover { transform: translateX(2px); }
 .md-insights-filter { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin: 8px 8px 14px; }
 .md-insights-filter select { margin-left: 6px; padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--card); }
 .md-text-btn { background: transparent; color: inherit; border: 0; font: inherit; cursor: pointer; text-align: left; }
+
+/* Account identity stays legible with uploaded, remote or fallback avatars. */
+.md-account-avatar { display: inline-flex; align-items: center; justify-content: center; flex: none; overflow: hidden; border-radius: 50%; color: #29333e; font-weight: 600; line-height: 1; }
+.md-account-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.md-account-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.md-account-identity > div { min-width: 0; }
+.md-account-identity .md-text-btn { overflow-wrap: anywhere; }
+.md-account-avatar-editor { display: flex; align-items: center; gap: 16px; }
+.md-account-avatar-preview { width: 64px; height: 64px; }
+.md-account-avatar-controls { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.md-account-avatar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.md-account-avatar-controls small { font-size: 12px; line-height: 18px; }
+.md-account-form-error { color: var(--dsw-alias-danger, #c0392b); font-size: 13px; overflow-wrap: anywhere; }
+@container md-root (max-width: 560px) {
+  .md-account-context-row { gap: 7px; }
+  .md-account-context { max-width: 32%; }
+  .md-account-avatar-editor { align-items: flex-start; gap: 12px; }
+  .md-account-identity { gap: 8px; }
+}

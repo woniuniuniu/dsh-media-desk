@@ -1,5 +1,6 @@
 // dsh-media-desk 浏览器半片：侧栏入口 + main 全局面板。
 import React from 'react'
+import { AccountAvatar } from './account-avatar.jsx'
 import { AccountProfileView, RootAccountsView, accountLabel } from './accounts.jsx'
 import { HomeView } from './canvas.jsx'
 import { ChatDock } from './chat.jsx'
@@ -164,7 +165,7 @@ function Desk() {
       <div className="md-main">
         <header className="md-topbar" data-window-drag="">
           <div className="md-account-context-row">
-            {workspaceEntered ? <><button type="button" className="md-btn" onClick={leaveAccounts}>{t('账号列表')}</button><span aria-hidden="true">/</span><strong className="md-account-context" title={context}>{context}</strong></> : <strong>{t('账号')}</strong>}
+            {workspaceEntered ? <><button type="button" className="md-btn" onClick={leaveAccounts}>{t('账号列表')}</button><span aria-hidden="true">/</span>{account ? <AccountAvatar account={account} size={28} /> : null}<strong className="md-account-context" title={context}>{context}</strong></> : <strong>{t('账号')}</strong>}
             <span style={{ flex: 1 }} />
             {ready && workspaceEntered ? <SampleBadge /> : null}
             {canUndo ? <IconButton icon="undo" label={t('撤销上一步')} onClick={undo} /> : null}

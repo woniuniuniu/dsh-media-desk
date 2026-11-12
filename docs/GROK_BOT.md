@@ -12,7 +12,9 @@ media-desk call media_desk_get_insights --input '{"accountId":"ACCOUNT_ID","plat
 media-desk assist '请修改这篇稿件的开头' --input '{"focusId":"ITEM_ID"}' --request-id grok-revise-001
 ```
 
-In the desktop UI, the account list is the main menu. Choose an account (or All accounts / Unassigned) to enter its nested Inspiration, Content, Schedule, Insights, Account and Styles tabs; return with the Account list breadcrumb. The Account tab edits only that selected profile. Version `2.7.0-accounts.1` retains upstream 2.7.0 features and the same 17 tools.
+In the desktop UI, the account list is the main menu. Choose an account (or All accounts / Unassigned) to enter its nested Inspiration, Content, Schedule, Insights, Account and Styles tabs; return with the Account list breadcrumb. The Account tab edits only that selected profile. Version `2.7.0-accounts.2` retains upstream 2.7.0 features and the same 17 tools.
+
+Account avatars can be updated through `media_desk_apply_ops` using `update_account.avatar` (an HTTP(S) URL or existing workbench image reference; `null` removes it), and read through `media_desk_list_accounts` / `media_desk_get_account`, without model calls.
 
 For platform discovery, inspect `media_desk_status.supportedPlatforms` and `media_desk_get_insights` schema. Kuaishou uses canonical `快手` in structured requests; natural-language schedules and CSV also accept Kuaishou/Kwai. Insights supports an optional platform filter after account scoping, including standalone metrics. Kuaishou metrics can be entered manually or imported through CSV/API; automatic Monid fetching is unavailable.
 

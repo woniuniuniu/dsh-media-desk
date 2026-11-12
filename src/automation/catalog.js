@@ -1,7 +1,8 @@
 // One catalog for the Host dispatcher, CLI discovery and MCP schemas.
+import { AVATAR_LOCAL_PATTERN, AVATAR_MAX_LENGTH } from '../avatar.js'
 import { PLATFORMS } from '../platforms.js'
 export const PROTOCOL_VERSION = 1
-export const PLUGIN_VERSION = '2.7.0-accounts.1'
+export const PLUGIN_VERSION = '2.7.0-accounts.2'
 const str = (maxLength = 40000) => ({ type: 'string', maxLength })
 const id = { type: 'string', minLength: 1, maxLength: 200 }
 const nullable = schema => ({ anyOf: [schema, { type: 'null' }] })
@@ -34,7 +35,8 @@ op('set_format', { format, accountId }, ['format'])
 op('add_skill', skillFields, ['name', 'rule'])
 op('update_skill', { id, ...skillFields }, ['id'])
 op('add_metric', metricFields, ['platform'])
-const accountFields = {platform,handle:str(300),url:nullable({type:'string',pattern:'^https?://',maxLength:4000}),group:str(300),positioning:str(4000),audience:str(4000),defaultStyleId:nullable(id),draftFormat:nullable(format),archived:{type:'boolean'},note:str(4000),followers:number}
+const avatar = nullable({ type: 'string', maxLength: AVATAR_MAX_LENGTH, anyOf: [{ const: '' }, { pattern: '^[Hh][Tt][Tt][Pp][Ss]?://' }, { pattern: AVATAR_LOCAL_PATTERN }] })
+const accountFields = {avatar,platform,handle:str(300),url:nullable({type:'string',pattern:'^https?://',maxLength:4000}),group:str(300),positioning:str(4000),audience:str(4000),defaultStyleId:nullable(id),draftFormat:nullable(format),archived:{type:'boolean'},note:str(4000),followers:number}
 op('add_account',accountFields,['platform','handle'])
 op('update_account',{id,...accountFields},['id'])
 op('delete_account',{id},['id'])

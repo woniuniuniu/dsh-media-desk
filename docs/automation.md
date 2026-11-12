@@ -1,6 +1,6 @@
 # Local Media Desk automation
 
-Version `2.7.0-accounts.1` includes a CLI, official MCP stdio server and an explicitly started authenticated HTTP adapter for the **installed desktop workbench**. Start DeepSeek Harness and open Media Desk first. The adapter uses the Host's existing Store, Settings and Producer; it never starts another Harness or borrows browser cookies. Ordinary authoring uses `assist` with the workbench selected/subscription model; structured operations remain direct, and importing a finished external draft is an explicit no-extra-generation option.
+Version `2.7.0-accounts.2` includes a CLI, official MCP stdio server and an explicitly started authenticated HTTP adapter for the **installed desktop workbench**. Start DeepSeek Harness and open Media Desk first. The adapter uses the Host's existing Store, Settings and Producer; it never starts another Harness or borrows browser cookies. Ordinary authoring uses `assist` with the workbench selected/subscription model; structured operations remain direct, and importing a finished external draft is an explicit no-extra-generation option.
 
 ## Run
 
@@ -25,7 +25,7 @@ Default stdout is one compact JSON envelope. Diagnostics use stderr. Exit codes:
 
 ## Account scope
 
-Version `2.7.0-accounts.1` adds editorial profiles for many accounts, including multiple accounts on the same platform and manual Kuaishou accounts. These profiles do not log into or publish to social platforms. Manual CRUD, archive/restore, default-style/format selection, assignment and external-draft import require no model or Monid call. Kuaishou supports manual entry, CSV imports and structured API metrics. Monid's supported platforms remain unchanged; automatic Kuaishou fetching is unavailable.
+Version `2.7.0-accounts.2` adds editorial profiles for many accounts, including multiple accounts on the same platform and manual Kuaishou accounts. These profiles do not log into or publish to social platforms. Manual CRUD, archive/restore, default-style/format selection, assignment and external-draft import require no model or Monid call. Kuaishou supports manual entry, CSV imports and structured API metrics. Monid's supported platforms remain unchanged; automatic Kuaishou fetching is unavailable.
 
 Discover IDs with `accounts list` / `accounts get ID`. Names and platforms are not unique IDs. The desktop opens at the account list, with search, platform/group filters, archive/restore, 50-row pagination and CSV add (at most 100 rows, with failed rows retained). Choose one account, All accounts or Unassigned to enter Content, then use the nested Inspiration / Content / Schedule / Insights / Account / Styles tabs. The Account tab edits only the selected profile; virtual scopes explain that they have no profile. The Account list breadcrumb returns to the main menu and clears transient selections. The hub has no child tabs or assistant. All existing unattributed content remains Unassigned; migration never guesses ownership from a platform. Deleting a profile detaches content, metrics, rules and chat without deleting content; use archive for routine retirement.
 
@@ -47,6 +47,18 @@ media-desk call media_desk_apply_ops --request-id assignment-001 --input '{"acco
 Account operations are `add_account`, `update_account`, `delete_account` and `assign_items`. Archive/restore uses `update_account.archived`; defaults use `defaultStyleId` or scoped `set_style`, and `draftFormat` (`script`, `article`, or `null` to inherit the global preference) or scoped `set_format`. `set_format` accepts only `script` or `article` through CLI/MCP. `assign_items` validates the whole list (1–100 distinct item IDs) and target before making any assignment; null unassigns. It updates linked metric attribution, preserves dates/status, and leaves descendants in place. Cross-platform moves require `updatePlatform:true`. Account changes and deletion are refused during active production/assets. Existing content cannot change ownership through `update_item.accountId`.
 
 New account items inherit its platform, and new branches inherit the parent account unless explicitly assigned consistently. Linked metrics follow the item's attribution. New exports use immutable account-ID folders, separating identical titles on different accounts. Existing saved locations are retained for their original attribution; after reassignment, a new folder prevents overwriting the old account's export. GUI and automation share this behavior. Monid reimports reuse the resolved external identity, retain user-edited text and existing attribution, and validate an explicit manual target before paid fetches.
+
+## Account avatars
+
+`add_account` and `update_account` accept an optional `avatar`; compact `list_accounts` and `get_account` include it without clipping valid URLs below the 4000-character limit. Use an HTTP(S) URL, or an existing plugin-owned image reference such as `media-desk/files/avatar.jpg` or `media-desk/assets/avatar.png` (JPEG, PNG, WebP or GIF). Arbitrary filesystem paths, path traversal, inline/base64 bytes, SVG and local videos are refused. Omit the field to preserve it; `null` or an empty string removes it. Normal account scope, durable request IDs, strict unknown-field checks and read-only restrictions apply. No API key, platform login, model or provider call is required.
+
+The desktop account form also accepts local JPEG/PNG/WebP files up to 5 MiB (shown as 5 MB), previews a center-cropped/compressed 256 × 256 WebP and uploads through the existing Host upload endpoint only on Save. Choosing a file and cancelling creates no upload or content item. Replacing/removing an avatar retains uploaded files for Undo; retrying a failed account save in the same form reuses its successful upload. The automation tools accept references only and add no upload endpoint.
+
+```sh
+media-desk call media_desk_apply_ops --request-id avatar-001 --input '{"ops":[{"op":"update_account","id":"ACCOUNT_ID","avatar":"https://example.com/avatar.png"}]}'
+media-desk call media_desk_apply_ops --request-id avatar-local-001 --input '{"ops":[{"op":"update_account","id":"ACCOUNT_ID","avatar":"media-desk/files/existing-avatar.jpg"}]}'
+media-desk call media_desk_apply_ops --request-id avatar-remove-001 --input '{"ops":[{"op":"update_account","id":"ACCOUNT_ID","avatar":null}]}'
+```
 
 ## Platform filters and Kuaishou
 

@@ -1,6 +1,9 @@
 import React from 'react'
 import { accountCounts, allAccountCounts, applyAccountsCsv } from '../src/accounts.js'
-import { dispatchOps, loadDesk, selectAccount, useDesk } from './desk.js'
+import { normalizeAccountAvatar } from '../src/avatar.js'
+import { AccountAvatar } from './account-avatar.jsx'
+import { prepareAvatarImage } from './avatar-image.js'
+import { dispatchOps, loadDesk, selectAccount, uploadFile, useDesk } from './desk.js'
 import { Dialog } from './ui.jsx'
 import { platformChoices } from './util.js'
 import { t } from './i18n.js'
@@ -9,40 +12,143 @@ export const accountLabel = account => account
   ? `${t(account.platform)} · ${account.handle || account.title || account.id}${account.group ? ` · ${account.group}` : ''} · ${account.id}`
   : t('未归属')
 
-function AccountForm({ account, onClose, styles }) {
+export function AccountForm({ account, onClose, styles }) {
   const [values, setValues] = React.useState({
-    platform: '抖音', handle: '', group: '', url: '', positioning: '', audience: '', defaultStyleId: '', note: '', ...account,
+    platform: '抖音', handle: '', group: '', url: '', positioning: '', audience: '', defaultStyleId: '', note: '', avatar: null, ...account,
   })
+  const [avatarLink, setAvatarLink] = React.useState(() => /^https?:\/\//i.test(account?.avatar ?? '') ? account.avatar : '')
   const [busy, setBusy] = React.useState(false)
+  const [processing, setProcessing] = React.useState(false)
+  const [preview, setPreview] = React.useState(null)
+  const [error, setError] = React.useState('')
+  const fileInput = React.useRef(null)
+  const avatarDirty = React.useRef(false)
+  const lifecycle = React.useRef({ live: true, generation: 0, selection: null, processing: false, saving: false })
+  const releaseSelection = () => {
+    const selected = lifecycle.current.selection
+    if (selected) URL.revokeObjectURL(selected.preview)
+    lifecycle.current.selection = null
+  }
+  React.useEffect(() => {
+    lifecycle.current.live = true
+    return () => { lifecycle.current.live = false; lifecycle.current.generation++; releaseSelection() }
+  }, [])
+  const close = () => {
+    lifecycle.current.live = false
+    lifecycle.current.generation++
+    releaseSelection()
+    onClose()
+  }
   const set = (name, value) => setValues(v => ({ ...v, [name]: value }))
+  const changeAvatar = value => {
+    if (lifecycle.current.saving) return
+    lifecycle.current.generation++
+    lifecycle.current.processing = false
+    releaseSelection()
+    setProcessing(false)
+    setPreview(null)
+    setError('')
+    avatarDirty.current = true
+    setAvatarLink(value ?? '')
+    set('avatar', value)
+  }
+  const chooseAvatar = async event => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file || lifecycle.current.saving) return
+    const generation = ++lifecycle.current.generation
+    lifecycle.current.processing = true
+    setAvatarLink('')
+    releaseSelection()
+    setPreview(null)
+    setProcessing(true)
+    setError('')
+    try {
+      const blob = await prepareAvatarImage(file)
+      if (!lifecycle.current.live || lifecycle.current.generation !== generation) return
+      const selected = { blob, preview: URL.createObjectURL(blob), uploadedSource: null }
+      lifecycle.current.selection = selected
+      avatarDirty.current = true
+      setPreview(selected.preview)
+    } catch (err) {
+      if (lifecycle.current.live && lifecycle.current.generation === generation) setError(t(err.message))
+    } finally {
+      if (lifecycle.current.live && lifecycle.current.generation === generation) {
+        lifecycle.current.processing = false
+        setProcessing(false)
+      }
+    }
+  }
   const field = (name, label, textarea = false) => (
     <label className="md-field">
       <span>{t(label)}</span>
       {textarea
-        ? <textarea rows={3} value={values[name] ?? ''} onChange={e => set(name, e.target.value)} />
-        : <input required={name === 'handle'} type={name === 'url' ? 'url' : 'text'} value={values[name] ?? ''} onChange={e => set(name, e.target.value)} />}
+        ? <textarea rows={3} disabled={busy} value={values[name] ?? ''} onChange={e => set(name, e.target.value)} />
+        : <input required={name === 'handle'} disabled={busy} type={name === 'url' ? 'url' : 'text'} value={values[name] ?? ''} onChange={e => set(name, e.target.value)} />}
     </label>
   )
   const submit = async event => {
     event.preventDefault()
-    if (busy) return
+    const current = lifecycle.current
+    if (!current.live || current.saving || current.processing) return
+    const generation = current.generation, selected = current.selection
+    const writeAvatar = !account || avatarDirty.current || Boolean(selected)
+    let avatar
+    try { avatar = !writeAvatar || selected ? null : normalizeAccountAvatar(values.avatar) }
+    catch { setError(t('头像链接无效，请使用 HTTP(S) 链接或工作台图片路径。')); return }
+    current.saving = true
     setBusy(true)
-    const op = {
-      op: account ? 'update_account' : 'add_account',
-      ...(account ? { id: account.id } : {}),
-      ...Object.fromEntries(['platform', 'handle', 'group', 'url', 'positioning', 'audience', 'note'].map(key => [key, values[key]])),
-      defaultStyleId: values.defaultStyleId || null,
+    setError('')
+    try {
+      if (selected) {
+        if (!selected.uploadedSource) {
+          const uploaded = await uploadFile(selected.blob)
+          selected.uploadedSource = normalizeAccountAvatar(uploaded.src)
+          if (!selected.uploadedSource) throw new Error(t('上传失败'))
+        }
+        avatar = selected.uploadedSource
+      }
+      if (!current.live || current.generation !== generation) return
+      const op = {
+        op: account ? 'update_account' : 'add_account',
+        ...(account ? { id: account.id } : {}),
+        ...Object.fromEntries(['platform', 'handle', 'group', 'url', 'positioning', 'audience', 'note'].map(key => [key, values[key]])),
+        defaultStyleId: values.defaultStyleId || null,
+        ...(writeAvatar ? { avatar } : {}),
+      }
+      const result = await dispatchOps([op], { accountId: undefined, label: t('保存账号') })
+      if (!current.live) return
+      if (result && !result.errors.length) close()
+      else setError(t('保存失败，请重试。'))
+    } catch (err) {
+      if (current.live) setError(t('头像保存失败：{error}', { error: t(err.message) }))
+    } finally {
+      current.saving = false
+      if (current.live) setBusy(false)
     }
-    const result = await dispatchOps([op], { accountId: undefined, label: t('保存账号') })
-    setBusy(false)
-    if (result && !result.errors.length) onClose()
   }
   return (
-    <Dialog title={t(account ? '编辑账号' : '添加账号')} onClose={onClose} width={560}>
+    <Dialog title={t(account ? '编辑账号' : '添加账号')} onClose={close} width={560}>
       <form className="md-form" onSubmit={submit}>
+        <div className="md-account-avatar-editor">
+          {preview ? <span className="md-account-avatar md-account-avatar-preview"><img src={preview} alt={t('头像预览')} /></span> : <AccountAvatar account={values} size={64} />}
+          <div className="md-account-avatar-controls">
+            <div className="md-account-avatar-actions">
+              <button type="button" className="md-btn" disabled={busy} onClick={() => fileInput.current?.click()}>{t(preview || values.avatar ? '更换头像' : '上传头像')}</button>
+              {preview || values.avatar ? <button type="button" className="md-text-btn" disabled={busy} onClick={() => changeAvatar(null)}>{t('移除头像')}</button> : null}
+            </div>
+            <input ref={fileInput} type="file" hidden accept="image/jpeg,image/png,image/webp" aria-label={t('选择头像图片')} disabled={busy} onChange={chooseAvatar} />
+            <small className="md-muted">{t('JPEG、PNG 或 WebP，最大 5 MB；自动居中裁剪为 256 × 256，保存时上传。')}</small>
+            {processing ? <small role="status">{t('正在处理头像…')}</small> : null}
+          </div>
+        </div>
+        <label className="md-field">
+          <span>{t('头像链接（可选）')}</span>
+          <input type="text" disabled={busy} maxLength={4000} value={avatarLink} placeholder="https://" onChange={e => changeAvatar(e.target.value)} />
+        </label>
         <label className="md-field">
           <span>{t('平台')}</span>
-          <select value={values.platform} onChange={e => set('platform', e.target.value)}>
+          <select disabled={busy} value={values.platform} onChange={e => set('platform', e.target.value)}>
             {platformChoices().map(platform => <option key={platform} value={platform}>{t(platform)}</option>)}
           </select>
         </label>
@@ -53,14 +159,18 @@ function AccountForm({ account, onClose, styles }) {
         {field('audience', '目标受众', true)}
         <label className="md-field">
           <span>{t('默认风格')}</span>
-          <select value={values.defaultStyleId ?? ''} onChange={e => set('defaultStyleId', e.target.value)}>
+          <select disabled={busy} value={values.defaultStyleId ?? ''} onChange={e => set('defaultStyleId', e.target.value)}>
             <option value="">{t('默认')}</option>
             {styles.map(style => <option key={style.id} value={style.id}>{style.name}</option>)}
           </select>
         </label>
         {field('note', '备注', true)}
         <p className="md-muted">{t('账号档案用于内容管理，无需平台登录或模型。')}</p>
-        <button className="md-btn is-primary" disabled={busy}>{t('保存账号')}</button>
+        {error ? <p className="md-account-form-error" role="alert">{error}</p> : null}
+        <div className="md-form-foot">
+          <button type="button" className="md-btn" onClick={close}>{t('取消')}</button>
+          <button className="md-btn is-primary" disabled={busy || processing}>{t('保存账号')}</button>
+        </div>
       </form>
     </Dialog>
   )
@@ -132,8 +242,10 @@ export function RootAccountsView() {
               return (
                 <tr key={account.id} onClick={() => selectAccount(account.id)} className="md-account-row">
                   <td>
+                    <div className="md-account-identity"><AccountAvatar account={account} /><div>
                     <button className="md-text-btn" onClick={event => { event.stopPropagation(); selectAccount(account.id) }}>{account.handle || account.id}</button>
                     <small className="md-account-id">{account.id}{account.archived ? ` · ${t('已归档')}` : ''}</small>
+                    </div></div>
                   </td>
                   <td>{t(account.platform)}</td><td>{account.group || '—'}</td>
                   <td>{count.items ?? 0}</td><td>{count.published ?? 0}</td><td>{count.scheduled ?? 0}</td>
@@ -177,6 +289,7 @@ export function AccountProfileView() {
   return (
     <div className="md-page">
       <header className="md-page-head">
+        {account ? <AccountAvatar account={account} size={56} /> : null}
         <div><h1>{t('账号档案')}</h1><p className="md-page-sub">{account ? accountLabel(account) : t(id === null ? '未归属' : '全部账号')}</p></div>
         <span style={{ flex: 1 }} />
         {account ? <button type="button" className="md-btn is-primary" onClick={() => setEditing(true)}>{t('编辑账号')}</button> : null}

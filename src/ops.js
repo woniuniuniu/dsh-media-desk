@@ -1,6 +1,7 @@
 // 工作台的唯一写入口：对话、界面操作都走这里，统一校验字段并产出回执。
 // 模型输出也是不可信输入，所以这里只放行白名单字段。
 import { accountError, detachAccounts, hasActiveProduction, normalizedAccountId, requireAccount, requireMembership, requireStyle } from './accounts.js'
+import { normalizeAccountAvatar } from './avatar.js'
 import { currentLang, platformName, tr } from './i18n.js'
 import { draftFormat } from './style.js'
 
@@ -24,7 +25,7 @@ const ANGLE_FIELDS = { name: 'text', hook: 'text', prompt: 'text' }
 const STYLE_FIELDS = { name: 'text', icon: 'text', summary: 'text', tone: 'text', sentences: 'text', opening: 'text', structure: 'text', logic: 'text', story: 'text', flow: 'text', words: 'list', avoid: 'list', samples: 'list' }
 const SKILL_FIELDS = { accountId: 'id', name: 'text', rule: 'text', source: 'text', status: 'text', confidence: 'num', evidence: 'text' }
 const METRIC_FIELDS = { accountId: 'id', itemId: 'id', platform: 'platform', date: 'date', views: 'num', likes: 'num', comments: 'num', shares: 'num', saves: 'num' }
-const ACCOUNT_FIELDS = { group: 'text', positioning: 'text', audience: 'text', defaultStyleId: 'id', draftFormat: 'format', archived: 'bool', platform: 'platform', handle: 'text', url: 'url', followers: 'num', note: 'text', title: 'text', description: 'text', avatar: 'url', fetchedAt: 'date', fetchError: 'text' }
+const ACCOUNT_FIELDS = { group: 'text', positioning: 'text', audience: 'text', defaultStyleId: 'id', draftFormat: 'format', archived: 'bool', platform: 'platform', handle: 'text', url: 'url', followers: 'num', note: 'text', title: 'text', description: 'text', avatar: 'avatar', fetchedAt: 'date', fetchError: 'text' }
 
 let counter = 0
 export function newId(prefix = 'x') {
@@ -52,6 +53,7 @@ function coerce(type, value) {
     case 'list': return Array.isArray(value) ? value.filter(v => typeof v === 'string').slice(0, 24) : undefined
     case 'bool': return typeof value === 'boolean' ? value : undefined
     case 'num': return Number.isFinite(value) ? value : undefined
+    case 'avatar': return normalizeAccountAvatar(value)
     case 'url': return value === null || value === '' ? null : isHttpUrl(value) ? value : undefined
     case 'date': return value === null ? null : typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? new Date(value).toISOString() : undefined
     case 'pos': return value && [value.x, value.y].every(Number.isFinite) ? { x: value.x, y: value.y, r: Number.isFinite(value.r) ? value.r : 0 } : undefined

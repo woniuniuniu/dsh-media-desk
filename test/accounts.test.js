@@ -76,3 +76,37 @@ test('clearing sample accounts detaches authored content and related attribution
 test('account platform cannot change while standalone account metrics retain the old platform',()=>{
  const s=seed(),a=account(s);add(s,{op:'add_metric',accountId:a,platform:'抖音',views:12});const result=applyOps(s,[{op:'update_account',id:a,platform:'快手'}]);assert.equal(result.errors.length,1);assert.equal(s.accounts[0].platform,'抖音');assert.equal(s.metrics[0].platform,'抖音')
 })
+
+test('account avatars persist plugin images across reload, replacement, removal and Undo', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'md-account-avatar-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const store = new Store(root)
+  let id
+  await store.mutate('avatar add', s => { Object.assign(s, seed()); id = add(s, { op: 'add_account', platform: '快手', handle: 'Portrait', avatar: 'media-desk/files/portrait.png' }) })
+  assert.equal((await new Store(root).read()).accounts[0].avatar, 'media-desk/files/portrait.png')
+  await store.mutate('avatar replace', s => add(s, { op: 'update_account', id, avatar: 'media-desk/assets/other.webp' }))
+  assert.equal((await store.read()).accounts[0].avatar, 'media-desk/assets/other.webp')
+  await store.mutate('avatar remove', s => add(s, { op: 'update_account', id, avatar: null }))
+  assert.equal((await store.read()).accounts[0].avatar, null)
+  await store.undoLast()
+  assert.equal((await store.read()).accounts[0].avatar, 'media-desk/assets/other.webp')
+  await store.mutate('avatar clear', s => add(s, { op: 'update_account', id, avatar: '' }))
+  assert.equal((await store.read()).accounts[0].avatar, null)
+})
+
+test('invalid avatar inputs reject the whole account operation without mutating fields', () => {
+  const s = seed(), id = account(s)
+  for (const avatar of [false, 4, {}, [], 'data:image/png;base64,AAAA', 'javascript:alert(1)', 'file:///tmp/a.png', '/tmp/a.png', 'media-desk/files/../a.png', 'media-desk/files/a.mp4', 'media-desk/files/a.svg', 'https://example.com/' + 'a'.repeat(4000)]) {
+    const before = structuredClone(s)
+    assert.equal(applyOps(s, [{ op: 'update_account', id, handle: 'Must not change', avatar }]).errors.length, 1, String(avatar))
+    assert.deepEqual(s, before)
+    assert.equal(applyOps(s, [{ op: 'add_account', platform: '抖音', handle: 'Bad', avatar }]).errors.length, 1)
+    assert.deepEqual(s, before)
+  }
+  const long = 'https://example.com/avatar.png?token=' + 'a'.repeat(3500)
+  add(s, { op: 'update_account', id, avatar: long })
+  assert.equal(s.accounts[0].avatar, long)
+  const legacy = { ...seed(), accounts: [{ id: 'old', avatar: long }, { id: 'missing' }] }
+  assert.equal(migrateState(legacy).accounts[0].avatar, long)
+  assert.equal(Object.hasOwn(legacy.accounts[1], 'avatar'), false)
+})
