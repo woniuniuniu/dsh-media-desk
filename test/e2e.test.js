@@ -5,10 +5,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { readCompletion, startMock, stopMock } from '../scripts/mock-llm.mjs'
+import { classify, readCompletion, startMock, stopMock } from '../scripts/mock-llm.mjs'
 import { Composer } from '../src/compose.js'
 import { Exchange } from '../src/exchange.js'
+import { learnDaily } from '../src/learn.js'
 import { Lock } from '../src/lock.js'
+import { Longform } from '../src/longform.js'
 import { similarity } from '../src/match.js'
 import { Settings } from '../src/settings.js'
 import { Store } from '../src/store.js'
@@ -165,6 +167,80 @@ test('端到端（计划 2）：自己发出的内容 → 候选稿被识别为�
     state = await store.read()
     assert.equal(state.candidates.find(c => c.id === target.id).status, 'sent')
     assert.equal(state.mine.length, 2)
+  } finally {
+    await stopMock(server)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('端到端（计划 2）：攒够自己的内容和改稿后，新的一天出规则建议、提醒只一次；周一成稿后建议一次长文选题', async () => {
+  const server = await startMock(0, { delay: 0 })
+  const root = await mkdtemp(join(tmpdir(), 'e2e3-'))
+  try {
+    const kinds = []
+    const port = server.address().port
+    const callText = prompts => {
+      kinds.push(classify(prompts.system))
+      return readCompletion(port, prompts)
+    }
+    const monday = new Date('2026-11-16T10:00:00+08:00')
+    assert.equal(monday.getDay(), 1)
+    const skew = { ms: 60_000 }
+    const clock = { t: monday }
+    const store = new Store(root)
+    const settings = new Settings(root)
+    const ex = new Exchange(join(root, 'exchange'), { now: () => Date.now() + skew.ms })
+    await ex.ensure()
+    const composer = new Composer({ store, settings, callText, now: () => clock.t })
+    const lock = new Lock(join(root, 'worker.lock'), { now: () => clock.t.getTime() })
+    const longform = new Longform({ store, callText, now: () => clock.t })
+    const worker = new Worker({
+      store, settings, composer, lock, exchangeFor: () => ex, now: () => clock.t, longform,
+      learn: { learnDaily: () => learnDaily({ store, callText, now: () => clock.t }) },
+    })
+    const next = async () => {
+      skew.ms += 60_000
+      clock.t = new Date(clock.t.getTime() + 60_000)
+      await worker.tick()
+    }
+
+    // 30 条自己发出的内容（近 3 天内，文字各不相同）
+    for (let i = 0; i < 30; i++) {
+      await writeFile(join(ex.root, 'mine', `m${i}.json`), JSON.stringify({
+        schema: 1, postId: `18560000000000001${String(i).padStart(2, '0')}`, kind: 'post', text: `第 ${i} 条：今天想到的第 ${i * 7 + 3} 件小事，写下来备忘。`,
+        postedAt: new Date(monday.getTime() - (i + 1) * 2 * 3600e3).toISOString(), fetchedAt: new Date(monday.getTime() - 60_000).toISOString(),
+        metrics: { likes: i, replies: 0, reposts: 0, quotes: 0, views: 100 + i },
+      }))
+    }
+    // 5 组明显改过的稿子：AI 草稿和实发文字几乎没有共同片段
+    await store.mutate('seed', s => {
+      for (let i = 0; i < 5; i++) {
+        s.candidates.push({
+          id: `c_e2e3${i}`, form: 'post', typeId: 't_model', text: 'x', aiText: `模型评测要先做，榜单只能参考，第${i}版草稿一二三四五六七八九十。`, title: 't', sourcePostIds: [],
+          sourceNoteId: null, quoteUrl: null, reason: '', score: 1, status: 'sent', createdAt: monday.toISOString(), scheduledAt: null, decidedAt: null, discardReason: null,
+          view: null, revision: 0, image: null, sentText: `我自己的话${i}：周末爬山拍了照片，天气不错。`, sentPostId: null, sentAt: monday.toISOString(),
+        })
+      }
+    }, { undoable: false })
+
+    await worker.tick()
+    let state = await store.read()
+    assert.equal(state.mine.length, 30)
+    assert.ok(state.proposals.length >= 1, '应当出现规则建议')
+    assert.deepEqual(state.rules, [], '规则建议不自动生效')
+    assert.equal(state.runs.lastLearnDay, '2026-11-16')
+    const voiceNotices = () => state.runs.notices.filter(n => n.text.includes('提炼你自己的核心风格'))
+    assert.equal(voiceNotices().length, 1)
+    assert.ok(state.longforms.filter(l => l.status === 'idea').length >= 1, '周一成稿后应当建议长文选题')
+    assert.equal(state.runs.lastLongformWeek, '2026-W47')
+    assert.equal(kinds.filter(k => k === 'longform_ideas').length, 1)
+    assert.equal(kinds.filter(k => k === 'rules').length, 1)
+
+    await next()
+    state = await store.read()
+    assert.equal(voiceNotices().length, 1)
+    assert.equal(kinds.filter(k => k === 'longform_ideas').length, 1)
+    assert.equal(kinds.filter(k => k === 'rules').length, 1)
   } finally {
     await stopMock(server)
     await rm(root, { recursive: true, force: true })

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { promisify } from 'node:util'
-import { parsePost } from '../src/exchange.js'
+import { parseMine, parsePost, parseReplyDraft } from '../src/exchange.js'
 
 const run = promisify(execFile)
 const SCRIPT = fileURLToPath(new URL('../scripts/seed-sandbox.sh', import.meta.url))
@@ -34,6 +34,37 @@ test('seed-sandbox.sh 把示例帖子复制到沙盒交换文件夹，时间改�
     for (const name of copied) original.push([name, Date.parse(JSON.parse(await readFile(join(SAMPLES, name), 'utf8')).postedAt)])
     const order = rows => rows.slice().sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0])).map(r => r[0])
     assert.deepEqual(order(posted), order(original))
+  } finally {
+    await rm(sandbox, { recursive: true, force: true })
+  }
+})
+
+test('seed-sandbox.sh 同时复制 mine 和 replies 样例，文件能被解析，时间在最近 36 小时内且不在未来', async () => {
+  const sandbox = await mkdtemp(join(tmpdir(), 'sandbox-'))
+  try {
+    await run('sh', [SCRIPT], { env: { ...process.env, DSH_SANDBOX: sandbox } })
+    const base = join(sandbox, 'x-desk', 'exchange')
+    const recent = (iso, label) => {
+      const age = Date.now() - Date.parse(iso)
+      assert.ok(age >= 0 && age <= 36 * 3600e3, `${label} 的时间不在最近 36 小时内：${iso}`)
+    }
+    for (const [dir, parse, key] of [['mine', parseMine, 'postedAt'], ['replies', parseReplyDraft, 'notifiedAt']]) {
+      const samples = (await readdir(fileURLToPath(new URL(`../scripts/sample-exchange/${dir}/`, import.meta.url)))).sort()
+      const copied = (await readdir(join(base, dir))).sort()
+      assert.deepEqual(copied, samples)
+      assert.ok(copied.length >= 2)
+      for (const name of copied) {
+        const raw = JSON.parse(await readFile(join(base, dir, name), 'utf8'))
+        const parsed = parse(raw, { ownHandle: 'me' })
+        assert.ok(parsed, `${dir}/${name}`)
+        recent(raw[key], `${dir}/${name}`)
+        if (dir === 'mine') {
+          recent(raw.fetchedAt, `${dir}/${name}`)
+          assert.ok(Math.abs(Date.now() - Date.parse(raw.fetchedAt) - 10 * 60e3) < 60e3, `${name} 的读取时间应约为 10 分钟前`)
+          assert.ok(Date.now() - Date.parse(raw.postedAt) >= 30 * 60e3 - 5e3, name)
+        }
+      }
+    }
   } finally {
     await rm(sandbox, { recursive: true, force: true })
   }
