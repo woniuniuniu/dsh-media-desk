@@ -154,6 +154,17 @@ const HANDLERS = {
     state.voice.types = state.voice.types.filter(entry => entry.id !== op.id)
     return tr('已删除类型：{name}', { name: row.name })
   },
+  accept_proposal(state, op) {
+    const row = need(state.proposals, op.id, tr('规则建议'))
+    state.rules.push({ id: newId('r'), name: row.name, rule: row.rule, status: 'active', evidence: row.evidence })
+    state.proposals = state.proposals.filter(entry => entry.id !== op.id)
+    return tr('已采纳规则：{name}', { name: row.name })
+  },
+  dismiss_proposal(state, op) {
+    need(state.proposals, op.id, tr('规则建议'))
+    state.proposals = state.proposals.filter(entry => entry.id !== op.id)
+    return tr('已忽略这条建议')
+  },
   clear_notices(state) {
     state.runs.notices = []
     return tr('已清空提示')

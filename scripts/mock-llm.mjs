@@ -10,12 +10,13 @@ const SUMMARY = '口吻平实克制，像朋友聊天，先说结论再给一个
 /**
  * 按系统提示词里稳定的措辞判断是哪一类请求（措辞来自 src/ai.js、src/voice.js、src/style.js）。
  * @param {string} system - 系统提示词。
- * @returns {'topics'|'condense'|'style'|'revise'|'draft'} 请求类别。
+ * @returns {'topics'|'rules'|'condense'|'style'|'revise'|'draft'} 请求类别。
  */
 export function classify(system) {
   // 只看第一行：各类提示词的第一行是它独有的任务说明，后面拼接的写作风格是用户内容，可能含任何词
   const head = system.split('\n')[0]
   if (head.includes('归并成选题')) return 'topics'
+  if (head.includes('写作习惯分析师')) return 'rules'
   if (head.includes('精简版')) return 'condense'
   if (head.includes('文风分析师')) return 'style'
   if (head.includes('改推文草稿')) return 'revise'
@@ -41,6 +42,7 @@ function topicsAnswer(user) {
 export function answer(system, user) {
   const kind = classify(system)
   if (kind === 'topics') return topicsAnswer(user)
+  if (kind === 'rules') return JSON.stringify([{ name: '先说结论', rule: '开头直接给结论，再补一个例子', evidence: '模拟模型：多对里都把结论挪到开头' }])
   if (kind === 'condense') return SUMMARY
   if (kind === 'style') return JSON.stringify({ name: '慢半拍', summary: '不急着下结论，先把场景讲清楚。', tone: '平静、好奇。', sentences: '长短交替，常用逗号断开。', opening: '从一个具体的早晨开始。', structure: '场景、疑问、一个小发现。', words: ['那天', '后来'], avoid: ['感叹号'], samples: ['那天早上我差点迟到，却停在了一块广告牌前。'] })
   if (kind === 'revise') return '这是按你的要求改过的一条模拟推文：先说结论，再补一个具体的例子。'

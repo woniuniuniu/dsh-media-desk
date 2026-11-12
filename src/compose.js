@@ -125,7 +125,11 @@ export class Composer {
 
     let topics
     try {
-      const { system, user } = topicPrompts(posts, state.voice.types)
+      const decided = status => state.candidates
+        .filter(c => c.status === status || (status === 'approved' && c.status === 'sent'))
+        .filter(c => c.decidedAt)
+      const recent = status => decided(status).sort((a, b) => Date.parse(b.decidedAt) - Date.parse(a.decidedAt)).slice(0, 20).map(c => c.title)
+      const { system, user } = topicPrompts(posts, state.voice.types, { approved: recent('approved'), discarded: recent('discarded') })
       const { text } = await callText({ system, user, maxTokens: 3000, light: true })
       topics = normalizeTopics(extractJson(text), { postIds: new Set(posts.map(p => p.id)), typeIds })
     } catch (err) {

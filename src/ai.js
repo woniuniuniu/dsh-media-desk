@@ -145,9 +145,13 @@ const WISH_RULE = '例外：「我的看法」「修改要求」后面 <material
  * 选题提示词：把帖子归并成选题，只输出 JSON 数组。
  * @param {Array<object>} posts - 候选帖子。
  * @param {Array<{id: string, name: string}>} types - 内容类型。
+ * @param {{approved?: string[], discarded?: string[]}} [history] - 作者近期采纳和丢弃过的选题标题（各最多 20 个），只作偏好参考。
  * @returns {{system: string, user: string}} 提示词。
  */
-export function topicPrompts(posts, types) {
+export function topicPrompts(posts, types, history) {
+  const titles = list => (Array.isArray(list) ? list : []).slice(0, 20).map(t => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, 60)).filter(Boolean)
+  const approved = titles(history?.approved)
+  const discarded = titles(history?.discarded)
   const system = [
     '你是一个 X 账号的选题编辑。把给出的帖子按话题归并成选题，挑出值得这个账号写的，只输出 JSON 数组，不要任何说明。',
     MATERIAL_RULE,
@@ -155,12 +159,32 @@ export function topicPrompts(posts, types) {
     '三项评分的含义：fun 是有趣（读起来想转给朋友），info 是有信息量（读完学到新东西），resonance 是能共鸣（读者会觉得说中了自己）。0 表示没有，1 表示一般，2 表示突出。',
     'postIds 只能取自素材里给出的帖子 id。typeId 必须取自下面的类型列表，不得自造。form 为 quote 表示适合引用转发其中最有料的那条帖子再加评论，否则用 post。',
     `类型列表：\n${types.map(t => `- ${t.id}：${t.name}`).join('\n')}`,
-  ].join('\n')
+    approved.length || discarded.length ? '用户消息末尾可能附有作者近期采纳过和丢弃过的选题标题，仅作偏好参考：倾向作者采纳过的方向，避开作者丢弃过的方向，不要照抄这些标题。' : '',
+  ].filter(Boolean).join('\n')
   const rows = posts.map(p => JSON.stringify({
     id: p.id, handle: p.handle, text: String(p.text ?? '').slice(0, 600),
     likes: p.likes, replies: p.replies, reposts: p.reposts, quotes: p.quotes, views: p.views,
   }))
-  return { system, user: `下面是今天的帖子，每行一条：\n${wrapMaterial(rows.join('\n'))}` }
+  const parts = [`下面是今天的帖子，每行一条：\n${wrapMaterial(rows.join('\n'))}`]
+  if (approved.length) parts.push(`作者近期采纳过的选题：\n${wrapMaterial(approved.join('\n'))}`)
+  if (discarded.length) parts.push(`作者近期丢弃过的选题：\n${wrapMaterial(discarded.join('\n'))}`)
+  return { system, user: parts.join('\n\n') }
+}
+
+/**
+ * 规则建议提示词：从作者改稿的前后对照里找反复出现的修改习惯，只输出 JSON 数组。
+ * @param {Array<{aiText: string, sentText: string}>} pairs - 对子，只取前 10 个。
+ * @returns {{system: string, user: string}} 提示词。
+ */
+export function rulePrompts(pairs) {
+  const system = [
+    '你是写作习惯分析师。对照作者的 AI 草稿和他实际发出的版本，找出他反复出现的修改习惯，只输出 JSON 数组，不要任何说明。',
+    MATERIAL_RULE,
+    '只总结至少在两对里都出现的修改习惯；只出现一次的修改不要总结，找不到就输出 []。最多 3 项。',
+    '每一项的格式：{"name":"规则名，不超过 12 字","rule":"写稿时要遵守的一句话规则，不超过 60 字","evidence":"依据，不超过 60 字"}。',
+  ].join('\n')
+  const rows = pairs.slice(0, 10).map((p, i) => `第 ${i + 1} 对\nAI 草稿：${wrapMaterial(p.aiText, 600)}\n实际发出：${wrapMaterial(p.sentText, 600)}`)
+  return { system, user: rows.join('\n\n') }
 }
 
 const voiceSection = voice => (String(voice ?? '').trim() ? `\n\n写作风格：\n${String(voice).trim()}` : '')

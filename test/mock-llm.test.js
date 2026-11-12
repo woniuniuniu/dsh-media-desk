@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { draftPrompts, revisePrompts, topicPrompts } from '../src/ai.js'
+import { draftPrompts, revisePrompts, rulePrompts, topicPrompts } from '../src/ai.js'
 import { condensePrompts } from '../src/voice.js'
 import { stylePrompts } from '../src/style.js'
 import { classify, readCompletion, startMock, stopMock } from '../scripts/mock-llm.mjs'
@@ -11,6 +11,8 @@ const POSTS = [{ id: '111', handle: 'a', text: 'x', likes: 1, replies: 0, repost
 // 提示词措辞改了而模拟模型没跟上时，这里会失败。
 test('模拟模型的识别措辞与真实提示词一致', () => {
   assert.equal(classify(topicPrompts(POSTS, TYPES).system), 'topics')
+  assert.equal(classify(rulePrompts([{ aiText: 'a', sentText: 'b' }]).system), 'rules')
+  assert.equal(classify(topicPrompts(POSTS, TYPES, { approved: ['甲'], discarded: ['乙'] }).system), 'topics')
   assert.equal(classify(condensePrompts('某份写作指南').system), 'condense')
   assert.equal(classify(stylePrompts('一些文字', '').system), 'style')
   assert.equal(classify(revisePrompts({ text: '旧稿', instruction: '短一点', voice: '' }).system), 'revise')
@@ -32,6 +34,8 @@ test('通过 HTTP 应答三类请求', async () => {
     const topics = JSON.parse(await ask(port, topicPrompts(POSTS, TYPES)))
     assert.ok(topics.length >= 1)
     assert.deepEqual(topics.flatMap(t => t.postIds).sort(), ['111', '222'])
+    const rules = JSON.parse(await ask(port, rulePrompts([{ aiText: 'a', sentText: 'b' }])))
+    assert.ok(Array.isArray(rules) && rules.length >= 1 && rules.length <= 2 && rules.every(r => r.name && r.rule))
     const summary = await ask(port, condensePrompts('某份写作指南'))
     assert.ok(summary.length === 200)
     const tweet = await ask(port, draftPrompts({ title: 't', form: 'post', materials: ['m'], voice: '' }))
