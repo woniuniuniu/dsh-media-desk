@@ -205,3 +205,16 @@ test('文字模型调用超过时限按普通错误报告，并中止底层调�
   await assert.rejects(pending, { message: '用户取消' })
   assert.deepEqual(await withTimeout(async req => ({ text: req.user }), 1000)({ user: 'ok' }), { text: 'ok' })
 })
+
+test('GET insights：已鉴权返回复盘数据，未鉴权被拒绝', async () => {
+  const h = await serve()
+  try {
+    const r = await h.call('GET', '/x-desk/insights')
+    assert.equal(r.status, 200)
+    assert.deepEqual(Object.keys(r.data).sort(), ['byType', 'edits', 'followers', 'funnel', 'replies', 'top', 'totals'])
+  } finally { await h.close() }
+  const denied = await serve({ rejection: () => 401 })
+  try {
+    assert.equal((await denied.call('GET', '/x-desk/insights')).status, 401)
+  } finally { await denied.close() }
+})

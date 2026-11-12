@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs'
 import { stat, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import { Composer } from './compose.js'
+import { computeInsights } from './insights.js'
 import { Exchange } from './exchange.js'
 import { Lock } from './lock.js'
 import { Worker, countImage, imagesUsedToday, localDay, resolveExchangeDir } from './worker.js'
@@ -117,6 +118,7 @@ async function route({ ctx, store, desk, callText }, req, res) {
       const exchangeDir = resolveExchangeDir(await desk.settings.read(), store.root)
       return json(res, 200, { state, exchangeDir, model: engineLabel(ctx), modelOk: modelStatus.ok, modelError: modelStatus.error, canUndo: store.undo.length > 0, composing: desk.composer.busy })
     }
+    if (path === 'insights') return json(res, 200, computeInsights(await store.read(), new Date()))
     if (path === 'settings') return json(res, 200, publicSettings(await desk.settings.read(), Boolean(imageTool(ctx))))
     if (path === 'models') {
       // 列出 Harness 里已接的提供方和它们公布的模型，给工作台的助手模型选择器用
