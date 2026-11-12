@@ -5,7 +5,7 @@ import { t } from './util.js'
 const BASE = 'x-desk/'
 
 let snapshot = {
-  state: null, model: null, modelOk: null, modelError: null, canUndo: false, error: null, exchangeDir: null,
+  state: null, model: null, modelOk: null, modelError: null, canUndo: false, error: null, exchangeDir: null, composing: false,
   view: 'inbox', settings: null, settingsOpen: false, modelPickOpen: false, toast: null, dialog: null,
 }
 const listeners = new Set()
@@ -33,7 +33,7 @@ async function api(path, body) {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw Object.assign(new Error(data.error || t('请求失败（{status}）', { status: res.status })), { status: res.status })
+  if (!res.ok) throw Object.assign(new Error(data.error || t('请求失败（{status}）', { status: res.status })), { status: res.status, busy: data.busy === true })
   return data
 }
 
@@ -52,7 +52,7 @@ export async function loadDesk() {
   try {
     const settings = await api('settings')
     const data = await api('state')
-    setDesk({ settings, state: data.state, model: data.model, modelOk: data.modelOk, modelError: data.modelError, canUndo: data.canUndo, exchangeDir: data.exchangeDir ?? null, error: null })
+    setDesk({ settings, state: data.state, model: data.model, modelOk: data.modelOk, modelError: data.modelError, canUndo: data.canUndo, exchangeDir: data.exchangeDir ?? null, composing: data.composing === true, error: null })
   } catch (err) {
     setDesk({ error: err.message })
   }
@@ -132,15 +132,16 @@ export async function uploadFile(file) {
 
 /**
  * 现在就出一批。当天已成功过且没带 force 时返回 { conflict: true }，由界面确认后再带 force 调用。
+ * 已有一轮在跑（busy）时只提示，不弹确认。
  * @returns {Promise<{created: number, error: string|null}|{conflict: true}|null>} 失败时返回 null（已提示）。
  */
 export async function runCompose({ force = false } = {}) {
   try {
     const data = await api('compose/run', force ? { force: true } : {})
-    setDesk({ state: data.state })
+    setDesk({ state: data.state, composing: data.composing === true })
     return { created: data.created ?? 0, error: data.error ?? null }
   } catch (err) {
-    if (err.status === 409) return { conflict: true }
+    if (err.status === 409 && !err.busy) return { conflict: true }
     report(err)
     return null
   }

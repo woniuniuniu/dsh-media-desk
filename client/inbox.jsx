@@ -25,12 +25,15 @@ function StatusBar() {
   const runs = useDesk(s => s.state.runs)
   const candidates = useDesk(s => s.state.candidates)
   const composeAt = useDesk(s => s.settings?.composeAt ?? '07:00')
+  const composing = useDesk(s => s.composing)
   const [running, setRunning] = React.useState(false)
   const [confirming, setConfirming] = React.useState(false)
-  const status = composeStatus(runs, composeAt, new Date())
+  const status = composeStatus(runs, composeAt, new Date(), composing || running)
+  const busy = status.kind === 'running'
   const failed = status.kind === 'failed'
   let text
-  if (status.kind === 'empty') text = t('今天没有新素材')
+  if (busy) text = t('正在出稿…')
+  else if (status.kind === 'empty') text = status.message
   else if (status.kind === 'done') text = t('今天 {time} 已出 {n} 条', { time: status.at ? fmtTime(status.at) : composeAt, n: candidates.filter(row => dayKey(row.createdAt) === dayKey(new Date())).length })
   else if (failed) text = t('今天成稿失败：{error}', { error: status.error })
   else text = t('今天还没到成稿时间（{time}）', { time: composeAt })
@@ -48,10 +51,10 @@ function StatusBar() {
 
   return (
     <section className="md-inbox-status" aria-label={t('今天的成稿状态')}>
-      <p className={failed ? 'is-failed' : ''} role="status">{running ? t('正在出稿，需要几十秒…') : text}</p>
-      {failed && !running ? <button type="button" className="md-btn is-small" onClick={() => run(false)}>{t('重试')}</button> : null}
-      <button type="button" className="md-btn" disabled={running} onClick={() => run(false)}>
-        <Icon name="bolt" size={14} />{running ? t('出稿中…') : t('现在就出一批')}
+      <p className={failed ? 'is-failed' : ''} role="status">{text}</p>
+      {failed ? <button type="button" className="md-btn is-small" onClick={() => run(false)}>{t('重试')}</button> : null}
+      <button type="button" className="md-btn" disabled={busy} onClick={() => run(false)}>
+        <Icon name="bolt" size={14} />{busy ? t('出稿中…') : t('现在就出一批')}
       </button>
       {confirming ? (
         <Dialog title={t('再出一批？')} onClose={() => setConfirming(false)}>

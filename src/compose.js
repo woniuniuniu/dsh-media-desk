@@ -62,6 +62,7 @@ const noteLabel = tr('手动素材')
 const LIVE = ['pending', 'approved']
 const TAKEN = tr('已被另一个进程接管')
 const MAX_ERROR = 200
+const BUSY = tr('正在出稿，请稍等')
 
 export class Composer {
   constructor({ store, settings, callText, now = () => new Date() }) {
@@ -69,36 +70,57 @@ export class Composer {
     this.settings = settings
     this.callText = callText
     this.now = now
+    this.inflight = null
+  }
+
+  /** 本进程里是否正有一轮每日出稿在跑（手动和后台共用这一个）。 */
+  get busy() {
+    return this.inflight !== null
   }
 
   /**
+   * 每日出稿。同一时间只跑一轮：已有一轮在跑时直接返回 busy，什么都不做。
    * @param {{undoable?: boolean, beforeCall?: () => Promise<boolean>}} [options] - beforeCall 在每次模型调用前执行，返回 false 就整体放弃、什么都不写。
+   * @returns {Promise<{created: number, error: string|null, busy?: true}>}
    */
-  async composeDaily({ undoable = true, beforeCall } = {}) {
+  async composeDaily(options) {
+    if (this.inflight) return { created: 0, error: BUSY, busy: true }
+    this.inflight = this.#composeDaily(options)
+    try {
+      return await this.inflight
+    } finally {
+      this.inflight = null
+    }
+  }
+
+  async #composeDaily({ undoable = true, beforeCall } = {}) {
     const now = this.now()
     const day = localDay(now)
     const state = await this.store.read()
     const { dailyCandidates } = await this.settings.read()
     const typeIds = state.voice.types.map(t => t.id)
-    const note = (message, mark) => this.store.mutate('选题', s => {
+    // outcome：'empty' 是当天的结果（记下当天，不再重试），'failed' 是失败（当天可重试）
+    const note = (message, outcome) => this.store.mutate('选题', s => {
       s.runs.lastComposeAt = now.toISOString()
+      s.runs.lastComposeOutcome = outcome
       s.runs.lastComposeError = message === null ? null : String(message).slice(0, MAX_ERROR)
-      if (mark) s.runs.lastComposeDay = day
+      if (outcome === 'empty') s.runs.lastComposeDay = day
     }, { undoable })
     const callText = async req => {
       if (beforeCall && (await beforeCall()) === false) throw Object.assign(new Error(TAKEN), { taken: true })
       return this.callText(req)
     }
     const failWith = async message => {
-      await note(message, false)
+      await note(message, 'failed')
       return { created: 0, error: message }
+    }
+    const emptyWith = async message => {
+      await note(message, 'empty')
+      return { created: 0, error: null }
     }
 
     const posts = eligible(state.posts, now)
-    if (!posts.length) {
-      await note(tr('今天没有新素材'), true)
-      return { created: 0, error: null }
-    }
+    if (!posts.length) return emptyWith(tr('今天没有新素材'))
 
     let topics
     try {
@@ -131,7 +153,7 @@ export class Composer {
       ranked.push({ ...item, topic: { ...item.topic, postIds: ids }, top })
     }
     const scored = ranked.slice(0, dailyCandidates)
-    if (!scored.length) return failWith(tr('没有及格的选题'))
+    if (!scored.length) return emptyWith(tr('今天没有及格的选题'))
 
     const drafts = []
     let lastError = ''
@@ -164,12 +186,17 @@ export class Composer {
           decidedAt: null, discardReason: null, view: null, revision: 0, image: null,
         })
       }
-      s.runs.lastComposeAt = now.toISOString()
       if (!written.length) {
+        // 今天已经成功过（这次是强制重跑）：保留今天成功的状态
+        if (s.runs.lastComposeDay === day) return 0
+        s.runs.lastComposeAt = now.toISOString()
+        s.runs.lastComposeOutcome = 'failed'
         s.runs.lastComposeError = tr('素材已被其他任务用掉')
         return 0
       }
       s.candidates.push(...written)
+      s.runs.lastComposeAt = now.toISOString()
+      s.runs.lastComposeOutcome = 'ok'
       s.runs.lastComposeDay = day
       s.runs.lastComposeError = null
       return written.length

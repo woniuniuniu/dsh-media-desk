@@ -96,12 +96,46 @@ test('请求体不是 JSON 对象时回 400', async () => {
   } finally { await h.close() }
 })
 
+test('出稿：同时点两次，一个出稿、一个 409；状态里能看到正在出稿', async () => {
+  let release
+  const gate = new Promise(r => { release = r })
+  let started
+  const hit = new Promise(r => { started = r })
+  const now = new Date()
+  const posts = ['1855000000000000001', '1855000000000000002'].map((id, i) => ({
+    id, handle: 'karpathy', text: `素材 ${i}`, url: null, postedAt: new Date(now - 3600e3).toISOString(), fetchedAt: now.toISOString(),
+    likes: 100 * (i + 1), replies: 1, reposts: 1, quotes: 1, views: 10, isRepost: false, used: false,
+  }))
+  const callText = async () => {
+    started()
+    await gate
+    return { text: JSON.stringify([{ title: '选题', postIds: [posts[0].id], fun: 2, info: 2, resonance: 0, form: 'post', reason: 'r' }]) }
+  }
+  const h = await serve({ callText })
+  try {
+    await h.store.mutate('seed', s => { s.posts = posts }, { undoable: false })
+    const first = h.call('POST', '/x-desk/compose/run', { body: {} })
+    await hit
+    assert.equal((await h.call('GET', '/x-desk/state')).data.composing, true)
+    const second = await h.call('POST', '/x-desk/compose/run', { body: { force: true } })
+    assert.equal(second.status, 409)
+    assert.equal(second.data.error, '正在出稿，请稍等')
+    assert.equal(second.data.busy, true)
+    release()
+    const done = await first
+    assert.equal(done.status, 200)
+    assert.equal(done.data.composing, false)
+    assert.equal((await h.call('GET', '/x-desk/state')).data.composing, false)
+  } finally { release(); await h.close() }
+})
+
 test('出稿：今天已经成功过，不带 force 回 409', async () => {
   const h = await serve()
   try {
     await h.store.mutate('seed', s => { s.runs.lastComposeDay = localDay(new Date()) }, { undoable: false })
     const r = await h.call('POST', '/x-desk/compose/run', { body: {} })
     assert.equal(r.status, 409)
+    assert.notEqual(r.data.busy, true)
   } finally { await h.close() }
 })
 

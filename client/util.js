@@ -198,18 +198,23 @@ export function formToCard(form) {
 }
 
 /**
- * 今天的成稿状态。lastComposeError 在失败后会一直留到下次成功，所以失败只在"今天试过"时才算今天的。
- * @param {{lastComposeDay: string|null, lastComposeError: string|null, lastComposeAt?: string|null}} runs - 状态里的 runs。
+ * 今天的成稿状态。按 runs.lastComposeOutcome 判断：'ok' 成功、'empty' 当天没东西可写（不再重试）、'failed' 失败。
+ * lastComposeError 在失败后会一直留到下次成功，所以失败只在"今天试过"时才算今天的。
+ * @param {{lastComposeDay: string|null, lastComposeError: string|null, lastComposeAt?: string|null, lastComposeOutcome?: 'ok'|'empty'|'failed'|null}} runs - 状态里的 runs。
  * @param {string} composeAt - 设置里的成稿时间 HH:MM。
  * @param {Date} now - 当前时间。
- * @returns {{kind: 'done', at: string|null}|{kind: 'empty'}|{kind: 'failed', error: string}|{kind: 'waiting', composeAt: string}} 状态。
+ * @param {boolean} [composing] - 后台或手动正在出稿。
+ * @returns {{kind: 'running'}|{kind: 'done', at: string|null}|{kind: 'empty', message: string}|{kind: 'failed', error: string}|{kind: 'waiting', composeAt: string}} 状态。
  */
-export function composeStatus(runs, composeAt, now) {
+export function composeStatus(runs, composeAt, now, composing = false) {
+  if (composing) return { kind: 'running' }
   const today = dayKey(now)
-  const error = runs.lastComposeError ?? null
-  const doneToday = runs.lastComposeDay === today
-  if (doneToday && error === null) return { kind: 'done', at: runs.lastComposeAt ?? null }
-  if (doneToday && error === '今天没有新素材') return { kind: 'empty' }
-  if (error !== null && runs.lastComposeAt && dayKey(runs.lastComposeAt) === today) return { kind: 'failed', error }
+  const outcome = runs.lastComposeOutcome ?? null
+  const triedToday = Boolean(runs.lastComposeAt) && dayKey(runs.lastComposeAt) === today
+  if (outcome === 'failed' && triedToday) return { kind: 'failed', error: runs.lastComposeError ?? '' }
+  if (runs.lastComposeDay === today) {
+    if (outcome === 'empty') return { kind: 'empty', message: runs.lastComposeError ?? t('今天没有新素材') }
+    return { kind: 'done', at: runs.lastComposeAt ?? null }
+  }
   return { kind: 'waiting', composeAt }
 }

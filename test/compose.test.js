@@ -92,12 +92,54 @@ test('Review Focus 3：选题返回乱码时不产生任何候选稿，记下原
   assert.ok(s.posts.every(p => !p.used))
 })
 
-test('没有任何及格选题等同于失败', async () => {
+test('没有任何及格选题是当天的结果，不是失败：记下当天，不再重试', async () => {
   const { composer, store } = await setup({ responses: [JSON.stringify([topic('只占一项', ['3'], 2, 0, 0)])] })
   const r = await composer.composeDaily()
-  assert.equal(r.created, 0)
-  assert.ok(r.error)
-  assert.equal((await store.read()).runs.lastComposeDay, null)
+  assert.deepEqual(r, { created: 0, error: null })
+  const s = await store.read()
+  assert.equal(s.runs.lastComposeDay, '2026-11-11')
+  assert.equal(s.runs.lastComposeError, '今天没有及格的选题')
+  assert.equal(s.runs.lastComposeOutcome, 'empty')
+  assert.ok(s.posts.every(p => !p.used))
+})
+
+test('成稿结果记在 lastComposeOutcome：成功 ok、没素材 empty、失败 failed', async () => {
+  const ok = await setup({ responses: [TOPICS, '甲', '乙'] })
+  await ok.composer.composeDaily()
+  assert.equal((await ok.store.read()).runs.lastComposeOutcome, 'ok')
+  const empty = await setup({ posts: POSTS().map(p => ({ ...p, used: true })) })
+  await empty.composer.composeDaily()
+  assert.equal((await empty.store.read()).runs.lastComposeOutcome, 'empty')
+  const failed = await setup({ responses: [new Error('断网')] })
+  await failed.composer.composeDaily()
+  assert.equal((await failed.store.read()).runs.lastComposeOutcome, 'failed')
+})
+
+test('同一时间只跑一次出稿：第二次直接返回"正在出稿"，什么都不做', async () => {
+  let release
+  const gate = new Promise(r => { release = r })
+  const { composer, store, calls } = await setup({ responses: [async () => { await gate; return TOPICS }, '甲', '乙'] })
+  const first = composer.composeDaily()
+  await new Promise(r => setImmediate(r))
+  assert.equal(composer.busy, true)
+  assert.deepEqual(await composer.composeDaily({ undoable: false }), { created: 0, error: '正在出稿，请稍等', busy: true })
+  release()
+  assert.equal((await first).created, 2)
+  assert.equal(composer.busy, false)
+  assert.equal(calls.length, 3)
+  assert.equal((await store.read()).candidates.length, 2)
+})
+
+test('今天已经成功过，强制重跑时素材全被用掉：保留今天成功的状态，不写错误', async () => {
+  const useAll = async (store) => { await store.mutate('抢先', (s) => { s.posts.forEach((p) => { p.used = true }) }, { undoable: false }); return '正文' }
+  const { composer, store } = await setup({ responses: [TOPICS, useAll, useAll] })
+  await store.mutate('seed', s => { Object.assign(s.runs, { lastComposeDay: '2026-11-11', lastComposeAt: '2026-11-10T23:00:00.000Z', lastComposeError: null, lastComposeOutcome: 'ok' }) }, { undoable: false })
+  const r = await composer.composeDaily()
+  assert.deepEqual(r, { created: 0, error: '素材已被其他任务用掉' })
+  const s = await store.read()
+  assert.equal(s.runs.lastComposeError, null)
+  assert.equal(s.runs.lastComposeOutcome, 'ok')
+  assert.equal(s.runs.lastComposeAt, '2026-11-10T23:00:00.000Z')
 })
 
 test('Review Focus 3：某一条成稿返回空内容，只少这一条', async () => {
@@ -136,6 +178,7 @@ test('没有新素材不算失败', async () => {
   const s = await store.read()
   assert.equal(s.runs.lastComposeDay, '2026-11-11')
   assert.equal(s.runs.lastComposeError, '今天没有新素材')
+  assert.equal(s.runs.lastComposeOutcome, 'empty')
   assert.equal(s.runs.lastComposeAt, NOW.toISOString())
   assert.equal(calls.length, 0)
 })

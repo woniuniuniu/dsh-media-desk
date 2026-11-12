@@ -115,7 +115,7 @@ async function route({ ctx, store, desk, callText }, req, res) {
     if (path === 'state') {
       const state = await store.read()
       const exchangeDir = resolveExchangeDir(await desk.settings.read(), store.root)
-      return json(res, 200, { state, exchangeDir, model: engineLabel(ctx), modelOk: modelStatus.ok, modelError: modelStatus.error, canUndo: store.undo.length > 0 })
+      return json(res, 200, { state, exchangeDir, model: engineLabel(ctx), modelOk: modelStatus.ok, modelError: modelStatus.error, canUndo: store.undo.length > 0, composing: desk.composer.busy })
     }
     if (path === 'settings') return json(res, 200, publicSettings(await desk.settings.read(), Boolean(imageTool(ctx))))
     if (path === 'models') {
@@ -191,11 +191,14 @@ async function route({ ctx, store, desk, callText }, req, res) {
       return json(res, 200, { src: `x-desk/files/${name}` })
     }
     case 'compose/run': {
+      const busy = () => json(res, 409, { error: tr('正在出稿，请稍等'), busy: true })
+      if (desk.composer.busy) return busy()
       const state = await store.read()
       if (state.runs.lastComposeDay === localDay(new Date()) && body.force !== true) return json(res, 409, { error: tr('今天已经成稿了；要再来一次请选择强制重新成稿') })
       desk.worker.noteAttempt()
       const result = await desk.composer.composeDaily({ undoable: false })
-      return json(res, 200, { ...result, state: await store.read() })
+      if (result.busy) return busy()
+      return json(res, 200, { ...result, state: await store.read(), composing: desk.composer.busy })
     }
     case 'candidate/revise': {
       await desk.composer.revise(body.id, { view: body.view, instruction: body.instruction, typeId: body.typeId }, { undoable: false })
