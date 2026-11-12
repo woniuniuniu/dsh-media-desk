@@ -35,7 +35,8 @@ export function violations(path, source) {
       const m = FORBIDDEN_MODULE.exec(spec)
       if (m && !MODULES_ALLOWED[path]?.has(m[1])) out.push(`禁止引入网络或子进程模块：${spec}`)
     }
-    if (path === 'src/sync.js' && /\bexec\s*\(|\b(?:execSync|spawn|spawnSync|fork)\b|\bshell\s*:/.test(source)) out.push('同步只允许 execFile，禁止 shell')
+    if (path === 'src/sync.js' && /(?<![\w$.])exec\s*\(|\b(?:execSync|spawn|spawnSync|fork)\b|\bshell\s*:/.test(source)) out.push('同步只允许 execFile，禁止 shell')
+    if (path === 'src/sync.js' && /\bexecFile\s*\((?!\s*(['"])git\1\s*[,)])/.test(source)) out.push('同步只允许执行 git')
     // Git 的固定子命令字符串不等于调用网络 fetch；其余写法照旧检查。
     const networkSource = path === 'src/sync.js' ? source.replace(/(['"])fetch\1/g, '') : source
     if (FETCH.test(networkSource) && !FETCH_ALLOWED.has(path)) out.push('禁止使用 fetch')

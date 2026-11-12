@@ -69,3 +69,12 @@ test('同步只放行 execFile 的命名导入，不放行其他子进程或网�
     assert.ok(violations('src/worker.js', source).length > 0)
   }
 })
+
+test('M7: execFile requires literal git and regex exec remains allowed', () => {
+  for (const source of ["execFile('sh', args)", 'execFile(command, args)', 'execFile(`git`, args)', "execFile('git' + suffix, args)"]) {
+    assert.ok(violations('src/sync.js', source).length > 0, source)
+  }
+  for (const source of ["execFile('git', args)", 'execFile("git", args)', 're.exec(s)']) {
+    assert.deepEqual(violations('src/sync.js', source), [], source)
+  }
+})

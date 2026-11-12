@@ -82,7 +82,23 @@ export class Worker {
     this.lastAttemptAt = this.now().getTime()
   }
 
-  async tick() {
+  tick() {
+    if (this.stopped || this.inflight) return Promise.resolve({ ran: false })
+    this.inflight = this.#tick().finally(() => { this.inflight = null })
+    return this.inflight
+  }
+
+  syncNow() {
+    const busy = { ok: false, pulled: 0, pushed: 0, error: '上一轮同步还没结束' }
+    if (this.stopped || this.inflight) return Promise.resolve(busy)
+    this.inflight = (async () => {
+      if (!(await this.lock.acquire()) || this.stopped) return busy
+      return this.#syncOnce(this.now())
+    })().finally(() => { this.inflight = null })
+    return this.inflight
+  }
+
+  async #tick() {
     if (this.stopped || !(await this.lock.acquire())) return { ran: false }
     const now = this.now()
     const settings = await this.settings.read()
@@ -323,17 +339,19 @@ export class Worker {
   }
 
   async #syncOnce(now) {
-    let error = null
+    let result
     try {
-      const result = await this.sync.syncOnce()
-      if (!result.ok) error = result.error
-    } catch (err) { error = err.message } finally { this.lastSyncMs = now.getTime() }
-    error = error == null ? null : String(error).slice(0, 200)
+      result = await this.sync.syncOnce()
+    } catch (err) { result = { ok: false, pulled: 0, pushed: 0, error: err.message } }
+    if (result.error === '上一轮同步还没结束') return result
+    this.lastSyncMs = now.getTime()
+    const error = result.ok ? null : String(result.error).slice(0, 200)
     await this.store.mutate('同步记录', s => {
       s.runs.lastSyncAt = now.toISOString()
       s.runs.lastSyncError = error
       if (error) addNotice(s, `同步失败：${error}`, now)
     }, { undoable: false })
+    return { ...result, error }
   }
 
   async #notice(text) {
@@ -381,7 +399,7 @@ export class Worker {
     this.stopped = false
     const run = () => {
       if (this.stopped || this.inflight) return
-      this.inflight = this.tick()
+      this.inflight = this.#tick()
         .catch(err => this.#notice(`后台处理出错：${err.message}`).catch(() => {}))
         .finally(() => { this.inflight = null })
     }

@@ -56,6 +56,8 @@ export class Settings {
       if (err.code !== 'ENOENT') throw err
       this.value = structuredClone(DEFAULTS)
     }
+    this.value.sync.enabled = this.value.sync.enabled === true
+    this.value.sync.intervalSec = clamp(this.value.sync.intervalSec, 60, 3600, DEFAULTS.sync.intervalSec)
     return this.value
   }
 

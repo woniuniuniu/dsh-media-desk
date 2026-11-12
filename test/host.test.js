@@ -5,6 +5,7 @@ import { createServer, request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { Readable } from 'node:stream'
 import { withTimeout } from '../src/ai.js'
 import { Composer } from '../src/compose.js'
 import { Longform } from '../src/longform.js'
@@ -328,4 +329,22 @@ test('同步默认关闭，手动同步被拒绝，状态返回默认间隔', as
     assert.equal(status.data.lastSyncAt, null)
     assert.equal(status.data.lastSyncError, null)
   } finally { await h.close() }
+})
+
+test('M4/M5: manual sync route uses worker and returns busy 409 without recording failure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'host-sync-')), store = new Store(root), settings = new Settings(root)
+  await settings.update({ sync: { enabled: true } })
+  await store.mutate('seed', s => { s.runs.lastSyncError = 'previous' }, { undoable: false })
+  const before = structuredClone((await store.read()).runs)
+  let calls = 0
+  const busy = { ok: false, pulled: 0, pushed: 0, error: '上一轮同步还没结束' }
+  const desk = { settings, worker: { syncNow: async () => { calls++; return busy } } }
+  const handler = createHandler({ ctx: { get: () => ({ requestRejection: () => undefined }) }, store, desk })
+  const req = Object.assign(Readable.from([]), { method: 'POST', url: '/x-desk/sync/run', headers: {} })
+  const res = { setHeader() {}, end(body) { this.body = JSON.parse(body) } }
+  await handler(req, res)
+  assert.equal(calls, 1)
+  assert.equal(res.statusCode, 409)
+  assert.deepEqual(res.body, busy)
+  assert.deepEqual((await store.read()).runs, before)
 })

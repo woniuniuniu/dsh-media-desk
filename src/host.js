@@ -4,7 +4,6 @@ import { stat, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Sync } from './sync.js'
-import { addNotice } from './runs.js'
 import { Composer } from './compose.js'
 import { extractOwnVoice, learnDaily } from './learn.js'
 import { Longform } from './longform.js'
@@ -166,15 +165,9 @@ async function route({ ctx, store, desk, callText }, req, res) {
     case 'sync/run': {
       const settings = await desk.settings.read()
       if (!settings.sync.enabled) return json(res, 400, { error: '同步还没打开' })
-      const sync = syncFor(desk, settings, store)
-      const result = await sync.syncOnce()
-      const now = new Date()
-      await store.mutate('同步记录', s => {
-        s.runs.lastSyncAt = now.toISOString()
-        s.runs.lastSyncError = result.error?.slice(0, 200) ?? null
-        if (!result.ok) addNotice(s, `同步失败：${result.error}`, now)
-      }, { undoable: false })
-      return json(res, 200, { ...result, status: await sync.status() })
+      const result = await desk.worker.syncNow()
+      if (result.error === '上一轮同步还没结束') return json(res, 409, result)
+      return json(res, 200, { ...result, status: await syncFor(desk, settings, store).status() })
     }
     case 'ops': {
       const label = typeof body.label === 'string' ? body.label : tr('操作')
