@@ -236,6 +236,18 @@ test('长文路由：没有素材时建议返回原因且不调用模型；未�
     assert.equal((await h.call('POST', '/x-desk/longform/revise', { body: { id: 'l_1', instruction: '  ' } })).status, 400)
     assert.equal(calls, 0)
     assert.equal(h.store.undo.length, 0)
+    await h.store.mutate('seed', s => {
+      s.longforms.push({ ...s.longforms[0], id: 'l_2', body: '', aiBody: '', status: 'idea', revision: 0 })
+    }, { undoable: false })
+    const draft = await h.call('POST', '/x-desk/longform/draft', { body: { id: 'l_2' } })
+    assert.equal(draft.status, 200)
+    assert.deepEqual([draft.data.state.longforms[1].body, draft.data.state.longforms[1].status, draft.data.state.longforms[1].revision], ['[]', 'draft', 1])
+    assert.equal(h.store.undo.length, 0)
+    const revise = await h.call('POST', '/x-desk/longform/revise', { body: { id: 'l_2', instruction: '简短一点' } })
+    assert.equal(revise.status, 200)
+    assert.deepEqual([revise.data.state.longforms[1].body, revise.data.state.longforms[1].revision], ['[]', 2])
+    assert.equal(h.store.undo.length, 0)
+    assert.equal(calls, 2)
   } finally { await h.close() }
 })
 

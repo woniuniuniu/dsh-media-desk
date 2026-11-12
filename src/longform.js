@@ -11,6 +11,7 @@ const DAY = 86400e3
 const MAX_BODY = 20000
 const MAX_ERROR = 200
 const MAX_IDEAS = 6
+export const MAX_LONGFORMS = 30
 const fail = (message, status = 400) => Object.assign(new Error(message), { status })
 
 /** 本地日期所在的 ISO 8601 周，形如 '2026-W46'。 */
@@ -34,12 +35,12 @@ function materialsOf(state, now) {
   const since = now.getTime() - 14 * DAY
   const bestPosts = (state.mine ?? [])
     .filter(p => (p.kind === 'post' || p.kind === 'quote') && Date.parse(p.postedAt) >= since && String(p.text ?? '').trim())
-    .sort((a, b) => engagement(b) - engagement(a) || Date.parse(b.postedAt) - Date.parse(a.postedAt))
+    .sort((a, b) => engagement(b) - engagement(a) || (Date.parse(b.postedAt) || 0) - (Date.parse(a.postedAt) || 0))
     .slice(0, 8)
     .map(p => p.text)
   const views = state.candidates
     .filter(c => typeof c.view === 'string' && c.view.trim())
-    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    .sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0))
     .slice(0, 10)
     .map(c => c.view.trim())
   return { bestPosts, views }
@@ -52,15 +53,31 @@ export class Longform {
     this.store = store
     this.callText = callText
     this.now = now
+    this.inflight = null
+  }
+
+  get busy() {
+    return this.inflight !== null
   }
 
   /** 建议 2 到 3 个选题。不碰 runs.lastLongformWeek（那是后台的事）。 */
-  async suggest({ undoable = true } = {}) {
+  async suggest(options) {
+    if (this.inflight) return { created: 0, error: tr('正在想选题，请稍等'), busy: true }
+    this.inflight = this.#suggest(options)
+    try {
+      return await this.inflight
+    } finally {
+      this.inflight = null
+    }
+  }
+
+  async #suggest({ undoable = true } = {}) {
     const now = this.now()
     const state = await this.store.read()
+    if (state.longforms.length >= MAX_LONGFORMS) return { created: 0, error: tr('长文已经 30 篇，先删掉不要的') }
+    if (state.longforms.filter(l => l.status === 'idea').length >= MAX_IDEAS) return { created: 0, error: tr('还有没处理的选题，先看看已有的') }
     const { bestPosts, views } = materialsOf(state, now)
     if (!bestPosts.length && !views.length) return { created: 0, error: tr('还没有足够的内容来建议长文选题') }
-    if (state.longforms.filter(l => l.status === 'idea').length >= MAX_IDEAS) return { created: 0, error: tr('还有没处理的选题，先看看已有的') }
     const typeIds = state.voice.types.map(t => t.id)
     let items
     try {
@@ -73,7 +90,7 @@ export class Longform {
         if (!item || typeof item !== 'object' || Array.isArray(item)) continue
         const title = oneLine(item.title, 60)
         if (!title) continue
-        items.push({ title, angle: oneLine(item.angle, 200), typeId: typeIds.includes(item.typeId) ? item.typeId : typeIds[0] })
+        items.push({ title, angle: oneLine(item.angle, 200), typeId: typeIds.includes(item.typeId) ? item.typeId : typeIds[0] ?? null })
       }
     } catch (err) {
       return { created: 0, error: reason(err) }
@@ -82,7 +99,7 @@ export class Longform {
       const titles = new Set(s.longforms.map(l => l.title.trim()))
       let n = 0
       for (const { title, angle, typeId } of items) {
-        if (titles.has(title) || s.longforms.length >= 30) continue
+        if (titles.has(title) || s.longforms.length >= MAX_LONGFORMS) continue
         titles.add(title)
         s.longforms.push({ id: newId('l'), title, angle, typeId, body: '', aiBody: '', status: 'idea', createdAt: now.toISOString(), updatedAt: now.toISOString(), revision: 0, error: null })
         n += 1
@@ -101,9 +118,10 @@ export class Longform {
     const { revision, status } = row
     const { bestPosts, views } = materialsOf(state, this.now())
     return this.#run('长文初稿', id, { revision, status }, undoable, () => longformDraftPrompts({
-      title: row.title, angle: row.angle, materials: [...bestPosts, ...views], voice: voiceFor(state, row.typeId, { long: true }),
+      title: row.title, angle: row.angle, materials: [...bestPosts, ...views], voice: voiceFor(state, state.voice.types.length ? row.typeId : null, { long: true }),
     }), (r, body) => {
       r.body = body
+      // aiBody 始终保留模型的第一版初稿，供负责人的最终文字与它比较，后续改稿不覆盖。
       r.aiBody = body
       r.status = 'draft'
       r.revision = 1
@@ -120,7 +138,7 @@ export class Longform {
     if (row.status !== 'draft') throw fail(tr('只有草稿才能改'), 409)
     const { revision, status } = row
     return this.#run('长文改稿', id, { revision, status }, undoable, () => longformRevisePrompts({
-      body: row.body, instruction: wish, voice: voiceFor(state, row.typeId, { long: true }),
+      body: row.body, instruction: wish, voice: voiceFor(state, state.voice.types.length ? row.typeId : null, { long: true }),
     }), (r, body) => {
       r.body = body
       r.revision += 1

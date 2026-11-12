@@ -1,6 +1,7 @@
 // 工作台的唯一写入口：界面操作都走这里，统一校验字段并产出结果。
 // 模型输出也是不可信输入，所以这里只放行白名单字段。
 import { tr } from './i18n.js'
+import { MAX_LONGFORMS } from './longform.js'
 import { normalizeStyle } from './style.js'
 import { approve, discard, markSent, unapprove, setText, safeText } from './inbox.js'
 
@@ -8,7 +9,6 @@ const HANDLE = /^[A-Za-z0-9_]{1,15}$/
 const TIERS = ['engage', 'topic']
 const RULE_STATUS = ['active', 'off']
 const MAX_DISMISSED = 50
-const MAX_LONGFORMS = 30
 const MAX_LONGFORM_BODY = 20000
 
 let counter = 0
@@ -184,7 +184,7 @@ const HANDLERS = {
     if (state.longforms.length >= MAX_LONGFORMS) throw new Error(tr('长文最多 {n} 篇，先删掉不要的', { n: MAX_LONGFORMS }))
     const at = ctx.now.toISOString()
     state.longforms.push({
-      id: newId('l'), title, angle: oneLine(op.angle, 200), typeId: state.voice.types[0]?.id ?? '', body: '', aiBody: '',
+      id: newId('l'), title, angle: oneLine(op.angle, 200), typeId: state.voice.types[0]?.id ?? null, body: '', aiBody: '',
       status: 'idea', createdAt: at, updatedAt: at, revision: 0, error: null,
     })
     return tr('已加入选题：{title}', { title })
@@ -201,11 +201,13 @@ const HANDLERS = {
       if (typeof op.body !== 'string' || !op.body.trim()) throw new Error(tr('正文不能为空'))
       body = safeText(op.body)
       if ([...body].length > MAX_LONGFORM_BODY) throw new Error(tr('正文太长，上限 {n} 字', { n: MAX_LONGFORM_BODY }))
-      if (row.status === 'idea') row.status = 'draft'
+      if (body !== row.body) {
+        row.revision += 1
+        if (row.status === 'idea') row.status = 'draft'
+      }
     }
     row.title = title
     row.body = body
-    row.revision += 1
     row.updatedAt = ctx.now.toISOString()
     return tr('已保存长文：{title}', { title })
   },
