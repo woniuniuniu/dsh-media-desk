@@ -224,8 +224,9 @@ async function route({ ctx, store, desk, callText }, req, res) {
       return json(res, 200, { state: await store.read() })
     }
     case 'longform/revise': {
-      await desk.longform.revise(body.id, body.instruction, { undoable: false })
-      return json(res, 200, { state: await store.read() })
+      // 改稿会替换负责人手改过的正文，所以可以撤销；初稿只填空正文，不占撤销位
+      await desk.longform.revise(body.id, body.instruction, { undoable: true })
+      return json(res, 200, { state: await store.read(), canUndo: store.undo.length > 0 })
     }
     case 'note/compose': {
       await desk.composer.composeFromNote(body.id, { undoable: false })

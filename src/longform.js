@@ -11,6 +11,8 @@ const DAY = 86400e3
 const MAX_BODY = 20000
 const MAX_ERROR = 200
 const MAX_IDEAS = 6
+/** 没有素材时 suggest 返回的原因：这是正常情况，后台不为它提示。 */
+export const NO_MATERIAL = tr('还没有足够的内容来建议长文选题')
 const fail = (message, status = 400) => Object.assign(new Error(message), { status })
 
 /** 本地日期所在的 ISO 8601 周，形如 '2026-W46'。 */
@@ -76,7 +78,7 @@ export class Longform {
     if (state.longforms.length >= MAX_LONGFORMS) return { created: 0, error: tr('长文已经 30 篇，先删掉不要的') }
     if (state.longforms.filter(l => l.status === 'idea').length >= MAX_IDEAS) return { created: 0, error: tr('还有没处理的选题，先看看已有的') }
     const { bestPosts, views } = materialsOf(state, now)
-    if (!bestPosts.length && !views.length) return { created: 0, error: tr('还没有足够的内容来建议长文选题') }
+    if (!bestPosts.length && !views.length) return { created: 0, error: NO_MATERIAL }
     const typeIds = state.voice.types.map(t => t.id)
     let items
     try {
@@ -96,8 +98,11 @@ export class Longform {
     }
     const created = await this.store.mutate('长文选题', s => {
       const titles = new Set(s.longforms.map(l => l.title.trim()))
+      // 模型回答期间另一个进程可能也加了选题：按现在的数量重算还能加几个
+      const room = MAX_IDEAS - s.longforms.filter(l => l.status === 'idea').length
       let n = 0
       for (const { title, angle, typeId } of items) {
+        if (n >= room) break
         if (titles.has(title) || s.longforms.length >= MAX_LONGFORMS) continue
         titles.add(title)
         s.longforms.push({ id: newId('l'), title, angle, typeId, body: '', aiBody: '', status: 'idea', createdAt: now.toISOString(), updatedAt: now.toISOString(), revision: 0, error: null })
@@ -155,6 +160,7 @@ export class Longform {
       body = null
       error = reason(err)
     }
+    // 模型失败只记原因、正文没变，不占撤销位
     return this.store.mutate(label, s => {
       const row = s.longforms.find(l => l.id === id)
       if (!row) throw fail(tr('找不到这个选题'), 404)
@@ -167,6 +173,6 @@ export class Longform {
       }
       row.updatedAt = this.now().toISOString()
       return row
-    }, { undoable })
+    }, { undoable: undoable && body !== null })
   }
 }

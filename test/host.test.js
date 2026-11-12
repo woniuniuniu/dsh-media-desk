@@ -220,9 +220,9 @@ test('GET insights：已鉴权返回复盘数据，未鉴权被拒绝', async ()
   } finally { await denied.close() }
 })
 
-test('长文路由：没有素材时建议返回原因且不调用模型；未知选题 404；空修改要求 400', async () => {
+test('长文路由：没有素材时建议返回原因且不调用模型；未知选题 404；空修改要求 400；说一句来改可以撤销', async () => {
   let calls = 0
-  const h = await serve({ callText: async () => { calls += 1; return { text: '[]' } } })
+  const h = await serve({ callText: async () => { calls += 1; return { text: `第${calls}版` } } })
   try {
     const r = await h.call('POST', '/x-desk/longform/suggest', { body: {} })
     assert.equal(r.status, 200)
@@ -241,12 +241,17 @@ test('长文路由：没有素材时建议返回原因且不调用模型；未�
     }, { undoable: false })
     const draft = await h.call('POST', '/x-desk/longform/draft', { body: { id: 'l_2' } })
     assert.equal(draft.status, 200)
-    assert.deepEqual([draft.data.state.longforms[1].body, draft.data.state.longforms[1].status, draft.data.state.longforms[1].revision], ['[]', 'draft', 1])
+    assert.deepEqual([draft.data.state.longforms[1].body, draft.data.state.longforms[1].status, draft.data.state.longforms[1].revision], ['第1版', 'draft', 1])
     assert.equal(h.store.undo.length, 0)
     const revise = await h.call('POST', '/x-desk/longform/revise', { body: { id: 'l_2', instruction: '简短一点' } })
     assert.equal(revise.status, 200)
-    assert.deepEqual([revise.data.state.longforms[1].body, revise.data.state.longforms[1].revision], ['[]', 2])
-    assert.equal(h.store.undo.length, 0)
+    assert.deepEqual([revise.data.state.longforms[1].body, revise.data.state.longforms[1].revision], ['第2版', 2])
+    // 改稿会替换负责人手改过的正文，所以可以撤销
+    assert.equal(h.store.undo.length, 1)
+    assert.equal(revise.data.canUndo, true)
+    const undone = await h.call('POST', '/x-desk/undo', { body: {} })
+    assert.equal(undone.status, 200)
+    assert.deepEqual([undone.data.state.longforms[1].body, undone.data.state.longforms[1].revision], ['第1版', 1])
     assert.equal(calls, 2)
   } finally { await h.close() }
 })

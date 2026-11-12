@@ -2,7 +2,7 @@
 // 交换文件夹里的内容是不可信数据，这里只做合并和状态迁移；模型调用都在 store.mutate 之外。
 import { isAbsolute, join } from 'node:path'
 import { applyDecision, expire, intentUrl } from './inbox.js'
-import { isoWeek } from './longform.js'
+import { isoWeek, NO_MATERIAL } from './longform.js'
 import { matchSent } from './match.js'
 import { newId } from './ops.js'
 import { addNotice, localDay, SKEW_MS } from './runs.js'
@@ -160,7 +160,7 @@ export class Worker {
     }
     stop = await gate()
     if (stop) return stop
-    await this.#longformIfDue(now)
+    await this.#guarded('每周长文选题', () => this.#longformIfDue(now))
     stop = await gate()
     if (stop) return stop
     await this.#exportAll(exchange)
@@ -258,17 +258,20 @@ export class Worker {
     }, { undoable: false }))
   }
 
-  /** 每周一（本地）成稿尝试之后建议一次长文选题；无论结果如何本周都算过，不整天重试。 */
+  /** 每个 ISO 周里，当天成稿尝试之后的第一轮建议一次长文选题；无论结果如何本周都算过，不整天重试。 */
   async #longformIfDue(now) {
-    if (!this.longform || now.getDay() !== 1) return
+    if (!this.longform) return
     const week = isoWeek(now)
     const { runs } = await this.store.read()
     if (runs.lastComposeDay !== localDay(now) || runs.lastLongformWeek === week) return
+    let result = null
     try {
-      await this.longform.suggest({ undoable: false })
+      result = await this.longform.suggest({ undoable: false })
     } catch (err) {
       await this.#notice(`每周长文选题出错：${err.message}`)
     }
+    // 没有素材是正常情况，不提示；正在手动建议（busy）也不提示
+    if (result?.error && !result.busy && result.error !== NO_MATERIAL) await this.#notice(`长文选题这周没建议成：${result.error}`)
     await this.store.mutate('长文选题周记', s => { s.runs.lastLongformWeek = week }, { undoable: false })
   }
 

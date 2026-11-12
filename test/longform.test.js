@@ -482,3 +482,21 @@ test('T2：成功初稿和改稿，false 不占撤销栈，默认各增加一条
     assert.equal(store.undo.length, before + added * 2)
   }
 })
+
+test('M8：模型回答期间另一个进程加了选题，最后只补到 6 个未处理为止', async () => {
+  const { lf, store } = await setup({ responses: [async st => {
+    await st.mutate('other', s => { s.longforms.push(...Array.from({ length: 5 }, (_, i) => longform(`o${i}`))) }, { undoable: false })
+    return IDEAS
+  }] })
+  assert.equal((await lf.suggest()).created, 1)
+  assert.equal((await longforms(store)).filter(l => l.status === 'idea').length, 6)
+})
+
+test('I3：改稿失败（正文没变）不占撤销位', async () => {
+  const { lf, store } = await setup({ responses: [new Error('超时')], seed: s => { s.longforms = [longform('l1', { status: 'draft', body: '手改的正文', revision: 2 })] } })
+  const before = store.undo.length
+  const row = await lf.revise('l1', '简短一点')
+  assert.equal(row.body, '手改的正文')
+  assert.equal(row.error, '超时')
+  assert.equal(store.undo.length, before)
+})

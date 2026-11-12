@@ -201,49 +201,72 @@ function fakeLongform(result = { created: 2, error: null }) {
   return { calls, suggest: async opts => { calls.push(opts); if (result instanceof Error) throw result; return result } }
 }
 
-test('长文周建议：只在周一、成稿尝试之后、每周一次；用 undoable:false', async () => {
-  assert.equal(MONDAY.getDay(), 1)
+test('长文周建议：每个 ISO 周里当天成稿尝试之后的第一轮跑一次，不限周一；用 undoable:false', async () => {
   const lf = fakeLongform()
-  // 周三不跑
-  const wed = await setup({ longform: lf })
-  await wed.worker.tick()
-  assert.equal(lf.calls.length, 0)
-  // 周一但今天还没成稿：不跑
-  const early = await setup({ now: MONDAY, longform: lf, composed: false })
+  // 今天还没成稿：不跑
+  const early = await setup({ longform: lf, composed: false })
   early.worker.composer.composeDaily = async () => ({ ok: false })
-  await early.store.mutate('t', s => { s.runs.lastComposeDay = '2026-11-15' }, { undoable: false })
+  await early.store.mutate('t', s => { s.runs.lastComposeDay = '2026-11-10' }, { undoable: false })
   await early.worker.tick()
   assert.equal(lf.calls.length, 0)
-  // 周一且已成稿：跑一次，之后同一周不再跑
-  const mon = await setup({ now: MONDAY, longform: lf })
-  await mon.worker.tick()
-  await mon.worker.tick()
+  // 周三且已成稿：跑一次，之后同一周（包括周日）不再跑
+  const wed = await setup({ longform: lf })
+  await wed.worker.tick()
+  await wed.worker.tick()
   assert.deepEqual(lf.calls, [{ undoable: false }])
-  assert.equal((await mon.store.read()).runs.lastLongformWeek, '2026-W47')
-  assert.equal(mon.store.undo.length, 0)
+  assert.equal((await wed.store.read()).runs.lastLongformWeek, '2026-W46')
+  assert.equal(wed.store.undo.length, 0)
+  wed.clock.t = new Date('2026-11-15T11:05:00+08:00')
+  await wed.store.mutate('t', s => { s.runs.lastComposeDay = '2026-11-15' }, { undoable: false })
+  await wed.worker.tick()
+  assert.equal(lf.calls.length, 1)
   // 下一周的周一再跑
-  mon.clock.t = new Date('2026-11-23T11:05:00+08:00')
-  await mon.store.mutate('t', s => { s.runs.lastComposeDay = '2026-11-23' }, { undoable: false })
-  await mon.worker.tick()
+  wed.clock.t = MONDAY
+  await wed.store.mutate('t', s => { s.runs.lastComposeDay = localDay(MONDAY) }, { undoable: false })
+  await wed.worker.tick()
   assert.equal(lf.calls.length, 2)
-  assert.equal((await mon.store.read()).runs.lastLongformWeek, '2026-W48')
+  assert.equal((await wed.store.read()).runs.lastLongformWeek, '2026-W47')
 })
 
-test('长文周建议：没有素材（返回 error）或抛错，本周都算过，不会整天每分钟重试', async () => {
+test('长文周建议：没有素材不提示；模型失败或抛错各提示一条；本周都算过，不会整天每分钟重试', async () => {
   const none = fakeLongform({ created: 0, error: '还没有足够的内容来建议长文选题' })
   const a = await setup({ now: MONDAY, longform: none })
   await a.worker.tick()
   await a.worker.tick()
   assert.equal(none.calls.length, 1)
-  assert.equal((await a.store.read()).runs.lastLongformWeek, '2026-W47')
+  let s = await a.store.read()
+  assert.equal(s.runs.lastLongformWeek, '2026-W47')
+  assert.ok(!s.runs.notices.some(n => n.text.includes('长文')))
+  const failed = fakeLongform({ created: 0, error: '模型超时' })
+  const f = await setup({ now: MONDAY, longform: failed })
+  await f.worker.tick()
+  await f.worker.tick()
+  assert.equal(failed.calls.length, 1)
+  s = await f.store.read()
+  assert.equal(s.runs.lastLongformWeek, '2026-W47')
+  assert.deepEqual(s.runs.notices.filter(n => n.text.includes('长文')).map(n => n.text), ['长文选题这周没建议成：模型超时'])
+  const busy = fakeLongform({ created: 0, error: '正在想选题，请稍等', busy: true })
+  const c = await setup({ now: MONDAY, longform: busy })
+  await c.worker.tick()
+  assert.ok(!(await c.store.read()).runs.notices.some(n => n.text.includes('长文')))
   const boom = fakeLongform(new Error('长文炸了'))
   const b = await setup({ now: MONDAY, longform: boom })
   await b.worker.tick()
   await b.worker.tick()
   assert.equal(boom.calls.length, 1)
-  const s = await b.store.read()
+  s = await b.store.read()
   assert.equal(s.runs.lastLongformWeek, '2026-W47')
   assert.ok(s.runs.notices.some(n => n.text.includes('长文炸了')))
+})
+
+test('长文这一步出错（连周记都写不了）也不会跳过写交换文件夹', async () => {
+  const { worker, store, ex } = await setup({ longform: fakeLongform() })
+  await store.mutate('seed', s => { s.candidates.push(cand('c_x')) }, { undoable: false })
+  const orig = store.mutate.bind(store)
+  store.mutate = (label, fn, opts) => (label === '长文选题周记' ? Promise.reject(new Error('写不进去')) : orig(label, fn, opts))
+  assert.deepEqual(await worker.tick(), { ran: true })
+  assert.ok((await readdir(join(ex.root, 'drafts'))).some(f => f.includes('c_x')))
+  assert.ok((await store.read()).runs.notices.some(n => n.text.includes('写不进去')))
 })
 
 test('每个新阶段前都续锁：锁被接管时本轮停止，没读到的文件下轮还在', async () => {

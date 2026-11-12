@@ -47,7 +47,8 @@ function LongformEditor({ row, busy, onBusy }) {
     if (!next) { setTitle(row.title); return }
     if (next !== row.title) {
       const data = await dispatchOps([{ op: 'edit_longform', id: row.id, title: next }], { label: t('改了标题') })
-      if (data === null || data?.errors?.length) setTitle(row.title)
+      // 保存失败时恢复原标题；等待期间又改过的，不动
+      if (data === null || data?.errors?.length) setTitle(current => (current.trim() === next ? row.title : current))
     }
   }
   const saveBody = () => {
@@ -160,7 +161,7 @@ export function LongformView() {
             <button type="button" className="md-btn" disabled={suggesting} onClick={suggest}>{suggesting ? t('正在想选题…') : t('建议几个选题')}</button>
             <button type="button" className="md-btn" onClick={() => setAdding(true)}>{t('自己加一个')}</button>
           </header>
-          {!longforms.length ? <Empty title={t('还没有长文')} hint={t('每周一会自动建议几个选题，也可以点「建议几个选题」或自己加一个。')} /> : null}
+          {!longforms.length ? <Empty title={t('还没有长文')} hint={t('每周会自动建议几个选题，也可以点「建议几个选题」或自己加一个。')} /> : null}
           {Object.entries({ idea: '选题', draft: '草稿', done: '完成' }).map(([status, label]) => <section key={status}>
             <h3>{t(label)}（{groups[status].length}）</h3>
             <ul>{groups[status].map(item => <li key={item.id}><button type="button" className={`md-longform-row ${selected === item.id ? 'is-on' : ''}`} aria-pressed={selected === item.id} onClick={() => setSelected(item.id)}><span>{item.title}</span><time>{relativeDay(item.updatedAt)}</time></button></li>)}</ul>

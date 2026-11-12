@@ -218,7 +218,10 @@ export async function draftLongform(id) {
 export async function reviseLongform(id, instruction) {
   try {
     const data = await api('longform/revise', { id, instruction })
-    setDesk({ state: data.state })
+    setDesk({ state: data.state, canUndo: data.canUndo === true })
+    // 模型没改成时正文不变、原因写在稿子上，修改要求留着方便重试
+    if (data.state.longforms?.find(row => row.id === id)?.error != null) return false
+    toast(t('改好了'), { undo: true })
     return true
   } catch (err) {
     report(err)
