@@ -197,7 +197,7 @@ function ProposalsBlock() {
   return (
     <section className="md-panel md-style-block" aria-label={t('规则建议')}>
       <header><h2>{t('规则建议')}</h2></header>
-      <p className="md-muted">{t('这些是从你改稿的习惯里总结出来的，采纳后以后每篇都会遵守。')}</p>
+      <p className="md-muted">{t('这些是从你改稿的习惯里总结出来的，采纳后以后每篇都会遵守。采纳前请读一遍，它会写进以后每一篇的要求里。')}</p>
       <ul className="md-style-rules">{proposals.map(row => <ProposalRow key={row.id} row={row} />)}</ul>
     </section>
   )

@@ -14,17 +14,15 @@ function Chip({ row }) {
   const sent = row.status === 'sent'
   const due = isDue(row)
   return (
-    <div>
-      <span
-        className={`md-cal-chip ${sent ? 'is-sent' : ''} ${due ? 'is-due' : ''}`}
-        draggable={!sent}
-        title={`${fmtTime(calendarDay(row))} ${row.title || row.text}`}
-        onDragStart={(event) => { event.dataTransfer.setData(DRAG_TYPE, row.id); event.dataTransfer.effectAllowed = 'move' }}
-      >
-        <span className="md-cal-chip-text"><time>{fmtTime(calendarDay(row))}</time><span>{row.title || row.text}</span></span>
-        {sent ? <span className="md-inbox-tag md-cal-chip-sent">{t('已发')}</span> : null}
-      </span>
-    </div>
+    <span
+      className={`md-cal-chip ${sent ? 'is-sent' : ''} ${due ? 'is-due' : ''}`}
+      draggable={!sent}
+      title={`${fmtTime(calendarDay(row))} ${row.title || row.text}`}
+      onDragStart={(event) => { event.dataTransfer.setData(DRAG_TYPE, row.id); event.dataTransfer.effectAllowed = 'move' }}
+    >
+      <span className="md-cal-chip-text"><time>{fmtTime(calendarDay(row))}</time><span>{row.title || row.text}</span></span>
+      {sent ? <span className="md-inbox-tag md-cal-chip-sent">{t('已发')}</span> : null}
+    </span>
   )
 }
 

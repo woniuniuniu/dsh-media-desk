@@ -2,7 +2,7 @@ process.env.TZ = 'Asia/Shanghai'
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PLACEHOLDER, linePath, groupLongforms, splitPlaceholder, mineLink, pct, signed, insightLink, recentSent, num1 } from '../client/util.js'
+import { PLACEHOLDER, linePath, groupLongforms, splitPlaceholder, mineLink, pct, signed, insightLink, recentSent, num1, latestFetchedAt } from '../client/util.js'
 
 test('recentSent：空列表、默认最多十条、倒序且不修改输入', () => {
   const now = new Date('2026-11-12T12:00:00Z')
@@ -103,4 +103,11 @@ test('signed：正数带加号、负数和零保留，空或非有限数显示�
 test('insightLink：只重建合法 X 帖子链接，不透传外部地址或查询参数', () => {
   assert.equal(insightLink('https://x.com/a_B9/status/12345?s=20#reply'), 'https://x.com/a_B9/status/12345')
   for (const value of [null, 12, 'javascript:alert(1)', 'https://x.com.evil/a/status/12345', 'https://x.com@evil/a/status/12345', 'https://x.com/a/status/12345/evil', 'https://x.com/a/status/1234', 'https://x.com/a/status/12345\n', 'http://x.com/a/status/12345']) assert.equal(insightLink(value), null)
+})
+
+test('latestFetchedAt：取最晚的读取时间，坏时间和空列表不出错', () => {
+  assert.equal(latestFetchedAt(undefined), null)
+  assert.equal(latestFetchedAt([]), null)
+  assert.equal(latestFetchedAt([{ fetchedAt: 'bad' }, null]), null)
+  assert.equal(latestFetchedAt([{ fetchedAt: '2026-11-12T01:00:00.000Z' }, { fetchedAt: '2026-11-12T03:00:00.000Z' }, { fetchedAt: 'x' }, { fetchedAt: '2026-11-12T02:00:00.000Z' }]), '2026-11-12T03:00:00.000Z')
 })

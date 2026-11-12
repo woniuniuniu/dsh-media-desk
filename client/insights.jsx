@@ -1,7 +1,7 @@
 // 复盘：统计值均来自 Host，只负责展示。
 import React from 'react'
 import { fetchInsights, toast, useDesk } from './desk.js'
-import { compact, insightLink, linePath, num1, pct, signed, t } from './util.js'
+import { compact, insightLink, latestFetchedAt, linePath, num1, pct, signed, t } from './util.js'
 import { Empty } from './ui.jsx'
 
 function TopPost({ row }) {
@@ -15,21 +15,25 @@ function TopPost({ row }) {
 }
 
 export function InsightsView() {
-  const mineCount = useDesk(s => s.state.mine?.length ?? 0)
+  const mine = useDesk(s => s.state.mine)
+  const mineCount = mine?.length ?? 0
+  // 条数不变但互动数更新了（读取时间变晚）也要重算，页面开着时才会跟着刷新
+  const latest = React.useMemo(() => latestFetchedAt(mine), [mine])
   const [data, setData] = React.useState(null)
   const [loading, setLoading] = React.useState(true)
+  const shown = React.useRef(false)
   React.useEffect(() => {
     if (!mineCount) return
     let active = true
     setLoading(true)
     fetchInsights().then(result => {
       if (!active) return
-      if (result) setData(result)
-      else toast(t('复盘数据刷新失败'), { error: true })
+      if (result) { setData(result); shown.current = true }
+      else toast(shown.current ? t('复盘数据刷新失败') : t('复盘数据加载失败'), { error: true })
       setLoading(false)
     })
     return () => { active = false }
-  }, [mineCount])
+  }, [mineCount, latest])
   if (!mineCount) return <div className="md-page"><Empty title={t('还没有复盘数据')} hint={t('这里的数据来自交换文件夹的 mine/ 目录，接上 Grok Bot 后才会有。')} /></div>
   if (loading && !data) return <div className="md-page"><p className="md-shimmer" role="status">{t('正在算…')}</p></div>
   if (!data) return <div className="md-page"><Empty title={t('复盘数据加载失败')} /></div>
@@ -63,7 +67,7 @@ export function InsightsView() {
         </section>
         <section className="md-panel md-insights-section">
           <h3>{t('候选稿去向（30 天）')}</h3>
-          <p>{t('出稿 {n}；通过 {a}；已发 {s}；丢弃 {d}（不感兴趣 {x}、不像我 {y}、过时了 {z}、没说原因 {w}）；过期 {e}', { n: funnel.drafted, a: funnel.approved, s: funnel.sent, d: funnel.discarded, x: funnel.discardReasons.not_interested, y: funnel.discardReasons.not_me, z: funnel.discardReasons.stale, w: funnel.discardReasons.none, e: funnel.expired })}</p>
+          <p>{t('出稿 {n}；待发 {a}；已发 {s}；丢弃 {d}（不感兴趣 {x}、不像我 {y}、过时了 {z}、没说原因 {w}）；过期 {e}', { n: funnel.drafted, a: funnel.approved, s: funnel.sent, d: funnel.discarded, x: funnel.discardReasons.not_interested, y: funnel.discardReasons.not_me, z: funnel.discardReasons.stale, w: funnel.discardReasons.none, e: funnel.expired })}</p>
         </section>
         <section className="md-panel md-insights-section">
           <h3>{t('修改习惯')}</h3>

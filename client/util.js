@@ -277,3 +277,14 @@ export function insightLink(url) {
 export function signed(n) {
   return Number.isFinite(n) ? `${n > 0 ? '+' : ''}${n}` : '—'
 }
+
+/** 自己发出的内容里最晚的一次读取时间（原样返回那个字符串）；没有有效时间时为 null。复盘页据此判断要不要重算。 */
+export function latestFetchedAt(rows) {
+  let best = null
+  let bestT = -Infinity
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const t = Date.parse(row?.fetchedAt)
+    if (Number.isFinite(t) && t > bestT) { bestT = t; best = row.fetchedAt }
+  }
+  return best
+}
