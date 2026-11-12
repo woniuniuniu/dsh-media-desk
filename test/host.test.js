@@ -331,13 +331,13 @@ test('同步默认关闭，手动同步被拒绝，状态返回默认间隔', as
   } finally { await h.close() }
 })
 
-test('M4/M5: manual sync route uses worker and returns busy 409 without recording failure', async () => {
+for (const error of ['上一轮同步还没结束', '后台正在忙，稍后再试']) test(`Final M5: manual sync returns 409 for ${error} without recording failure`, async () => {
   const root = await mkdtemp(join(tmpdir(), 'host-sync-')), store = new Store(root), settings = new Settings(root)
   await settings.update({ sync: { enabled: true } })
   await store.mutate('seed', s => { s.runs.lastSyncError = 'previous' }, { undoable: false })
   const before = structuredClone((await store.read()).runs)
   let calls = 0
-  const busy = { ok: false, pulled: 0, pushed: 0, error: '上一轮同步还没结束' }
+  const busy = { ok: false, pulled: 0, pushed: 0, error }
   const desk = { settings, worker: { syncNow: async () => { calls++; return busy } } }
   const handler = createHandler({ ctx: { get: () => ({ requestRejection: () => undefined }) }, store, desk })
   const req = Object.assign(Readable.from([]), { method: 'POST', url: '/x-desk/sync/run', headers: {} })
@@ -347,4 +347,19 @@ test('M4/M5: manual sync route uses worker and returns busy 409 without recordin
   assert.equal(res.statusCode, 409)
   assert.deepEqual(res.body, busy)
   assert.deepEqual((await store.read()).runs, before)
+})
+
+test('Final I3: disabled status never calls injected Sync and preserves saved metadata', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'host-off-')), store = new Store(root), settings = new Settings(root)
+  await settings.update({ sync: { intervalSec: 300 } })
+  await store.mutate('seed', s => { s.runs.lastSyncAt = '2026-11-12T00:00:00Z'; s.runs.lastSyncError = 'previous' }, { undoable: false })
+  let calls = 0
+  const desk = { settings, sync: { dir: join(root, 'exchange'), status: async () => { calls++; throw new Error('must not call git') } } }
+  const handler = createHandler({ ctx: { get: () => ({ requestRejection: () => undefined }) }, store, desk })
+  const req = Object.assign(Readable.from([]), { method: 'GET', url: '/x-desk/sync/status', headers: {} })
+  const res = { setHeader() {}, end(body) { this.body = JSON.parse(body) } }
+  await handler(req, res)
+  assert.equal(calls, 0)
+  assert.equal(res.statusCode, 200)
+  assert.deepEqual(res.body, { ok: false, reason: null, branch: null, ahead: 0, behind: 0, enabled: false, intervalSec: 300, lastSyncAt: '2026-11-12T00:00:00Z', lastSyncError: 'previous' })
 })

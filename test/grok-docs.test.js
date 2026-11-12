@@ -182,3 +182,19 @@ test('搭建说明覆盖同步固定原因、动态原因和模板字符串错�
     assert.ok(reasons.includes(reason), reason)
   }
 })
+
+test('Final I1/M8: recovery includes hidden seen files, Finder merge and quoted paths', async () => {
+  const text = await readDoc('README.md')
+  const recovery = text.split('4. 将备份')[1].split('\n5.')[0]
+  for (const name of ['posts', 'decisions', 'mine', 'replies']) assert.ok(recovery.includes(`.seen-${name}.json`))
+  assert.match(recovery, /Command\+Shift\+\./)
+  assert.match(recovery, /Option.*合并/)
+  assert.match(recovery, /只复制里面的文件/)
+  assert.match(text, /brew install gh/)
+  assert.match(text, /https:\/\/cli\.github\.com\//)
+  for (const block of text.matchAll(/```bash\n([\s\S]*?)```/g)) {
+    assert.doesNotMatch(block[1].replaceAll('"<你的交换文件夹>"', ''), /<你的交换文件夹>/)
+  }
+  assert.doesNotMatch(text, /可能提交仓库里本就已暂存/)
+  assert.match(text, /不会夹带其他已暂存文件/)
+})

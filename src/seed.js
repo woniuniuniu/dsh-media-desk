@@ -9,6 +9,7 @@ export function emptyState() {
     posts: [],
     notes: [],
     candidates: [],
+    appliedDecisions: [],
     voice: { core: null, types: defaultTypes() },
     rules: [],
     mine: [],

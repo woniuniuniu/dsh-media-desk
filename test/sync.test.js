@@ -42,8 +42,8 @@ async function fixture() {
     await git(join(base, name), 'config', 'user.email', 'test@localhost')
   }
   const a = join(base, 'a'), b = join(base, 'b')
-  await put(b, 'README', 'fixture')
-  await git(b, 'add', 'README')
+  await put(b, 'README.md', 'fixture')
+  await git(b, 'add', 'README.md')
   await git(b, 'commit', '-m', 'initial')
   await git(b, 'push', '-u', 'origin', 'main')
   await git(a, 'pull')
@@ -72,7 +72,7 @@ integration('1. Round trip: drafts outbound, posts inbound and pulled count', as
   assert.equal(await readFile(join(b, 'drafts/x.json'), 'utf8'), '{"draft":true}')
   await publish(b, 'posts/y.json')
   const result = await sync.syncOnce()
-  assert.deepEqual(result, { ok: true, pulled: 1, pushed: 0, error: null })
+  assert.deepEqual(result, { ok: true, pulled: 1, pushed: 0, voiceChanged: false, error: null })
   assert.equal(await readFile(join(a, 'posts/y.json'), 'utf8'), '{}')
 })
 integration('2. Seen lists stay local and initial gitignore has exactly two lines', async () => {
@@ -153,7 +153,7 @@ integration('5. Conflicting voice keeps local content and other remote files arr
 integration('6. Concurrent sync returns immediately without queuing', async () => {
   const { sync } = await fixture()
   const first = sync.syncOnce()
-  assert.deepEqual(await sync.syncOnce(), { ok: false, pulled: 0, pushed: 0, error: '上一轮同步还没结束' })
+  assert.deepEqual(await sync.syncOnce(), { ok: false, pulled: 0, pushed: 0, voiceChanged: false, error: '上一轮同步还没结束' })
   assert.equal((await first).ok, true)
   assert.equal((await sync.syncOnce()).ok, true)
 })
@@ -172,7 +172,7 @@ integration('7. Foreign root binary and nested posts sync but are never ingested
 const allowed = ['rev-parse', 'status', 'add', 'commit', 'fetch', 'merge', 'push', 'remote', 'diff']
 const globalArgs = ['-c', 'user.name=x-desk', '-c', 'user.email=x-desk@localhost', '-c', 'core.quotepath=false',
   '-c', 'core.symlinks=false', '-c', 'push.default=upstream',
-  '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false']
+  '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', '-c', 'protocol.ext.allow=never']
 test('8. Wrapper allow-list, fixed options, bounded failures and merge abort', async t => {
   for (const fail of [null, 'merge', 'push', 'fetch', 'add', 'commit']) await t.test(fail ?? 'success', async () => {
     const dir = await mkdtemp(join(root, 'recording-'))
@@ -206,7 +206,7 @@ test('8. Wrapper allow-list, fixed options, bounded failures and merge abort', a
       if (fail === 'merge') assert.deepEqual(calls.at(-1), ['merge', '--abort'])
       else assert.equal(calls.at(-1)[0], fail)
     } else {
-      assert.deepEqual(result, { ok: true, pulled: 2, pushed: 2, error: null })
+      assert.deepEqual(result, { ok: true, pulled: 2, pushed: 2, voiceChanged: true, error: null })
       assert.ok(calls.some(args => args[0] === 'commit' && args[2] === 'x-desk sync 1970-01-01T00:00:00.000Z'))
     }
   })
@@ -285,8 +285,8 @@ integration('10. Host real HTTP routes: disabled 400, fixture main status, run a
   })
   assert.deepEqual(await call('POST', 'sync/run'), { code: 400, body: { error: '同步还没打开' } })
   const status = await call('GET', 'sync/status')
-  assert.equal(status.body.ok, true)
-  assert.equal(status.body.branch, 'main')
+  assert.equal(status.body.ok, false)
+  assert.equal(status.body.branch, null)
   assert.deepEqual([status.body.enabled, status.body.intervalSec, status.body.lastSyncAt, status.body.lastSyncError], [false, 120, null, null])
   await settings.update({ sync: { enabled: true } })
   assert.equal((await call('POST', 'sync/run')).body.ok, true)
@@ -331,7 +331,7 @@ integration('Host handler without sockets: current root, status and manual sync 
   }
   assert.deepEqual(await call('POST', 'sync/run'), { code: 400, body: { error: '同步还没打开' } })
   assert.deepEqual((await call('GET', 'sync/status')).body, {
-    ok: true, reason: null, branch: 'main', ahead: 0, behind: 0,
+    ok: false, reason: null, branch: null, ahead: 0, behind: 0,
     enabled: false, intervalSec: 120, lastSyncAt: null, lastSyncError: null,
   })
   await settings.update({ sync: { enabled: true } })
@@ -421,8 +421,8 @@ integration('I3: matching local push config cannot publish another branch', asyn
   await git(a, 'switch', '-c', 'other')
   await git(a, 'push', '-u', 'origin', 'other')
   const before = await git(remote, 'rev-parse', 'refs/heads/other')
-  await put(a, 'README', 'other branch change')
-  await git(a, 'add', 'README')
+  await put(a, 'README.md', 'other branch change')
+  await git(a, 'add', 'README.md')
   await git(a, 'commit', '-m', 'private branch change')
   await git(a, 'switch', 'main')
   await git(a, 'config', 'push.default', 'matching')
@@ -531,6 +531,7 @@ test('M3/I5: git failure text is redacted before truncation with stdout and code
     const sync = new Sync({ dir, projectDir, run: async argv => {
       const args = commandArgs(argv)
       if (args[0] === 'status') return failure
+      if (args[0] === 'diff') return { code: 0, stdout: '', stderr: '' }
       return { code: 0, stderr: '', stdout: args[1] === '--show-toplevel' ? dir : args[1] === '--absolute-git-dir' ? `${join(dir, '.git')}\n.git` : 'main' }
     } })
     assert.equal((await sync.status()).reason, expected)
@@ -567,7 +568,7 @@ test('M5: manual sync and tick exclude each other, acquire lock and recover afte
   worker.lastSyncMs = Date.now()
   const tick = worker.tick()
   await atExport
-  const busy = { ok: false, pulled: 0, pushed: 0, error: '上一轮同步还没结束' }
+  const busy = { ok: false, pulled: 0, pushed: 0, error: '后台正在忙，稍后再试' }
   try { assert.deepEqual(await worker.syncNow(), busy); assert.equal(calls, 0) } finally { unlock(); await tick }
   let releaseSync, syncEntered
   const waiting = new Promise(resolve => { syncEntered = resolve })
@@ -576,7 +577,7 @@ test('M5: manual sync and tick exclude each other, acquire lock and recover afte
   await waiting
   assert.equal(locks, priorLocks + 1)
   assert.deepEqual(await worker.tick(), { ran: false })
-  assert.deepEqual(await worker.syncNow(), busy)
+  assert.deepEqual(await worker.syncNow(), { ...busy, error: '上一轮同步还没结束' })
   releaseSync({ ok: true, pulled: 0, pushed: 0, error: null })
   assert.equal((await manual).ok, true)
   permit = false
@@ -633,4 +634,159 @@ integration('I6: remote gitignore change after a common base is refused', async 
   assert.equal(result.error, '远端改动了不该改的文件（.gitignore），已停止同步')
   assert.equal(await readFile(join(a, '.gitignore'), 'utf8'), '.seen-*.json\n*.tmp\n')
   assert.ok(!calls.some(args => ['merge', 'push'].includes(args[0])))
+})
+
+integration('Final I2: code repo with staged source is refused before any mutation', async () => {
+  const { a, sync } = await fixture()
+  await put(a, 'src/app.js', 'export const value = 1')
+  await git(a, 'add', 'src/app.js')
+  await git(a, 'commit', '-m', 'code')
+  await put(a, 'src/app.js', 'export const value = 2')
+  await git(a, 'add', 'src/app.js')
+  const before = await git(a, 'rev-parse', 'HEAD')
+  const calls = [], run = sync.run
+  sync.run = (argv, options) => { calls.push(commandArgs(argv)); return run(argv, options) }
+  const reason = '这个仓库里还有交换文件以外的内容，不能当作交换文件夹'
+  assert.equal((await sync.status()).reason, reason)
+  assert.equal((await sync.syncOnce()).error, reason)
+  assert.ok(calls.every(args => ['rev-parse', 'remote', 'status', 'diff'].includes(args[0])))
+  assert.equal(await git(a, 'rev-parse', 'HEAD'), before)
+  assert.equal(await git(a, 'diff', '--cached', '--name-only'), 'src/app.js')
+})
+
+integration('Final I2: staged unrelated file is never committed and empty owned paths do not commit', async () => {
+  const { a, remote, sync } = await fixture()
+  await put(a, 'src/app.js', 'local')
+  await git(a, 'add', 'src/app.js')
+  await put(a, 'drafts/own.json')
+  const calls = [], run = sync.run
+  sync.run = (argv, options) => { calls.push(commandArgs(argv)); return run(argv, options) }
+  assert.equal((await sync.syncOnce()).ok, true)
+  assert.equal(await git(remote, 'ls-tree', '-r', '--name-only', 'main', '--', 'src/app.js'), '')
+  assert.equal(await git(a, 'diff', '--cached', '--name-only'), 'src/app.js')
+  const paths = calls.find(args => args[0] === 'add').slice(3)
+  assert.deepEqual(calls.find(args => args[0] === 'commit').slice(3), ['--', ...paths])
+  assert.ok(calls.some(args => JSON.stringify(args) === JSON.stringify(['diff', '--cached', '--quiet', '--', ...paths])))
+  const before = await git(a, 'rev-parse', 'HEAD')
+  assert.equal((await sync.syncOnce()).ok, true)
+  assert.equal(await git(a, 'rev-parse', 'HEAD'), before)
+  await rename(join(a, 'drafts'), join(dirname(a), 'drafts-backup'))
+  calls.length = 0
+  assert.equal((await sync.syncOnce()).ok, true)
+  assert.ok(!calls.some(args => ['add', 'commit'].includes(args[0]) || args[1] === '--cached'))
+})
+
+test('Final I4: child PATH appends defaults, deduplicates and forwards only set proxies', async t => {
+  const keys = ['PATH', 'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NO_PROXY', 'https_proxy', 'http_proxy', 'all_proxy', 'no_proxy', 'GIT_DIR']
+  for (const key of keys) {
+    const old = process.env[key]
+    t.after(() => { if (old === undefined) delete process.env[key]; else process.env[key] = old })
+    delete process.env[key]
+  }
+  const dir = await mkdtemp(join(root, 'path-')), projectDir = await mkdtemp(join(root, 'project-'))
+  let child
+  const sync = new Sync({ dir, projectDir, run: async (argv, options) => {
+    child = options.env
+    return { code: 128, stdout: '', stderr: '' }
+  } })
+  for (const path of [undefined, '', '/custom:/usr/bin::/custom:/bin:/opt/homebrew/bin']) {
+    if (path === undefined) delete process.env.PATH; else process.env.PATH = path
+    await sync.status()
+    assert.equal(child.PATH, path ? '/custom:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin' : '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin')
+    for (const key of keys.slice(1, -1)) assert.ok(!(key in child))
+  }
+  for (const key of keys.slice(1, -1)) process.env[key] = key.includes('PROXY') ? 'http://proxy.invalid:8080' : 'localhost'
+  process.env.GIT_DIR = '/do-not-inherit'
+  await sync.status()
+  for (const key of keys.slice(1, -1)) assert.equal(child[key], process.env[key])
+  assert.ok(!('GIT_DIR' in child))
+  process.env.HTTPS_PROXY = ''
+  await sync.status()
+  assert.equal(child.HTTPS_PROXY, '')
+})
+
+test('Final M1/M4: killed git reports timeout and embedded at-sign password is redacted', async () => {
+  const dir = await mkdtemp(join(root, 'errors-')), projectDir = await mkdtemp(join(root, 'project-'))
+  await mkdir(join(dir, 'posts'))
+  for (const [failure, expected] of [
+    [{ code: -1, killed: true }, '超过 60 秒没有完成'],
+    [{ code: -1, signal: 'SIGTERM', stderr: 'killed' }, '超过 60 秒没有完成'],
+    [{ code: 1, stderr: 'https://user:p@ss@host/x' }, 'https://***@host/x'],
+  ]) {
+    const sync = new Sync({ dir, projectDir, run: async () => failure })
+    sync.status = async () => ({ ok: true })
+    const run = sync.run
+    sync.run = (argv, options) => commandArgs(argv)[0] === 'status' ? { code: 0, stdout: '?? posts/x.json' } : run(argv, options)
+    assert.equal((await sync.syncOnce()).error, `暂存失败：${expected}`)
+  }
+})
+
+integration('Final M2: local mine symlink is refused before add or commit', async () => {
+  const { a, sync } = await fixture()
+  const target = await mkdtemp(join(root, 'outside-'))
+  await symlink(target, join(a, 'mine'))
+  const calls = [], run = sync.run
+  sync.run = (argv, options) => { calls.push(commandArgs(argv)); return run(argv, options) }
+  assert.equal((await sync.syncOnce()).error, '交换文件夹里的 mine 不是普通文件夹，已停止同步，请检查仓库')
+  assert.ok(!calls.some(args => ['add', 'commit', 'fetch', 'merge', 'push'].includes(args[0])))
+  await assert.rejects(readFile(join(a, '.gitignore')), { code: 'ENOENT' })
+})
+
+integration('Final M3: nested protected files are refused before merge', async t => {
+  for (const file of ['drafts/.gitignore', 'posts/sub/.gitattributes', 'mine/sub/.seen-decisions.json']) await t.test(file, async () => {
+    const { a, b, sync } = await fixture()
+    assert.equal((await sync.syncOnce()).ok, true)
+    await git(b, 'pull')
+    await put(b, file, '# protected')
+    await git(b, 'add', '-f', '--', file)
+    await git(b, 'commit', '-m', 'nested protected')
+    await git(b, 'push')
+    const before = await git(a, 'rev-parse', 'HEAD')
+    assert.equal((await sync.syncOnce()).error, `远端改动了不该改的文件（${file}），已停止同步`)
+    assert.equal(await git(a, 'rev-parse', 'HEAD'), before)
+  })
+})
+
+integration('Final M6: pulled voice is rewritten from state on the same tick even if push fails', async () => {
+  const { a, b, sync } = await fixture()
+  const base = await mkdtemp(join(root, 'voice-worker-')), store = new Store(base), settings = new Settings(base)
+  const ex = new Exchange(a)
+  await store.mutate('seed', s => { s.runs.lastComposeDay = localDay(new Date()) }, { undoable: false })
+  const worker = new Worker({ store, settings, exchangeFor: () => ex, composer: {}, lock: { acquire: async () => true }, sync })
+  await worker.tick()
+  const original = await readFile(join(a, 'voice/SKILL.md'), 'utf8')
+  await settings.update({ sync: { enabled: true } })
+  const firstSync = await sync.syncOnce()
+  assert.equal(firstSync.ok, true, firstSync.error)
+  await git(b, 'pull')
+  await publish(b, 'voice/SKILL.md', 'remote replacement')
+  await worker.tick()
+  assert.equal(await readFile(join(a, 'voice/SKILL.md'), 'utf8'), original)
+  await publish(b, 'voice/SKILL.md', 'another replacement')
+  const run = sync.run
+  sync.run = (argv, options) => commandArgs(argv)[0] === 'push' ? { code: 1, stderr: 'offline' } : run(argv, options)
+  worker.lastSyncMs = 0
+  await worker.tick()
+  assert.equal(await readFile(join(a, 'voice/SKILL.md'), 'utf8'), original)
+  assert.match((await store.read()).runs.lastSyncError, /推送失败/)
+})
+
+test('Final I2: unborn HEAD skips tree check and tree-check errors refuse sync', async () => {
+  const dir = await mkdtemp(join(root, 'head-')), projectDir = await mkdtemp(join(root, 'project-'))
+  await mkdir(join(dir, '.git'))
+  for (const unborn of [true, false]) {
+    const calls = []
+    const sync = new Sync({ dir, projectDir, run: async argv => {
+      const args = commandArgs(argv)
+      calls.push(args)
+      if (args[1] === '--verify') return { code: unborn ? 128 : 0, stdout: 'head' }
+      if (args[0] === 'diff') return { code: 128, stderr: 'cannot read tree' }
+      const stdout = args[1] === '--show-toplevel' ? dir : args[1] === '--absolute-git-dir' ? `${join(dir, '.git')}\n.git` : args[0] === 'status' ? '' : 'main'
+      return { code: 0, stdout, stderr: '' }
+    } })
+    const status = await sync.status()
+    assert.equal(status.ok, unborn)
+    if (unborn) assert.ok(!calls.some(args => args[0] === 'diff'))
+    else assert.equal(status.reason, 'cannot read tree')
+  }
 })

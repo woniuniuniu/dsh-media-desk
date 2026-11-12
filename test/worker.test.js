@@ -383,3 +383,54 @@ test('停止之后旧实例不再写任何东西，进行中的这一轮在下�
   assert.deepEqual(await readdir(join(fresh.ex.root, 'drafts')), [])
   assert.ok(!(await fresh.store.read()).runs.notices.some(n => n.text.includes('接管')))
 })
+
+for (const action of ['approve', 'discard', 'sent', 'revise', 'view', 'missing']) test(`Final I1: ${action} replay after clearing seen leaves state and model untouched`, async () => {
+  const { worker, store, ex } = await setup({ samples: false })
+  await store.mutate('seed', s => {
+    s.candidates.push(candidate('c_real1', action === 'sent' ? { status: 'approved' } : {}))
+    s.runs.lastComposeDay = TODAY
+  }, { undoable: false })
+  let calls = 0
+  const revise = worker.composer.revise.bind(worker.composer)
+  worker.composer.revise = (...args) => { calls++; return revise(...args) }
+  await decisionFile(ex, 'replay.json', { candidateId: action === 'missing' ? 'c_missing' : 'c_real1', action: action === 'missing' ? 'approve' : action, text: '修改要求' })
+  await worker.tick()
+  assert.equal(calls, ['revise', 'view'].includes(action) ? 1 : 0)
+  if (['revise', 'view'].includes(action)) await store.mutate('approve', s => {
+    s.candidates[0].status = 'approved'
+    s.candidates[0].scheduledAt = '2026-11-12T01:00:00.000Z'
+  }, { undoable: false })
+  const before = structuredClone(await store.read())
+  assert.equal(before.appliedDecisions.length, 1)
+  await writeFile(join(ex.root, '.seen-decisions.json'), '[]')
+  worker.exchangeFor = () => new Exchange(ex.root)
+  await worker.tick()
+  assert.deepEqual(await store.read(), before)
+  assert.equal(calls, ['revise', 'view'].includes(action) ? 1 : 0)
+})
+
+test('Final I1: decision keys prune at 60 days and retain the newest 5000 in time order', async () => {
+  const { worker, store } = await setup({ samples: false })
+  const key = ms => `c_real1|view|${new Date(ms).toISOString()}`
+  const boundary = NOW.getTime() - 60 * 86400e3
+  await store.mutate('seed', s => {
+    s.runs.lastComposeDay = TODAY
+    s.appliedDecisions = [key(boundary - 1), key(boundary)]
+  }, { undoable: false })
+  await worker.tick()
+  assert.deepEqual((await store.read()).appliedDecisions, [key(boundary)])
+  const keys = Array.from({ length: 5001 }, (_, i) => key(NOW.getTime() - i * 1000))
+  await store.mutate('seed', s => { s.appliedDecisions = keys }, { undoable: false })
+  await worker.tick()
+  assert.deepEqual((await store.read()).appliedDecisions, keys.slice(0, 5000).reverse())
+})
+
+test('Final M5: another host holding the real lock returns background busy without sync or state changes', async () => {
+  const { worker, store, root, clock } = await setup({ samples: false })
+  const before = structuredClone(await store.read())
+  const other = new Lock(join(root, 'worker.lock'), { now: () => clock.t.getTime(), pid: 424242 })
+  assert.equal(await other.acquire(), true)
+  worker.sync = { syncOnce: () => { assert.fail('must not sync without lock') } }
+  assert.deepEqual(await worker.syncNow(), { ok: false, pulled: 0, pushed: 0, error: '后台正在忙，稍后再试' })
+  assert.deepEqual(await store.read(), before)
+})

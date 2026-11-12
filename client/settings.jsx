@@ -24,12 +24,14 @@ export function SettingsDialog() {
   const [sample, setSample] = React.useState(null)
   const [advanced, setAdvanced] = React.useState(false)
   const [syncStatus, setSyncStatus] = React.useState(null)
+  const [loaded, setLoaded] = React.useState(false)
   const [syncing, setSyncing] = React.useState(false)
   React.useEffect(() => {
     if (!open) return
     let active = true
     setSyncStatus(null)
-    fetchSyncStatus().then(status => { if (active) setSyncStatus(status) })
+    setLoaded(false)
+    fetchSyncStatus().then(status => { if (active) { setSyncStatus(status); setLoaded(true) } })
     return () => { active = false }
   }, [open])
   React.useEffect(() => {
@@ -53,7 +55,9 @@ export function SettingsDialog() {
     image: { source: form.source, baseUrl: form.baseUrl, model: form.model, apiKey: form.apiKey, size: form.size, quality: form.quality, toolSize: form.toolSize, toolQuality: form.toolQuality, extra: form.extra },
   })
   const activePreset = PRESETS.find(p => p.baseUrl && p.baseUrl === form.baseUrl)?.id ?? (form.baseUrl ? 'custom' : null)
-  const sync = syncLine(syncStatus && { ...syncStatus, enabled: form.sync.enabled }, new Date())
+  const pending = form.sync.enabled !== (settings.sync?.enabled ?? false)
+  const saveFirst = pending || !settings.sync?.enabled
+  const sync = syncLine(syncStatus, new Date(), { loaded, pending })
   return (
     <Dialog title={t('设置')} onClose={close} width={520}>
       <form className="md-form" onSubmit={async (event) => {
@@ -168,11 +172,11 @@ export function SettingsDialog() {
             <span>{t('同步间隔（秒）')}</span>
             <input type="number" min={60} max={3600} step={60} required value={form.sync.intervalSec} onChange={e => set('sync', { ...form.sync, intervalSec: e.target.value })} />
           </label>
-          <div className={`md-sync-status is-${sync.tone}`} role="status">
+          {sync.text ? <div className={`md-sync-status is-${sync.tone}`} role="status">
             <p>{sync.text}</p>
             {sync.tone === 'warn' && !syncStatus.ok ? <p>{syncAdvice(syncStatus.reason)}</p> : null}
-          </div>
-          <button type="button" className="md-btn md-sync-run" disabled={syncing || !settings.sync?.enabled} onClick={async () => {
+          </div> : null}
+          <button type="button" className="md-btn md-sync-run" title={saveFirst ? t('先保存设置') : undefined} disabled={syncing || saveFirst} onClick={async () => {
             setSyncing(true)
             try {
               const result = await runSyncNow()
@@ -183,6 +187,7 @@ export function SettingsDialog() {
               setSyncing(false)
             }
           }}>{syncing ? t('正在同步…') : t('现在同步一次')}</button>
+          {saveFirst ? <small>{t('先保存设置')}</small> : null}
         </fieldset>
         {sample ? <img className="md-test-sample" src={sample} alt={t('测试图')} /> : null}
         <div className="md-form-foot">

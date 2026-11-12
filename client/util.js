@@ -25,7 +25,9 @@ export function fmtTime(iso) {
 }
 
 // now 保留为调用参数；这里只显示上次同步的本地时刻，不计算相对时间。
-export function syncLine(status, now) {
+export function syncLine(status, now, { loaded = true, pending = false } = {}) {
+  if (pending) return { tone: 'off', text: '保存后生效' }
+  if (!loaded) return { tone: 'off', text: '' }
   if (!status) return { tone: 'off', text: '读不到同步状态' }
   if (!status.enabled) return { tone: 'off', text: '同步没有打开' }
   if (!status.ok) return { tone: 'warn', text: status.reason }
@@ -35,13 +37,14 @@ export function syncLine(status, now) {
 
 export function syncAdvice(reason) {
   switch (reason) {
-    case '交换文件夹还不存在': return '请先创建交换文件夹，并在设置里填写它的完整路径。'
+    case '交换文件夹还不存在': return '先打开一次工作台，等它创建交换文件夹（设置里能看到路径）'
     case '交换文件夹在代码仓库里面，不能同步': return '请把交换文件夹放到代码仓库外，并在设置里更新路径。'
     case '没有安装 git': return '请先安装 git，再重新打开设置检查同步状态。'
     case '交换文件夹还不是一个 git 仓库': return '交换文件夹还不是一个 git 仓库。请按 docs/grok-bot/README.md 的第 2 步操作。'
     case '交换文件夹不是一个独立的 git 仓库': return '请使用独立克隆的交换仓库，把交换文件夹路径指向仓库根目录。'
     case '这个仓库没有配置远端': return '请为交换仓库配置对应的私有远端仓库，按 docs/grok-bot/README.md 的搭建步骤操作。'
     case '当前分支没有上游分支': return '请为交换仓库的当前分支设置上游分支，按 docs/grok-bot/README.md 的搭建步骤操作。'
+    case '这个仓库里还有交换文件以外的内容，不能当作交换文件夹': return '请使用只存放交换文件的独立仓库，并在设置里更新路径。'
     default: return '请按 docs/grok-bot/README.md 的搭建步骤检查'
   }
 }

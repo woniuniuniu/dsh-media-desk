@@ -64,3 +64,9 @@ test('README 的回复草稿示例能被 parseReplyDraft 读入', async () => {
   assert.ok(list.length >= 1)
   for (const raw of list) assert.ok(parseReplyDraft(raw), JSON.stringify(raw))
 })
+
+test('Final I2: README states commits exclude unrelated staged files', async () => {
+  const text = await readFile(new URL('../README.md', import.meta.url), 'utf8')
+  assert.match(text, /不会夹带其他已暂存文件/)
+  assert.doesNotMatch(text, /已有暂存改动也可能随同步一起提交/)
+})

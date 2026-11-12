@@ -134,7 +134,9 @@ async function route({ ctx, store, desk, callText }, req, res) {
     if (path === 'sync/status') {
       const settings = await desk.settings.read()
       const { runs } = await store.read()
-      return json(res, 200, { ...await syncFor(desk, settings, store).status(), ...settings.sync, lastSyncAt: runs.lastSyncAt, lastSyncError: runs.lastSyncError })
+      const status = settings.sync.enabled ? await syncFor(desk, settings, store).status()
+        : { ok: false, reason: null, branch: null, ahead: 0, behind: 0 }
+      return json(res, 200, { ...status, ...settings.sync, lastSyncAt: runs.lastSyncAt, lastSyncError: runs.lastSyncError })
     }
     if (path === 'insights') return json(res, 200, computeInsights(await store.read(), new Date(), { ownHandle: (await desk.settings.read()).ownHandle }))
     if (path === 'settings') return json(res, 200, publicSettings(await desk.settings.read(), Boolean(imageTool(ctx))))
@@ -166,7 +168,7 @@ async function route({ ctx, store, desk, callText }, req, res) {
       const settings = await desk.settings.read()
       if (!settings.sync.enabled) return json(res, 400, { error: '同步还没打开' })
       const result = await desk.worker.syncNow()
-      if (result.error === '上一轮同步还没结束') return json(res, 409, result)
+      if (['上一轮同步还没结束', '后台正在忙，稍后再试'].includes(result.error)) return json(res, 409, result)
       return json(res, 200, { ...result, status: await syncFor(desk, settings, store).status() })
     }
     case 'ops': {

@@ -71,6 +71,7 @@ export class Worker {
     this.lastAttemptAt = null
     this.voiceMemo = null
     this.inflight = null
+    this.manualSyncing = false
     // 停止后置为 true；热重载留下的旧实例在每一步之前看到它就不再写
     this.stopped = false
     // 上一轮压着没收的条数（按目录）：条数没变就不再提示
@@ -89,12 +90,13 @@ export class Worker {
   }
 
   syncNow() {
-    const busy = { ok: false, pulled: 0, pushed: 0, error: '上一轮同步还没结束' }
-    if (this.stopped || this.inflight) return Promise.resolve(busy)
+    const busy = { ok: false, pulled: 0, pushed: 0, error: '后台正在忙，稍后再试' }
+    if (this.stopped || this.inflight) return Promise.resolve(this.manualSyncing ? { ...busy, error: '上一轮同步还没结束' } : busy)
+    this.manualSyncing = true
     this.inflight = (async () => {
       if (!(await this.lock.acquire()) || this.stopped) return busy
       return this.#syncOnce(this.now())
-    })().finally(() => { this.inflight = null })
+    })().finally(() => { this.inflight = null; this.manualSyncing = false })
     return this.inflight
   }
 
@@ -150,11 +152,19 @@ export class Worker {
       const cutoff = now.getTime() - KEEP_POSTS_MS
       s.posts = s.posts.filter(p => Date.parse(p.postedAt) >= cutoff)
 
+      const known = new Set(s.appliedDecisions)
       for (const decision of decisions.items) {
+        const key = `${decision.candidateId}|${decision.action}|${decision.at}`
+        if (known.has(key)) continue
         const result = applyDecision(s, decision, { now, slots: settings.slots })
         if (result === 'ignored') notice(`处理结果（${decision.action}）指向的候选稿 ${decision.candidateId} 不存在或已处理，已忽略`)
         else if (result === 'needs_model') pendingModel.push(decision)
+        known.add(key)
+        s.appliedDecisions.push(key)
       }
+      const at = key => Date.parse(key.slice(key.lastIndexOf('|') + 1))
+      s.appliedDecisions = s.appliedDecisions.filter(key => at(key) >= now.getTime() - 60 * DAY_MS)
+        .sort((a, b) => at(a) - at(b)).slice(-5000)
     }, { undoable: false })
     // 落库之后才算处理过；改稿失败只记提示，不会反复重试
     await posts.commit()
@@ -343,6 +353,7 @@ export class Worker {
     try {
       result = await this.sync.syncOnce()
     } catch (err) { result = { ok: false, pulled: 0, pushed: 0, error: err.message } }
+    if (result.voiceChanged) this.voiceMemo = null
     if (result.error === '上一轮同步还没结束') return result
     this.lastSyncMs = now.getTime()
     const error = result.ok ? null : String(result.error).slice(0, 200)

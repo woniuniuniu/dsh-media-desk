@@ -74,3 +74,10 @@ test('源码里没有被禁止的东西', async () => {
     }
   }
 })
+
+test('Final I1: appliedDecisions starts empty and survives v2 migration', () => {
+  assert.deepEqual(emptyState().appliedDecisions, [])
+  assert.deepEqual(migrateState({ version: 2 }).appliedDecisions, [])
+  const keys = ['c_1234|view|2026-11-12T00:00:00.000Z']
+  assert.deepEqual(migrateState({ version: 2, appliedDecisions: keys }).appliedDecisions, keys)
+})

@@ -17,7 +17,7 @@
 - 计划 1 的全部 Global Constraints 继续有效。
 - **同步默认关闭。** 只有设置里 `sync.enabled === true` 且交换文件夹是一个带远端的 git 工作副本时才执行任何 git 命令。开启这个开关就是负责人对"程序自动向这个私有仓库推送"的授权；程序不得对交换文件夹以外的任何仓库执行 git 命令。
 - 调用 `git` 只用 `execFile('git', [...固定参数], {cwd: 交换文件夹})`，不经过 shell；参数里不得出现来自文件内容或网络的字符串；每条命令 60 秒超时。
-- 允许的 git 子命令只有：`rev-parse`、`status`、`add`、`commit`、`fetch`、`merge`、`push`、`remote`。不得使用 `reset`、`rebase`、`clean`、`checkout --`、`push --force`。
+- 允许的 git 子命令只有：`rev-parse`、`status`、`add`、`commit`、`fetch`、`merge`、`push`、`remote`、`diff`（只读）。不得使用 `reset`、`rebase`、`clean`、`checkout --`、`push --force`。
 - 推送只推当前分支到它已配置的上游，不新建远端、不改远端地址。
 - 插件不读取、不保存、不打印任何凭证；命令的错误输出写入提示前截到 200 字符。
 - `test/guard.test.js` 的"只有这些模块可以发起网络请求或调用子进程"名单里新增 `src/sync.js`，且仅此一处。
