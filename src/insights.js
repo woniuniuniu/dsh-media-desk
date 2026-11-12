@@ -5,6 +5,7 @@ import { engagement } from './score.js'
 
 const DAY = 24 * 3600e3
 const REASONS = ['not_interested', 'not_me', 'stale']
+const SKEW = 5 * 60e3 // 与 score.js 一致的时钟偏差
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
 
 const list = v => (Array.isArray(v) ? v.filter(x => x && typeof x === 'object') : [])
@@ -24,8 +25,8 @@ const median = values => {
 
 function followersBlock(raw) {
   const rows = list(raw)
-    .filter(r => typeof r.day === 'string' && DAY_RE.test(r.day) && Number.isFinite(Date.parse(`${r.day}T00:00:00Z`)) && typeof r.count === 'number' && Number.isFinite(r.count))
-    .map(r => ({ day: r.day, count: r.count }))
+    .filter(r => typeof r.day === 'string' && DAY_RE.test(r.day) && Number.isFinite(Date.parse(`${r.day}T00:00:00Z`)) && typeof r.count === 'number' && !Number.isNaN(r.count))
+    .map(r => ({ day: r.day, count: Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.trunc(r.count))) }))
     .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0))
   const series = rows.slice(-90)
   const latest = series.length ? series[series.length - 1] : null
@@ -43,7 +44,7 @@ export function computeInsights(state, now) {
   const t = new Date(now).getTime()
   const inWindow = (iso, days) => {
     const x = ms(iso)
-    return Number.isFinite(t) && Number.isFinite(x) && x <= t && x > t - days * DAY
+    return Number.isFinite(t) && Number.isFinite(x) && x <= t + SKEW && x > t - days * DAY
   }
   const types = list(state?.voice?.types)
   const typeName = id => types.find(x => x.id === id)?.name ?? id
@@ -94,8 +95,9 @@ export function computeInsights(state, now) {
     })
 
   const drafts = list(state?.replyDrafts)
-  const drafted = drafts.filter(r => inWindow(r.notifiedAt, 30)).length
-  const sent = drafts.filter(r => r.sentText != null && inWindow(r.sentAt, 30)).length
+  const notified = drafts.filter(r => inWindow(r.notifiedAt, 30))
+  const drafted = notified.length
+  const sent = notified.filter(r => typeof r.sentText === 'string' && r.sentText !== '').length
   const myReplies = recent.filter(m => m.kind === 'reply')
   const replies = {
     drafted, sent, sentRate: drafted === 0 ? 0 : round(sent / drafted, 2),
@@ -116,10 +118,10 @@ export function computeInsights(state, now) {
   const pairs = editPairs({ candidates, replyDrafts: drafts.map(r => ({ ...r, drafts: Array.isArray(r.drafts) ? r.drafts : [] })) })
   const ratios = []
   for (const p of pairs) {
-    if (p.kind !== 'post') continue
-    const a = Array.from(String(p.aiText).trim()).length
+    if (p.kind !== 'post' || typeof p.aiText !== 'string' || typeof p.sentText !== 'string') continue
+    const a = Array.from(p.aiText.trim()).length
     if (a === 0) continue
-    ratios.push(Array.from(String(p.sentText).trim()).length / a)
+    ratios.push(Array.from(p.sentText.trim()).length / a)
   }
 
   return {

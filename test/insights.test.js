@@ -145,3 +145,57 @@ test('所有数字都是有限数：空状态、畸形状态、超大指标', ()
   assert.equal(r.funnel.discardReasons.none, 1)
   assert.equal(r.top.length, 3)
 })
+
+test('回复：同一批草稿算已起草和已发出，sentRate 不超过 1', () => {
+  const state = emptyState()
+  state.replyDrafts = [
+    { id: 'r_a', toHandle: 'a', toPostId: '1', drafts: ['x'], notifiedAt: at('2026-10-03 09:00'), sentText: '旧稿昨天才发', sentAt: at('2026-11-11 09:00') },
+    { id: 'r_b', toHandle: 'a', toPostId: '2', drafts: ['x'], notifiedAt: at('2026-11-11 09:00'), sentText: '今天发', sentAt: at('2026-11-12 09:00') },
+    { id: 'r_c', toHandle: 'a', toPostId: '3', drafts: ['x'], notifiedAt: at('2026-10-05 09:00'), sentText: '也是昨天发', sentAt: at('2026-11-11 10:00') },
+  ]
+  const r = computeInsights(state, NOW).replies
+  assert.deepEqual({ drafted: r.drafted, sent: r.sent, sentRate: r.sentRate }, { drafted: 1, sent: 1, sentRate: 1 })
+  state.replyDrafts = state.replyDrafts.filter(d => d.id !== 'r_b')
+  const none = computeInsights(state, NOW).replies
+  assert.deepEqual({ drafted: none.drafted, sent: none.sent, sentRate: none.sentRate }, { drafted: 0, sent: 0, sentRate: 0 })
+  state.replyDrafts = [{ id: 'r_d', notifiedAt: at('2026-11-11 09:00'), drafts: [], sentText: '', sentAt: at('2026-11-12 09:00') }]
+  assert.equal(computeInsights(state, NOW).replies.sent, 0)
+})
+
+test('粉丝数被夹成安全整数，字符串和 NaN 的条目被跳过', () => {
+  const state = emptyState()
+  state.followers = [
+    { day: '2026-10-01', count: -1e308 }, { day: '2026-11-05', count: 3.9 }, { day: '2026-11-08', count: 'x' }, { day: '2026-11-09', count: NaN }, { day: '2026-11-12', count: 1e308 },
+  ]
+  const f = computeInsights(state, NOW).followers
+  assert.deepEqual(f.series, [{ day: '2026-10-01', count: 0 }, { day: '2026-11-05', count: 3 }, { day: '2026-11-12', count: Number.MAX_SAFE_INTEGER }])
+  assertFinite(f)
+  assert.equal(f.delta7, Number.MAX_SAFE_INTEGER - 3)
+  assert.equal(f.delta30, Number.MAX_SAFE_INTEGER)
+})
+
+test('delta30 的基准在 90 条之外时为 null（只在截取后的序列里找）', () => {
+  const state = emptyState()
+  state.followers = [{ day: '2026-09-01', count: 1 }, ...Array.from({ length: 90 }, (_, i) => ({ day: `2026-11-${String(5 + (i % 8)).padStart(2, '0')}`, count: 100 + i }))]
+  const f = computeInsights(state, NOW).followers
+  assert.equal(f.series.length, 90)
+  assert.equal(f.delta30, null)
+})
+
+test('时间窗：晚于 now 5 分钟内算现在，更晚的不算', () => {
+  const state = emptyState()
+  state.mine = [mineItem('near', 'post', '2026-11-12 12:02', { views: 10 }), mineItem('far', 'post', '2026-11-12 12:10', { views: 100 })]
+  const r = computeInsights(state, NOW)
+  assert.equal(r.totals.d7.posts, 1)
+  assert.equal(r.totals.d30.views, 10)
+})
+
+test('改稿长度比：aiText 或 sentText 不是字符串的配对被跳过', () => {
+  const state = emptyState()
+  state.candidates = [
+    cand('c1', 't', 'sent', '2026-11-11 09:00', { aiText: '一二三四', sentText: '一二三四五六', sentAt: at('2026-11-11 10:00') }),
+    cand('c2', 't', 'sent', '2026-11-11 09:00', { aiText: 1234, sentText: '一二', sentAt: at('2026-11-11 10:00') }),
+    cand('c3', 't', 'sent', '2026-11-11 09:00', { aiText: '一二三四', sentText: 99999, sentAt: at('2026-11-11 10:00') }),
+  ]
+  assert.equal(computeInsights(state, NOW).edits.medianLengthRatio, 1.5)
+})
