@@ -119,6 +119,25 @@ export async function saveSettings(payload) {
   }
 }
 
+export async function fetchSyncStatus() {
+  try {
+    return await api('sync/status')
+  } catch (err) {
+    report(err)
+    return null
+  }
+}
+
+export async function runSyncNow() {
+  try {
+    return await api('sync/run', {})
+  } catch (err) {
+    if (err.status === 400 || err.status === 409) toast(err.message, { error: true })
+    else report(err)
+    return null
+  }
+}
+
 export async function fetchModels() {
   return api('models')
 }

@@ -281,6 +281,14 @@ body[data-ds-dark-theme] .md-root { color-scheme: dark; }
 .md-slots li { display: inline-flex; align-items: center; gap: 2px; }
 .md-root .md-slots input { width: 120px; }
 .md-slots-add { align-self: flex-start; }
+.md-sync-toggle { display: flex; align-items: center; gap: 8px; }
+.md-root .md-sync-toggle input { width: 16px; height: 16px; padding: 0; accent-color: var(--accent); }
+.md-root .md-sync-toggle input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.md-sync-status { padding: 8px 10px; border-radius: var(--r-md); font-size: 12.5px; line-height: 20px; overflow-wrap: anywhere; }
+.md-sync-status.is-ok { color: var(--accent); }
+.md-sync-status.is-warn { color: var(--ink); background: var(--hover); border-inline-start: 3px solid var(--ink2); }
+.md-sync-status.is-off { color: var(--ink3); }
+.md-sync-run { align-self: flex-start; }
 
 /* 长文、复盘与实发对照，沿用宿主颜色和页面容器断点。 */
 .md-longform { display: grid; grid-template-columns: 300px minmax(0, 1fr); align-items: start; gap: 16px; max-width: 1200px; margin: 0 auto; }

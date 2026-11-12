@@ -1,8 +1,8 @@
 // 设置：成稿与排期、交换文件夹位置、生图来源。
 import React from 'react'
-import { saveSettings, setDesk, testImage, useDesk } from './desk.js'
+import { fetchSyncStatus, runSyncNow, saveSettings, setDesk, testImage, toast, useDesk } from './desk.js'
 import { Dialog, Icon } from './ui.jsx'
-import { t } from './util.js'
+import { syncAdvice, syncLine, t } from './util.js'
 
 // 常见服务的 OpenAI 兼容地址，模型名以各家文档为准。label 是按钮上显示的名字
 const PRESETS = [
@@ -23,10 +23,19 @@ export function SettingsDialog() {
   const [testing, setTesting] = React.useState(false)
   const [sample, setSample] = React.useState(null)
   const [advanced, setAdvanced] = React.useState(false)
+  const [syncStatus, setSyncStatus] = React.useState(null)
+  const [syncing, setSyncing] = React.useState(false)
+  React.useEffect(() => {
+    if (!open) return
+    let active = true
+    setSyncStatus(null)
+    fetchSyncStatus().then(status => { if (active) setSyncStatus(status) })
+    return () => { active = false }
+  }, [open])
   React.useEffect(() => {
     if (!open || !settings) return
     const { image } = settings
-    setForm({ ownHandle: ownHandle ?? '', composeAt: settings.composeAt ?? '07:00', slots: settings.slots?.length ? [...settings.slots] : ['09:00'], dailyCandidates: settings.dailyCandidates ?? 6, dailyImages: settings.dailyImages ?? 3, exchangeDir: settings.exchangeDir ?? '', source: image.source ?? 'http', baseUrl: image.baseUrl, model: image.model, apiKey: '', size: image.size, quality: image.quality, toolSize: image.toolSize ?? '1536x1024', toolQuality: image.toolQuality ?? '', extra: image.extra })
+    setForm({ ownHandle: ownHandle ?? '', composeAt: settings.composeAt ?? '07:00', slots: settings.slots?.length ? [...settings.slots] : ['09:00'], dailyCandidates: settings.dailyCandidates ?? 6, dailyImages: settings.dailyImages ?? 3, exchangeDir: settings.exchangeDir ?? '', sync: { enabled: settings.sync?.enabled ?? false, intervalSec: settings.sync?.intervalSec ?? 120 }, source: image.source ?? 'http', baseUrl: image.baseUrl, model: image.model, apiKey: '', size: image.size, quality: image.quality, toolSize: image.toolSize ?? '1536x1024', toolQuality: image.toolQuality ?? '', extra: image.extra })
     setSample(null)
   }, [open, settings, ownHandle])
   if (!open || !form) return null
@@ -40,14 +49,19 @@ export function SettingsDialog() {
     dailyCandidates: Number(form.dailyCandidates),
     dailyImages: Number(form.dailyImages),
     exchangeDir: form.exchangeDir.trim(),
+    sync: { enabled: form.sync.enabled, intervalSec: Number(form.sync.intervalSec) },
     image: { source: form.source, baseUrl: form.baseUrl, model: form.model, apiKey: form.apiKey, size: form.size, quality: form.quality, toolSize: form.toolSize, toolQuality: form.toolQuality, extra: form.extra },
   })
   const activePreset = PRESETS.find(p => p.baseUrl && p.baseUrl === form.baseUrl)?.id ?? (form.baseUrl ? 'custom' : null)
+  const sync = syncLine(syncStatus && { ...syncStatus, enabled: form.sync.enabled }, new Date())
   return (
     <Dialog title={t('设置')} onClose={close} width={520}>
       <form className="md-form" onSubmit={async (event) => {
         event.preventDefault()
-        if (await saveSettings(payload())) close()
+        if (await saveSettings(payload())) {
+          setSyncStatus(await fetchSyncStatus())
+          close()
+        }
       }}>
         <label className="md-field">
           <span>{t('我的账号名')}</span>
@@ -143,6 +157,33 @@ export function SettingsDialog() {
             </label> : null}
           </>
         ) : null}
+        <fieldset className="md-field md-settings-group">
+          <legend>{t('与 Grok Bot 同步')}</legend>
+          <label className="md-sync-toggle">
+            <input type="checkbox" checked={form.sync.enabled} onChange={e => set('sync', { ...form.sync, enabled: e.target.checked })} />
+            <span>{t('打开同步')}</span>
+          </label>
+          <small>{t('开启后，程序会自动把交换文件夹里的文件推送到你配置的那个私有仓库，并拉取 Grok Bot 写入的文件。不会碰其他任何仓库。')}</small>
+          <label className="md-field">
+            <span>{t('同步间隔（秒）')}</span>
+            <input type="number" min={60} max={3600} step={60} required value={form.sync.intervalSec} onChange={e => set('sync', { ...form.sync, intervalSec: e.target.value })} />
+          </label>
+          <div className={`md-sync-status is-${sync.tone}`} role="status">
+            <p>{sync.text}</p>
+            {sync.tone === 'warn' && !syncStatus.ok ? <p>{syncAdvice(syncStatus.reason)}</p> : null}
+          </div>
+          <button type="button" className="md-btn md-sync-run" disabled={syncing || !settings.sync?.enabled} onClick={async () => {
+            setSyncing(true)
+            try {
+              const result = await runSyncNow()
+              if (result?.ok) toast(t('同步好了：拉下 {n} 个文件，推上 {m} 次提交', { n: result.pulled, m: result.pushed }))
+              else if (result) toast(result.error, { error: true })
+              setSyncStatus(await fetchSyncStatus())
+            } finally {
+              setSyncing(false)
+            }
+          }}>{syncing ? t('正在同步…') : t('现在同步一次')}</button>
+        </fieldset>
         {sample ? <img className="md-test-sample" src={sample} alt={t('测试图')} /> : null}
         <div className="md-form-foot">
           <button type="button" className="md-btn" disabled={testing} onClick={async () => {

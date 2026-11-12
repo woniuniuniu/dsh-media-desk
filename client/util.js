@@ -24,6 +24,28 @@ export function fmtTime(iso) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+// now 保留为调用参数；这里只显示上次同步的本地时刻，不计算相对时间。
+export function syncLine(status, now) {
+  if (!status) return { tone: 'off', text: '读不到同步状态' }
+  if (!status.enabled) return { tone: 'off', text: '同步没有打开' }
+  if (!status.ok) return { tone: 'warn', text: status.reason }
+  if (status.lastSyncError) return { tone: 'warn', text: '上次同步失败：' + status.lastSyncError }
+  return { tone: 'ok', text: '已连接，分支 ' + status.branch + (status.lastSyncAt ? '，上次同步 ' + fmtTime(status.lastSyncAt) : '，还没同步过') }
+}
+
+export function syncAdvice(reason) {
+  switch (reason) {
+    case '交换文件夹还不存在': return '请先创建交换文件夹，并在设置里填写它的完整路径。'
+    case '交换文件夹在代码仓库里面，不能同步': return '请把交换文件夹放到代码仓库外，并在设置里更新路径。'
+    case '没有安装 git': return '请先安装 git，再重新打开设置检查同步状态。'
+    case '交换文件夹还不是一个 git 仓库': return '交换文件夹还不是一个 git 仓库。请按 docs/grok-bot/README.md 的第 2 步操作。'
+    case '交换文件夹不是一个独立的 git 仓库': return '请使用独立克隆的交换仓库，把交换文件夹路径指向仓库根目录。'
+    case '这个仓库没有配置远端': return '请为交换仓库配置对应的私有远端仓库，按 docs/grok-bot/README.md 的搭建步骤操作。'
+    case '当前分支没有上游分支': return '请为交换仓库的当前分支设置上游分支，按 docs/grok-bot/README.md 的搭建步骤操作。'
+    default: return '请按 docs/grok-bot/README.md 的搭建步骤检查'
+  }
+}
+
 export function fmtDate(iso) {
   const d = new Date(iso)
   return `${d.getMonth() + 1}月${d.getDate()}日`
