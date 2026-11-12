@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { mkdtemp, rm, readFile, stat, writeFile, mkdir, rename } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative, basename } from 'node:path'
 import http from 'node:http'
 import { spawn } from 'node:child_process'
 import { Store } from '../src/store.js'
@@ -25,6 +25,22 @@ function raw(socketPath, headers = {}, body = '{}') {
 function cli(args) {
   return new Promise(resolve => { const p = spawn(process.execPath, ['bin/media-desk.js', ...args], { cwd: process.cwd() }); let stdout = '', stderr = ''; p.stdout.on('data', b => { stdout += b }); p.stderr.on('data', b => { stderr += b }); p.on('close', code => resolve({ code, stdout, stderr })) })
 }
+test('CLI imports relative files through RPC, enforces one argument, and keeps input-file as JSON', async t => {
+  const {home,store}=await fixture(t)
+  const path=join(home,'CLI 图片.png');const {createCanvas}=await import('@napi-rs/canvas');const bytes=createCanvas(2,3).toBuffer('image/png');await writeFile(path,bytes)
+  const result=await cli(['--home',home,'import',relative(process.cwd(),path),'--input',JSON.stringify({accountId:null,title:'CLI 图片',body:'private body'}),'--request-id','cli-import'])
+  assert.equal(result.code,0,result.stdout);const envelope=JSON.parse(result.stdout);assert.equal(envelope.result.kind,'image');assert.equal(envelope.result.media.w,2);assert.equal(envelope.result.accountId,null)
+  assert.deepEqual(await readFile(join(store.filesDir,basename(envelope.result.media.src))),bytes)
+  assert.equal(result.stdout.includes(path),false);assert.equal(result.stdout.includes('private body'),false)
+  const fields=await cli(['--home',home,'call','media_desk_get_item','--input',JSON.stringify({id:envelope.result.id,fields:['media']})]);assert.deepEqual(JSON.parse(fields.stdout).result.media,envelope.result.media)
+  for(const args of [['import'],['import',path,path],['import',path,'--input',JSON.stringify({path})],['call','media_desk_import_file','--input-file',path]]) {
+    const bad=await cli(['--home',home,...args]);assert.equal(bad.code,2,bad.stdout);assert.equal(JSON.parse(bad.stdout).error.code,'INVALID_ARGUMENT')
+  }
+  const accountId=(await store.read()).accounts[0].id
+  const avatar=await cli(['--home',home,'import',path,'--input',JSON.stringify({destination:'avatar',accountId}),'--request-id','cli-avatar'])
+  assert.equal(avatar.code,0,avatar.stdout);assert.equal(JSON.parse(avatar.stdout).result.destination,'avatar');assert.equal((await store.read()).items.length,1)
+  const account=await cli(['--home',home,'accounts','get',accountId]);assert.equal(JSON.parse(account.stdout).result.avatarImportRequestId,'cli-avatar')
+})
 test('private authenticated socket refuses bad requests and live owners; disposal permits restart', async t => {
   const { home, server, service, client } = await fixture(t)
   const { startAutomationServer } = await import('../src/automation/server.js')
@@ -63,7 +79,7 @@ test('CLI emits one compact JSON response and stable error status, convenience a
   const bad = await cli(['--home', home, 'call', 'media_desk_status', '--input', '{']); assert.notEqual(bad.code, 0); assert.equal(JSON.parse(bad.stdout).error.code, 'INVALID_ARGUMENT')
 })
 test('official SDK stdio client discovers tools and makes reads/mutations without stdout pollution', async t => {
-  const { home } = await fixture(t)
+  const { home, store } = await fixture(t)
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
   const transport = new StdioClientTransport({ command: process.execPath, args: [join(process.cwd(), 'bin/media-desk.js'), '--home', home, 'mcp'], stderr: 'pipe' })
@@ -73,6 +89,16 @@ test('official SDK stdio client discovers tools and makes reads/mutations withou
   assert.equal((await client.callTool({ name: 'media_desk_status', arguments: {} })).structuredContent.ok, true)
   const created = await client.callTool({ name: 'media_desk_apply_ops', arguments: { requestId: 'mcp-add', ops: [{ op: 'add_item', title: 'MCP idea' }] } })
   assert.equal(created.structuredContent.ok, true)
+  const path=join(home,'MCP 图片.png');const {createCanvas}=await import('@napi-rs/canvas');const bytes=createCanvas(4,2).toBuffer('image/png');await writeFile(path,bytes)
+  const imported=await client.callTool({name:'media_desk_import_file',arguments:{path,requestId:'stdio-import'}})
+  assert.equal(imported.structuredContent.ok,true);assert.equal(imported.structuredContent.result.bytes,bytes.length);assert.equal(JSON.stringify(imported).includes(path),false)
+  const media=await client.callTool({name:'media_desk_get_item',arguments:{id:imported.structuredContent.result.id,fields:['media']}})
+  assert.equal(media.structuredContent.result.media.w,4);assert.equal(media.structuredContent.result.body,undefined)
+  assert.deepEqual(await readFile(join(store.filesDir,basename(media.structuredContent.result.media.src))),bytes)
+  const accountId=(await store.read()).accounts[0].id
+  const avatar=await client.callTool({name:'media_desk_import_file',arguments:{path,destination:'avatar',accountId,requestId:'stdio-avatar'}})
+  assert.equal(avatar.structuredContent.ok,true);assert.equal(avatar.structuredContent.result.destination,'avatar')
+  const account=await client.callTool({name:'media_desk_get_account',arguments:{id:accountId}});assert.equal(account.structuredContent.result.avatarImportRequestId,'stdio-avatar')
   const assisted = await client.callTool({ name: 'media_desk_assist', arguments: { message: 'write my idea', requestId: 'mcp-assist' } }); assert.equal(assisted.structuredContent.result.modelUsed, true)
   const profiles = await client.callTool({name:'media_desk_list_accounts',arguments:{limit:1}});assert.equal(profiles.structuredContent.ok,true);assert.equal(profiles.structuredContent.result.accounts.length,1)
   assert.ok(tools.tools.some(t=>t.name==='media_desk_get_account'))
@@ -80,6 +106,7 @@ test('official SDK stdio client discovers tools and makes reads/mutations withou
   const readonly = new Client({ name: 'read-only-test', version: '1' }); t.after(() => readonly.close())
   await readonly.connect(new StdioClientTransport({ command: process.execPath, args: [join(process.cwd(), 'bin/media-desk.js'), '--home', home, '--read-only', 'mcp'] }))
   assert.ok((await readonly.listTools()).tools.every(t => t.annotations.readOnlyHint))
+  assert.equal((await readonly.callTool({name:'media_desk_import_file',arguments:{path,requestId:'stdio-ro'}})).structuredContent.error.code,'READ_ONLY')
 })
 
 test('Host lifecycle owns the bridge and shares the UI Store', async t => {
@@ -257,7 +284,7 @@ test('assist client timeout exceeds Host editing window and explicit timeouts ov
 })
 
 
-test('CLI and official MCP transport preserve scoped 2.7 format and image options with 17 tools', async t => {
+test('CLI and official MCP transport preserve scoped 2.7 format and image options with 18 tools', async t => {
   const { home, store, starts } = await fixture(t)
   const { applyOps } = await import('../src/ops.js')
   let accountId, id
@@ -276,7 +303,7 @@ test('CLI and official MCP transport preserve scoped 2.7 format and image option
   t.after(() => client.close())
   await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(process.cwd(), 'bin/media-desk.js'), '--home', home, 'mcp'], stderr: 'pipe' }))
   const tools = await client.listTools()
-  assert.equal(tools.tools.length, 17)
+  assert.equal(tools.tools.length, 18)
   assert.equal(tools.tools.find(t => t.name === 'media_desk_produce').inputSchema.properties.withImages.type, 'boolean')
   const imported = await client.callTool({ name: 'media_desk_write_draft', arguments: { requestId: 'mcp-article', id, accountId, format: 'article', article: 'Transport body stays intact' } })
   assert.equal(imported.structuredContent.ok, true)

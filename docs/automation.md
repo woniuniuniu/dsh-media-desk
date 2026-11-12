@@ -1,6 +1,6 @@
 # Local Media Desk automation
 
-Version `2.7.0-accounts.2` includes a CLI, official MCP stdio server and an explicitly started authenticated HTTP adapter for the **installed desktop workbench**. Start DeepSeek Harness and open Media Desk first. The adapter uses the Host's existing Store, Settings and Producer; it never starts another Harness or borrows browser cookies. Ordinary authoring uses `assist` with the workbench selected/subscription model; structured operations remain direct, and importing a finished external draft is an explicit no-extra-generation option.
+Version `2.7.0-accounts.3` includes a CLI, official MCP stdio server and an explicitly started authenticated HTTP adapter for the **installed desktop workbench**, sharing 18 tools. Start DeepSeek Harness and open Media Desk first. The adapter uses the Host's existing Store, Settings and Producer; it never starts another Harness or borrows browser cookies. Ordinary authoring uses `assist` with the workbench selected/subscription model; structured operations remain direct, and importing local media or a finished external draft requires no model call.
 
 ## Run
 
@@ -10,6 +10,7 @@ media-desk tools
 media-desk tools media_desk_write_draft
 media-desk items list --input '{"limit":5,"status":"draft"}'
 media-desk idea add 'New story'
+media-desk import './图片.png' --input '{"accountId":"ACCOUNT_ID","title":"Reference image"}'
 media-desk items get ITEM_ID
 media-desk write '请把这篇写成完整脚本并规划分镜' --input '{"focusId":"ITEM_ID"}'
 media-desk assist '请修改这篇的开头' --input '{"focusId":"ITEM_ID"}'
@@ -25,7 +26,7 @@ Default stdout is one compact JSON envelope. Diagnostics use stderr. Exit codes:
 
 ## Account scope
 
-Version `2.7.0-accounts.2` adds editorial profiles for many accounts, including multiple accounts on the same platform and manual Kuaishou accounts. These profiles do not log into or publish to social platforms. Manual CRUD, archive/restore, default-style/format selection, assignment and external-draft import require no model or Monid call. Kuaishou supports manual entry, CSV imports and structured API metrics. Monid's supported platforms remain unchanged; automatic Kuaishou fetching is unavailable.
+Version `2.7.0-accounts.3` includes editorial profiles for many accounts, including multiple accounts on the same platform and manual Kuaishou accounts. These profiles do not log into or publish to social platforms. Manual CRUD, archive/restore, default-style/format selection, assignment and local-media/external-draft import require no model or Monid call. Kuaishou supports manual entry, CSV imports and structured API metrics. Monid's supported platforms remain unchanged; automatic Kuaishou fetching is unavailable.
 
 Discover IDs with `accounts list` / `accounts get ID`. Names and platforms are not unique IDs. The desktop opens at the account list, with search, platform/group filters, archive/restore, 50-row pagination and CSV add (at most 100 rows, with failed rows retained). Choose one account, All accounts or Unassigned to enter Content, then use the nested Inspiration / Content / Schedule / Insights / Account / Styles tabs. The Account tab edits only the selected profile; virtual scopes explain that they have no profile. The Account list breadcrumb returns to the main menu and clears transient selections. The hub has no child tabs or assistant. All existing unattributed content remains Unassigned; migration never guesses ownership from a platform. Deleting a profile detaches content, metrics, rules and chat without deleting content; use archive for routine retirement.
 
@@ -52,13 +53,45 @@ New account items inherit its platform, and new branches inherit the parent acco
 
 `add_account` and `update_account` accept an optional `avatar`; compact `list_accounts` and `get_account` include it without clipping valid URLs below the 4000-character limit. Use an HTTP(S) URL, or an existing plugin-owned image reference such as `media-desk/files/avatar.jpg` or `media-desk/assets/avatar.png` (JPEG, PNG, WebP or GIF). Arbitrary filesystem paths, path traversal, inline/base64 bytes, SVG and local videos are refused. Omit the field to preserve it; `null` or an empty string removes it. Normal account scope, durable request IDs, strict unknown-field checks and read-only restrictions apply. No API key, platform login, model or provider call is required.
 
-The desktop account form also accepts local JPEG/PNG/WebP files up to 5 MiB (shown as 5 MB), previews a center-cropped/compressed 256 × 256 WebP and uploads through the existing Host upload endpoint only on Save. Choosing a file and cancelling creates no upload or content item. Replacing/removing an avatar retains uploaded files for Undo; retrying a failed account save in the same form reuses its successful upload. The automation tools accept references only and add no upload endpoint.
+The desktop account form also accepts local JPEG/PNG/WebP files up to 5 MiB (shown as 5 MB), previews a center-cropped/compressed 256 × 256 WebP and uploads through the existing Host upload endpoint only on Save. Choosing a file and cancelling creates no upload or content item. Replacing/removing an avatar retains uploaded files for Undo; retrying a failed account save in the same form reuses its successful upload. Account avatar operations accept references only. The separate media-import tool below can create a content item and return an owned image reference; it adds no upload endpoint.
 
 ```sh
 media-desk call media_desk_apply_ops --request-id avatar-001 --input '{"ops":[{"op":"update_account","id":"ACCOUNT_ID","avatar":"https://example.com/avatar.png"}]}'
 media-desk call media_desk_apply_ops --request-id avatar-local-001 --input '{"ops":[{"op":"update_account","id":"ACCOUNT_ID","avatar":"media-desk/files/existing-avatar.jpg"}]}'
 media-desk call media_desk_apply_ops --request-id avatar-remove-001 --input '{"ops":[{"op":"update_account","id":"ACCOUNT_ID","avatar":null}]}'
 ```
+
+## Local image and video import
+
+Use `media-desk import FILE` or `media_desk_import_file` to create one image/video idea in the existing workbench Store. `FILE` is on the **workbench host**. The CLI resolves a relative argument from its current directory; MCP `path` must be absolute. A cloud MCP client's filesystem is separate: place the desired file on the workbench machine first. This tool does not download URLs or accept base64, raw bytes, arbitrary attachments, directories, symlinks, globs or batches. `--input-file` continues to read JSON options only.
+
+```sh
+media-desk import './中文 图片.png' --request-id media-20261112-001 \
+  --input '{"accountId":"ACCOUNT_ID","title":"Reference image","body":"Editorial notes","tags":["reference"]}'
+media-desk call media_desk_import_file --request-id media-20261112-002 \
+  --input '{"path":"/ABSOLUTE/HOST/PATH/clip.mp4","accountId":"ACCOUNT_ID"}'
+media-desk call media_desk_get_item --input '{"id":"ITEM_ID","fields":["media"]}'
+```
+
+JPEG (`.jpg`/`.jpeg`), PNG, WebP and GIF images are limited to **25,000,000 bytes**, **40,000,000 pixels** and **16384 pixels per side**. Header dimensions and complete format boundaries are checked before native decoding, then the decoded image is validated. If the image backend is unavailable, image import returns `ASSET_ERROR`; metadata reads and video import remain available. MP4, MOV and WebM videos are limited to **250,000,000 bytes**; bounded container and required track-metadata checks do not guarantee that every codec/frame will play. Extensions and format signatures must match. Empty, truncated, non-media, changed or unavailable sources are refused with a path-free `ASSET_ERROR`. At most two imports perform file work concurrently; a third receives `BUSY`.
+
+MP4/MOV sample-table chunk references must fit inside actual `mdat` data ranges, including an `mdat` whose size is zero (extends to EOF). Common fragmented MP4 with empty initialization tables is supported when `trun` sizes, or `tfhd`/`trex` defaults, resolve its sample ranges. Fragment bases may be explicit, use `default-base-is-moof`, or use the first `traf`'s implicit movie-fragment base. Later `traf` boxes that depend on implicit base chaining, sample ranges outside this file's `mdat` data and initialization-only segments without video samples are unsupported and return `ASSET_ERROR`. These are byte-range/metadata checks, not codec or frame decoding.
+
+Optional fields are `accountId`, `title` (300 characters), `body` (40000) and `tags` (at most 24 strings of 100 characters). Unknown fields are refused. Omitting `accountId` or passing null creates Unassigned content; an explicit account is validated before file work and again at commit, and the new item inherits its platform. The default title is the filename. The source remains unchanged and a private, uniquely named copy preserves its exact bytes: there is no transcoding, deletion, model, image-provider or Monid call.
+
+Success returns only `{id, accountId, title, kind, media, mimeType, bytes, sha256}` plus the usual `requestId`. `media` contains the workbench `src` reference and image dimensions; no source path or media bytes are returned or stored in the item. `get_item.fields:["media"]` returns bounded `{src,poster,w,h}` references. Default item metadata stays compact and excludes media/body, with `importRequestId` present only on imported items.
+
+To save a local image directly as an account avatar, set `destination:"avatar"` and a concrete `accountId`. This accepts the same supported images and limits, preserves exact bytes without cropping/compression, and creates **no content item**. `title`, `body` and `tags` are refused for this destination; videos, omitted/null accounts and unknown accounts are refused. Default `destination:"item"` retains the idea-import behavior above.
+
+```sh
+media-desk import './头像.png' --request-id avatar-20261112-001 \
+  --input '{"destination":"avatar","accountId":"ACCOUNT_ID"}'
+media-desk accounts get ACCOUNT_ID
+```
+
+Avatar success returns `{destination:"avatar",accountId,kind,media,mimeType,bytes,sha256}` and the usual request ID, without an item ID. `get_account` and `list_accounts` expose `avatarImportRequestId` only while that import's stored `src` equals the current avatar. A later manual change/removal hides the old marker; Undo restores the appropriate reference and retains imported files. After an uncertain avatar commit, inspect that account's current `avatar` and `avatarImportRequestId` plus request status before acting. Recovery markers are internal and cannot be supplied through `apply_ops`.
+
+The durable request journal wraps validation, copying and commit. Identical IDs/arguments share one copy and cached results work even after the source disappears. A changed payload with the same ID conflicts. After `OUTCOME_UNKNOWN`, inspect `media_desk_request_status` and `list_items` with `query` equal to the request ID to find `importRequestId`; do not retry with a new ID. A potentially committed asset is retained for inspection. Known precommit failures remove only the import's own copy. Read-only CLI/MCP excludes and rejects import mutations before source access.
 
 ## Platform filters and Kuaishou
 
@@ -105,7 +138,8 @@ A remote MCP client running only in the cloud cannot directly reach the desktop 
 | `media_desk_list_accounts` | Search/query, platform/group/archive filters; default 20, max 100; offset/nextOffset; compact account metadata and counts |
 | `media_desk_get_account` | One account profile, positioning/audience/default style/format and counts; no credentials |
 | `media_desk_list_items` | Query/status/platform filters; default 20, max 100; offset/nextOffset pagination; metadata only |
-| `media_desk_get_item` | One item's metadata; opt into `fields: ["body","article","production"]`; `maxChars` default 8000, max 200000 per selected field; explicit `truncated` flags |
+| `media_desk_get_item` | One item's metadata; opt into `fields: ["body","article","production","media"]`; `maxChars` default 8000, max 200000 per selected text field; explicit `truncated` flags for text |
+| `media_desk_import_file` | One host-local JPEG/PNG/WebP/GIF or MP4/MOV/WebM, copied exactly into an image/video idea; `destination:"avatar"` imports an image directly to a concrete account without an item; compact metadata, byte count and SHA-256 only; no model call |
 | `media_desk_apply_ops` | Up to 100 explicit whitelisted operations using the existing validation/receipts and undo semantics |
 | `media_desk_assist` | Default authoring/revision through the existing assistant and selected/subscription model; starts requested production jobs once; open/nav actions are returned as UI hints |
 | `media_desk_write_draft` | External title/article/cover text/textual storyboard directly into studio/export; zero model calls; retains existing assets; keeps published items published |

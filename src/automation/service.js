@@ -9,13 +9,25 @@ import { applyOps } from '../ops.js'
 import { computeInsights } from '../learn.js'
 import { PLATFORMS } from '../platforms.js'
 import { saveProduction, resolveExportDir } from '../export.js'
+import { importLocalFile } from './import-file.js'
 
 const ajv = new Ajv({ allErrors: false, strict: false })
 const definitions = new Map(catalog.map(t => [t.name, { ...t, validate: ajv.compile(t.inputSchema) }]))
-const META = ['id', 'accountId', 'title', 'kind', 'status', 'platform', 'scheduledAt', 'publishedAt', 'createdAt', 'pinned', 'tags', 'parentId']
+const META = ['id', 'accountId', 'title', 'kind', 'status', 'platform', 'scheduledAt', 'publishedAt', 'createdAt', 'pinned', 'tags', 'parentId', 'importRequestId']
 const pick = (row, keys) => Object.fromEntries(keys.filter(k => row[k] !== undefined).map(k => [k, row[k]]))
 const clipped = (v, n = 500) => typeof v === 'string' ? v.slice(0, n) : v
 function metadata(row) { const out = pick(row, META); out.title = clipped(out.title, 300); out.tags = out.tags?.slice(0, 24).map(x => clipped(x, 100)); out.productionStatus = row.production?.status ?? null; return out }
+function avatarImportMetadata(account) {
+  const marker = account.avatarImport
+  return typeof account.avatar === 'string' && marker?.src === account.avatar && typeof marker.requestId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(marker.requestId) ? { avatarImportRequestId: marker.requestId } : {}
+}
+function mediaMetadata(media) {
+  if (!media) return null
+  const out = {}
+  for (const key of ['src', 'poster']) if (typeof media[key] === 'string' && /^(media-desk\/(assets|files)\/[\w.-]+$|https?:\/\/)/.test(media[key])) out[key] = clipped(media[key], 4000)
+  for (const key of ['w', 'h']) if (Number.isFinite(media[key])) out[key] = media[key]
+  return out
+}
 function productionStatus(item, producer) {
   const p = item.production
   return { id: item.id, status: item.status, production: p ? { ...pick(p, ['status', 'stage', 'startedAt', 'finishedAt', 'savedAt', 'format', 'withImages']), title: clipped(p.title, 300), error: p.error ? 'Production failed. Inspect the workbench for details.' : null, assets: [p.cover, ...p.images ?? [], ...p.shots ?? []].filter(Boolean).map(a => ({ status: a.status, error: a.error ? 'Asset generation failed. Inspect the workbench for details.' : null })) } : null, live: pick(producer.status(item.id), ['running', 'stage']) }
@@ -32,24 +44,26 @@ function validateSchedule(input) {
 }
 export function createAutomationService({ store, settings, producer, assist, models = async () => ({ providers: [] }), readOnly = false, profile = 'desktop', journal = new MutationJournal(automationDirectory(store.root, profile)) }) {
   async function find(id, accountId) { const state = await store.read(); const row = state.items.find(i=>i.id===id); if(!row) throw Object.assign(new Error('Item not found.'),{code:'NOT_FOUND'}); return requireMembership(state,id,accountId) }
-  async function dispatch(tool, input) {
+  async function dispatch(tool, input, requestId) {
     if (input.accountId !== undefined) requireAccount(await store.read(),input.accountId)
     switch (tool) {
       case 'media_desk_list_accounts': {
-        const state=await store.read();const counts=allAccountCounts(state); const q=input.query?.toLocaleLowerCase(); const rows=state.accounts.filter(a=>(!q||`${a.handle} ${a.platform} ${a.group} ${a.id}`.toLocaleLowerCase().includes(q))&&(input.platform===undefined||a.platform===input.platform)&&(input.group===undefined||a.group===input.group)&&(input.archived===undefined||Boolean(a.archived)===input.archived));const offset=input.offset??0,limit=input.limit??20;return {accounts:rows.slice(offset,offset+limit).map(a=>({...Object.fromEntries(Object.entries(pick(a,['id','handle','platform','avatar','group','archived','defaultStyleId','draftFormat'])).map(([k,v])=>[k,clipped(v,k==='avatar'?4000:300)])),counts:counts.get(a.id)??{items:0,published:0,scheduled:0,metrics:0}})),total:rows.length,offset,nextOffset:offset+limit<rows.length?offset+limit:null}
+        const state=await store.read();const counts=allAccountCounts(state); const q=input.query?.toLocaleLowerCase(); const rows=state.accounts.filter(a=>(!q||`${a.handle} ${a.platform} ${a.group} ${a.id}`.toLocaleLowerCase().includes(q))&&(input.platform===undefined||a.platform===input.platform)&&(input.group===undefined||a.group===input.group)&&(input.archived===undefined||Boolean(a.archived)===input.archived));const offset=input.offset??0,limit=input.limit??20;return {accounts:rows.slice(offset,offset+limit).map(a=>({...Object.fromEntries(Object.entries(pick(a,['id','handle','platform','avatar','group','archived','defaultStyleId','draftFormat'])).map(([k,v])=>[k,clipped(v,k==='avatar'?4000:300)])),...avatarImportMetadata(a),counts:counts.get(a.id)??{items:0,published:0,scheduled:0,metrics:0}})),total:rows.length,offset,nextOffset:offset+limit<rows.length?offset+limit:null}
       }
-      case 'media_desk_get_account': {const state=await store.read();const a=requireAccount(state,input.id);return {...Object.fromEntries(Object.entries(pick(a,['id','handle','platform','url','avatar','group','positioning','audience','defaultStyleId','draftFormat','archived','note','followers','createdAt'])).map(([k,v])=>[k,clipped(v,4000)])),counts:accountCounts(state,a.id)} }
+      case 'media_desk_get_account': {const state=await store.read();const a=requireAccount(state,input.id);return {...Object.fromEntries(Object.entries(pick(a,['id','handle','platform','url','avatar','group','positioning','audience','defaultStyleId','draftFormat','archived','note','followers','createdAt'])).map(([k,v])=>[k,clipped(v,4000)])),...avatarImportMetadata(a),counts:accountCounts(state,a.id)} }
       case 'media_desk_status': return { protocolVersion: PROTOCOL_VERSION, pluginVersion: PLUGIN_VERSION, available: true, readOnly, supportedPlatforms: PLATFORMS }
       case 'media_desk_list_items': {
         const query = input.query?.toLocaleLowerCase()
-        const rows = scopeState(await store.read(),input.accountId).items.filter(i => (!query || `${i.title}\n${i.body}`.toLocaleLowerCase().includes(query)) && (!input.status || i.status === input.status) && (input.platform === undefined || i.platform === input.platform))
+        const rows = scopeState(await store.read(),input.accountId).items.filter(i => (!query || `${i.title}\n${i.body}\n${i.importRequestId ?? ''}`.toLocaleLowerCase().includes(query)) && (!input.status || i.status === input.status) && (input.platform === undefined || i.platform === input.platform))
         const offset = input.offset ?? 0; const limit = input.limit ?? 20
         return { items: rows.slice(offset, offset + limit).map(metadata), total: rows.length, offset, nextOffset: offset + limit < rows.length ? offset + limit : null }
       }
       case 'media_desk_get_item': {
         const row = await find(input.id,input.accountId); const result = { ...metadata(row), truncated: {} }; const limit = input.maxChars ?? 8000
         for (const field of input.fields ?? []) {
-          if (field === 'production') {
+          if (field === 'media') {
+            result.media = mediaMetadata(row.media)
+          } else if (field === 'production') {
             const p = row.production
             if (!p) { result.production = null; continue }
             // Text-only snapshot. Omit internal paths, engine responses and unrelated state.
@@ -69,6 +83,34 @@ export function createAutomationService({ store, settings, producer, assist, mod
           }
         }
         return result
+      }
+      case 'media_desk_import_file': {
+        requireAccount(await store.read(), input.accountId)
+        const avatar = input.destination === 'avatar'
+        return importLocalFile({ path: input.path, filesDir: store.filesDir, imagesOnly: avatar }, async (asset, filename) => {
+          let changed = false
+          try {
+            return await store.mutate(avatar ? '导入账号头像' : '导入本地素材', state => {
+              const account = requireAccount(state, input.accountId)
+              if (avatar) {
+                const result = applyOps(state, [{ op: 'update_account', id: input.accountId, avatar: asset.media.src }])
+                if (result.errors.length || result.receipts.length !== 1) throw invalid('Unable to set the imported account avatar.')
+                account.avatarImport = { requestId, src: asset.media.src }
+                changed = true
+                return { destination: 'avatar', accountId: account.id, ...asset }
+              }
+              const result = applyOps(state, [{ op: 'add_item', accountId: input.accountId ?? null, title: input.title ?? filename, ...(input.body !== undefined ? { body: input.body } : {}), ...(input.tags !== undefined ? { tags: input.tags } : {}), kind: asset.kind, media: asset.media }])
+              if (result.errors.length || result.receipts.length !== 1) throw invalid('Unable to add the imported media item.')
+              const item = state.items.find(row => row.id === result.receipts[0].target)
+              item.importRequestId = requestId
+              changed = true
+              return { id: item.id, accountId: item.accountId, title: item.title, ...asset }
+            })
+          } catch (error) {
+            if (changed) throw Object.assign(new Error('The import commit outcome is uncertain. Inspect request status and the target item or account before any new action.'), { code: 'OUTCOME_UNKNOWN' })
+            throw error
+          }
+        })
       }
       case 'media_desk_apply_ops': {
         const result = await store.mutate(input.label || '本地自动化', state => applyOps(state, input.ops, {accountId:input.accountId}))
@@ -160,7 +202,7 @@ export function createAutomationService({ store, settings, producer, assist, mod
       try { validateSchedule(args) } catch (e) { return failure(e.code, e.message, undefined, requestId) }
       if (def.mutation) delete args.requestId
       const invoke = async () => {
-        try { const result = await dispatch(tool, args); return result?.ok === false ? result : { ok: true, result } } catch (e) {
+        try { const result = await dispatch(tool, args, requestId); return result?.ok === false ? result : { ok: true, result } } catch (e) {
           // Provider details/settings never leave this boundary. Known validation errors are safe.
           return failure(e.code === 'NOT_FOUND' || e.code === 'BUSY' || e.code === 'INVALID_ARGUMENT' || e.code === 'ASSET_ERROR' ? e.code : def.mutation ? 'OUTCOME_UNKNOWN' : 'OPERATION_FAILED', ['NOT_FOUND', 'BUSY', 'INVALID_ARGUMENT', 'ASSET_ERROR'].includes(e.code) ? e.message : 'Operation outcome is uncertain; inspect request status and workbench state before acting.')
         }

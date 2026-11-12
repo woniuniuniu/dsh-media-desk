@@ -2,7 +2,7 @@
 import { AVATAR_LOCAL_PATTERN, AVATAR_MAX_LENGTH } from '../avatar.js'
 import { PLATFORMS } from '../platforms.js'
 export const PROTOCOL_VERSION = 1
-export const PLUGIN_VERSION = '2.7.0-accounts.2'
+export const PLUGIN_VERSION = '2.7.0-accounts.3'
 const str = (maxLength = 40000) => ({ type: 'string', maxLength })
 const id = { type: 'string', minLength: 1, maxLength: 200 }
 const nullable = schema => ({ anyOf: [schema, { type: 'null' }] })
@@ -52,7 +52,9 @@ tool('list_accounts','Search account profiles and counts; no credentials.',{quer
 tool('get_account','Get one account profile, defaults and content counts.',{id},['id'])
 tool('status', 'Local workbench availability and protocol version.')
 tool('list_items', 'Compact item metadata; no body, chat or settings.', { accountId, query: str(500), status, platform, limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 }, offset: { type: 'integer', minimum: 0, maximum: 1000000, default: 0 } })
-tool('get_item', 'Get one item. Opt into bounded body/article/production fields.', { id, accountId, fields: { type: 'array', items: { enum: ['body', 'article', 'production'] }, uniqueItems: true, maxItems: 3 }, maxChars: { type: 'integer', minimum: 1, maximum: 200000, default: 8000 } }, ['id'])
+tool('get_item', 'Get one item. Opt into bounded body/article/production or compact media fields.', { id, accountId, fields: { type: 'array', items: { enum: ['body', 'article', 'production', 'media'] }, uniqueItems: true, maxItems: 4 }, maxChars: { type: 'integer', minimum: 1, maximum: 200000, default: 8000 } }, ['id'])
+tool('import_file', 'Import one host-local JPEG/PNG/WebP/GIF (25 MB) or MP4/MOV/WebM (250 MB), preserving exact bytes without model calls. Default destination item creates one idea, Unassigned when accountId is omitted. Destination avatar requires a concrete accountId, accepts images only and forbids title/body/tags. Returns metadata only.', { path: { type: 'string', minLength: 1, maxLength: 4096, pattern: '^/' }, destination: { enum: ['item', 'avatar'], default: 'item' }, accountId, title: str(300), body: str(40000), tags: { type: 'array', items: str(100), maxItems: 24 } }, ['path'], true)
+tools.at(-1).inputSchema.allOf = [{ if: { properties: { destination: { const: 'avatar' } }, required: ['destination'] }, then: { properties: { accountId: id }, required: ['accountId'], not: { anyOf: ['title', 'body', 'tags'].map(field => ({ required: [field] })) } } }]
 tool('apply_ops', 'Apply up to 100 whitelisted operations. Returns receipts and partial failures. scheduledAt requires an ISO8601 timezone; null cancels.', { accountId, ops: { type: 'array', items: { oneOf: operations }, minItems: 1, maxItems: 100 }, label: str(100) }, ['ops'], true)
 const shot = object({ shot: str(12), visual: str(2000), voice: str(2000), seconds: { type: 'number', minimum: 1, maximum: 60 }, prompt: str(1200) })
 tool('assist', 'Create or revise content with the workbench selected/subscription model. Executes production actions; may incur configured provider costs.', { message: { type: 'string', minLength: 1, maxLength: 40000 }, focusId: id, accountId }, ['message'], true)

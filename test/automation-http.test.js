@@ -58,7 +58,7 @@ test('MCP server factory shares catalog without connecting a transport', async (
 })
 
 test('official HTTP SDK initializes, lists, reads and deduplicates a real Host mutation', async t => {
-  const { bridge, token, store } = await fixture(t)
+  const { bridge, token, store, home } = await fixture(t)
   assert.match(bridge.url, /^http:\/\/127\.0\.0\.1:\d+\/mcp$/)
   const client = await sdk(t, bridge, token)
   assert.equal(client.getServerVersion().version, PLUGIN_VERSION)
@@ -69,6 +69,19 @@ test('official HTTP SDK initializes, lists, reads and deduplicates a real Host m
   const second = await client.callTool({ name: 'media_desk_apply_ops', arguments: args })
   assert.equal(first.structuredContent.ok, true); assert.equal(second.structuredContent.cached, true)
   assert.equal((await store.read()).items.length, 1)
+  const path=join(home,'HTTP image.png');const {createCanvas}=await import('@napi-rs/canvas');const bytes=createCanvas(2,5).toBuffer('image/png');await writeFile(path,bytes)
+  const input={path,requestId:'http-import',body:'private source body'}
+  const imported=await client.callTool({name:'media_desk_import_file',arguments:input})
+  assert.equal(imported.structuredContent.ok,true);assert.equal(imported.structuredContent.result.media.h,5)
+  assert.equal(JSON.stringify(imported).includes(path),false);assert.equal(JSON.stringify(imported).includes('private source body'),false)
+  assert.equal((await client.callTool({name:'media_desk_import_file',arguments:input})).structuredContent.cached,true)
+  const media=await client.callTool({name:'media_desk_get_item',arguments:{id:imported.structuredContent.result.id,fields:['media']}})
+  assert.deepEqual(media.structuredContent.result.media,imported.structuredContent.result.media)
+  assert.equal((await store.read()).items.length,2)
+  const accountId=(await store.read()).accounts[0].id
+  const avatar=await client.callTool({name:'media_desk_import_file',arguments:{path,destination:'avatar',accountId,requestId:'http-avatar'}})
+  assert.equal(avatar.structuredContent.ok,true);assert.equal(avatar.structuredContent.result.destination,'avatar');assert.equal((await store.read()).items.length,2)
+  const account=await client.callTool({name:'media_desk_get_account',arguments:{id:accountId}});assert.equal(account.structuredContent.result.avatarImportRequestId,'http-avatar')
 })
 
 test('HTTP authenticates before JSON and rejects browser headers, other paths/methods and untrusted Hosts', async t => {
