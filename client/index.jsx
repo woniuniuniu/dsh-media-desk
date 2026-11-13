@@ -12,6 +12,7 @@ import { SettingsDialog } from './settings.jsx'
 import { Studio } from './studio.jsx'
 import css from './styles.css'
 import { lang, subscribeLang, t, useLang } from './i18n.js'
+import { updateUrl, useVersionInfo } from './version.js'
 import { Dialog, FormDialog, Icon, IconButton, Toast } from './ui.jsx'
 
 const PANEL_ID = 'media-desk'
@@ -95,6 +96,17 @@ function CaptureDialog() {
   )
 }
 
+function UpdateBadge() {
+  const info = useVersionInfo()
+  const href = updateUrl(info)
+  if (!href) return null
+  return (
+    <a className="md-update" href={href} target="_blank" rel="noreferrer" title={t('新版本 {version} 已发布，点击查看更新说明', { version: info.latest })}>
+      ↑ v{info.latest}
+    </a>
+  )
+}
+
 function SampleBadge() {
   const hasSample = useDesk(s => s.state.items.some(i => i.sample))
   if (!hasSample) return null
@@ -165,6 +177,7 @@ function Desk() {
           {ready ? <SampleBadge /> : null}
           {canUndo ? <IconButton icon="undo" label={t('撤销上一步')} onClick={undo} /> : null}
           {ready ? <ModelButton /> : null}
+          {ready ? <UpdateBadge /> : null}
           <IconButton icon="gear" label={t('设置')} onClick={() => setDesk({ settingsOpen: true })} />
           {showDock ? null : <button type="button" className="md-open-dock" onClick={() => setDesk({ dockOpen: true })}><Icon name="chat" size={15} />{t('助手')}</button>}
         </header>

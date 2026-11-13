@@ -2,6 +2,7 @@
 import React from 'react'
 import { saveSettings, setDesk, testImage, useDesk } from './desk.js'
 import { t, useLang } from './i18n.js'
+import { updateUrl, useVersionInfo } from './version.js'
 import { Dialog, Icon } from './ui.jsx'
 
 // 常见服务的 OpenAI 兼容地址，模型名以各家文档为准。label 是中文原文，显示时再翻译
@@ -32,6 +33,7 @@ export function SettingsDialog() {
   const [testing, setTesting] = React.useState(false)
   const [sample, setSample] = React.useState(null)
   const [advanced, setAdvanced] = React.useState(false)
+  const version = useVersionInfo()
   React.useEffect(() => {
     if (!open || !settings) return
     const { image } = settings
@@ -151,6 +153,10 @@ export function SettingsDialog() {
           </>
         ) : null}
         {sample ? <img className="md-test-sample" src={sample} alt={t('测试图')} /> : null}
+        <div className="md-version">
+          <span>{t('版本')} {version?.current ? `v${version.current}` : '—'}</span>
+          {version?.updateAvailable ? <a href={updateUrl(version)} target="_blank" rel="noreferrer">{t('有新版本 ↑ v{version}', { version: version.latest })}</a> : null}
+        </div>
         <div className="md-form-foot">
           <button type="button" className="md-btn" disabled={testing} onClick={async () => {
             setTesting(true)

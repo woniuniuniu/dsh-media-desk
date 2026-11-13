@@ -178,7 +178,7 @@ dsh plugin --profile desktop add dsh-media-desk
 dsh plugin --profile web add dsh-media-desk
 ```
 
-**2. Update.** When a new version comes out, the Plugins page shows an update — click it; a command-line install runs the same command again. To install offline, download `dsh-media-desk-*.tgz` from [Releases](https://github.com/woniuniuniu/dsh-media-desk/releases/latest) and use `"file:$PWD/dsh-media-desk-VERSION.tgz"` in place of the package name.
+**2. Update.** When a new version comes out, the Plugins page shows an update — click it; a command-line install runs the same command again. Media Desk also checks npm itself: when a newer version exists the top bar shows `↑ vX.Y.Z`, Settings shows the version you are on, and the badge opens the npm page with the upgrade command. To install offline, download `dsh-media-desk-*.tgz` from [Releases](https://github.com/woniuniuniu/dsh-media-desk/releases/latest) and use `"file:$PWD/dsh-media-desk-VERSION.tgz"` in place of the package name.
 
 **3. Open.** **Media Desk** appears in the sidebar. On first launch it's filled with sample data so you can explore every page. Click **Clear sample data** in the top right when you're ready to start with your own.
 

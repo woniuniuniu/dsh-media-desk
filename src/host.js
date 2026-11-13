@@ -19,6 +19,7 @@ import { normalizeStyle, referenceExcerpt, stylePrompts } from './style.js'
 import { dshHome, Store } from './store.js'
 import { currentLang, platformName, tr, withLang } from './i18n.js'
 import { localizeSamples, samplesNeedLocale } from './seed.js'
+import { createVersionCheck } from './version.js'
 
 const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets')
 const MAX_JSON = 4_000_000
@@ -327,6 +328,7 @@ async function route(ctx, store, desk, req, res) {
     }
     if (path === 'insights') return json(res, 200, computeInsights(await store.read()))
     if (path === 'monid/status') return json(res, 200, await monidStatus(desk.monid))
+    if (path === 'version') return json(res, 200, await desk.versionCheck.read())
     return json(res, 404, { error: tr('接口不存在') })
   }
   if (method !== 'POST') return json(res, 405, { error: tr('不支持的方法') })
@@ -469,7 +471,7 @@ export default {
       generate: (image, prompt, options) => image.source === 'tool' ? generateToolImage(ctx, image, prompt, options) : generateImage(image, prompt, options),
     })
     const monid = createMonidRunner()
-    const desk = { settings, producer, monid }
+    const desk = { settings, producer, monid, versionCheck: createVersionCheck() }
     // 启动时恢复用户在工作台里选过的助手模型
     settings.read().then(saved => setAssistantModel(saved.assistant)).catch(() => {})
     ctx.effect(() => ctx.webServer.register({

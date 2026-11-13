@@ -836,3 +836,10 @@ button.md-receipt:hover { transform: translateX(2px); }
 .md-node.is-dim { opacity: .28; filter: saturate(.5); }
 .md-hero-related { margin-top: 10px; display: flex; gap: 10px; align-items: baseline; color: var(--ink2); font-size: 12.5px; line-height: 18px; animation: md-rise .5s var(--ease) both; }
 
+
+/* 新版本提示：顶栏的小胶囊 + 设置底部的版本行 */
+.md-update { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 999px; corner-shape: round; color: var(--ink); font-size: 12px; line-height: 28px; text-decoration: none; white-space: nowrap; background: color-mix(in srgb, var(--accent, #6b5cff) 14%, var(--glass)); box-shadow: inset 0 0 0 .5px var(--line-strong); backdrop-filter: blur(24px); transition: background .15s; }
+.md-update:hover { background: color-mix(in srgb, var(--accent, #6b5cff) 24%, var(--glass)); }
+.md-version { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 14px 0 4px; color: var(--ink3); font-size: 12px; line-height: 18px; }
+.md-version a { color: var(--accent, #6b5cff); text-decoration: none; }
+.md-version a:hover { text-decoration: underline; }
