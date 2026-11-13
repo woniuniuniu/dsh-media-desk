@@ -8,7 +8,7 @@
 
 **Tech Stack:** 与计划 1 相同，不新增依赖。
 
-**Spec:** `docs/superpowers/specs/2026-11-11-x-desk-design.md` 第 6.4（已发识别）、6.5（长文）、6.6（学习）、6.7（复盘）节。前置：计划 1 全部完成。
+**Spec:** `docs/product/2026-11-11-x-desk-design.md` 第 6.4（已发识别）、6.5（长文）、6.6（学习）、6.7（复盘）节。前置：计划 1 全部完成。
 
 ## Global Constraints
 

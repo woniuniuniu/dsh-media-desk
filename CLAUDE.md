@@ -6,7 +6,7 @@
 
 从 `YjAdair/dsh-heimao-media-desk`（上游 `woniuniuniu/dsh-media-desk` 2.6.2）硬分叉而来。**不再合并上游**，上游的修复如需要，手动挑选移植。
 
-设计文档是唯一的需求来源：`docs/superpowers/specs/`。代码与设计冲突时，先改设计文档，再改代码。
+设计文档是唯一的需求来源：`docs/product/`。代码与设计冲突时，先改设计文档，再改代码。实现中做出的偏离设计的决定，记入 `docs/product/decisions.md`（写明决定、理由、判断错了的代价），并在设计文档的「实现后的变更」一节留一行指向它。
 
 ## 读者约定
 
@@ -24,11 +24,11 @@
 | `client/` | 界面（浏览器半片）| 任何密钥、任何直接访问外部服务的代码 |
 | `test/` | 自动化测试，文件名 `<模块>.test.js` | 需要真实网络或真实花钱的测试 |
 | `scripts/` | 打包、沙盒、模拟数据源和模拟模型 | 一次性脚本（用完即删，不提交） |
-| `docs/superpowers/specs/` | 设计文档，命名 `YYYY-MM-DD-<主题>-design.md` | 过程草稿 |
-| `docs/superpowers/plans/` | 实施计划，命名 `YYYY-MM-DD-<主题>-plan.md` | |
+| `docs/product/` | 产品需求与设计：设计文档 `YYYY-MM-DD-<主题>-design.md`、决策记录 `decisions.md`、产品背景与演变 `README.md` | 过程草稿、子代理说明、审阅原文 |
+| `docs/product/plans/` | 实施计划，命名 `YYYY-MM-DD-<主题>-plan.md`，计划完成后保留不删 | |
 | `docs/spikes/` | 验证性试验和联调的结论，命名 `YYYY-MM-DD-<问题>.md`，只写结论和数据 | 试验代码 |
 | `docs/grok-bot/` | 给 Grok Bot 的定时任务指令，一份指令一个文件 | 任何密钥、账号信息 |
-| `docs/acceptance/` | 交给负责人的验收说明，命名 `YYYY-MM-DD-<主题>-acceptance.md`：做了什么、替他做了哪些决定、需要他亲自做的事、待他决定的事 | 过程记录（放 `.superpowers/`，不提交） |
+| `docs/acceptance/` | 交给负责人的验收说明，命名 `YYYY-MM-DD-<主题>-acceptance.md`：做了什么、替他做了哪些决定、需要他亲自做的事、待他决定的事 | 过程记录（执行中放 `.superpowers/`，不提交；计划完成后把其中的决定整理进 `docs/product/decisions.md`，再删除） |
 
 命名：文件名用英文小写加连字符；代码、变量、命令用英文；注释和文档用中文。
 

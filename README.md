@@ -13,6 +13,7 @@
 
 ## 文档在哪里
 
+- [docs/product/：产品背景与演变、设计、决策记录和实施计划](docs/product/README.md)
 - [docs/grok-bot/：搭建说明、四份任务指令与文件格式](docs/grok-bot/README.md)
 - [沙盒走查清单：选题、成稿与审批](docs/spikes/2026-11-12-sandbox-walkthrough.md)
 - [计划 2 走查清单：已发识别、复盘与长文](docs/spikes/2026-11-12-plan2-walkthrough.md)

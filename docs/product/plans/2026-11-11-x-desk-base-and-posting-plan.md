@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node.js ≥ 20（ES modules，`node:test`）、React（宿主提供）、esbuild、DeepSeek Harness 插件接口 0.2.x。不新增任何依赖。
 
-**Spec:** `docs/superpowers/specs/2026-11-11-x-desk-design.md`（第 2 版）。项目规范：`CLAUDE.md`。
+**Spec:** `docs/product/2026-11-11-x-desk-design.md`（第 2 版）。项目规范：`CLAUDE.md`。
 
 **本计划覆盖设计文档第 9 节的第 1、2 步。** 第 3 步（学习与长文、复盘、已发识别）是计划 2，第 4 步（与 Grok Bot 联调、GitHub 同步、四份指令）是计划 3，各自另写。
 
@@ -128,20 +128,20 @@
 **Interfaces:**
 - Produces: 仓库根目录即本项目目录；`Store` 默认根目录为 `join(dshHome(), 'x-desk')`；HTTP 前缀 `/x-desk`。
 
-- [ ] **Step 1: 把分叉代码放进当前目录（当前目录已有 `CLAUDE.md` 和 `docs/superpowers/`，与上游文件不冲突）**
+- [ ] **Step 1: 把分叉代码放进当前目录（当前目录已有 `CLAUDE.md` 和 `docs/product/`，与上游文件不冲突）**
 
 ```bash
 git init -b setup
 git remote add fork https://github.com/YjAdair/dsh-heimao-media-desk.git
 git fetch fork
 git checkout -b x-desk fork/main
-git add CLAUDE.md docs/superpowers
+git add CLAUDE.md docs/product
 git commit -m "加入项目规范、设计文档与实施计划"
 npm install
 npm test
 ```
 
-Expected: 上游测试全部通过。所有工作都在 `x-desk` 分支上进行。`git checkout -b` 遇到会被覆盖的未跟踪文件时会拒绝执行而不是覆盖；当前目录里只有 `CLAUDE.md` 和 `docs/superpowers/`，与上游文件不重名。**不要使用 `git reset --hard`，不要 `git push`**，两者都是负责人的红线。若 `git fetch` 因网络失败，停下来告知负责人。
+Expected: 上游测试全部通过。所有工作都在 `x-desk` 分支上进行。`git checkout -b` 遇到会被覆盖的未跟踪文件时会拒绝执行而不是覆盖；当前目录里只有 `CLAUDE.md` 和 `docs/product/`，与上游文件不重名。**不要使用 `git reset --hard`，不要 `git push`**，两者都是负责人的红线。若 `git fetch` 因网络失败，停下来告知负责人。
 
 - [ ] **Step 2: 写失败的测试 `test/rename.test.js`**
 
