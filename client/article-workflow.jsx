@@ -72,6 +72,7 @@ export function ArticleWorkflow({ item, onDirty = NOOP, onBusy = NOOP, controlle
   const production = productionFor(item, 'article')
   const settings = useDesk(state => state.settings)
   const serverAction = useDesk(state => state.articleBusy?.[item.id])
+  const deleting = useDesk(state => Boolean(state.deletingItems?.[item.id]))
   const draft = useEditable({ title: production?.title ?? item.title ?? '', text: production?.article ?? '' })
   const [busy, setBusy] = React.useState('')
   const [remoteBusy, setRemoteBusy] = React.useState(false)
@@ -91,7 +92,7 @@ export function ArticleWorkflow({ item, onDirty = NOOP, onBusy = NOOP, controlle
   const api = React.useRef(null)
   const candidatesRef = React.useRef(null)
   const assetBusy = [production?.cover, ...(production?.images || [])].some(image => ['pending', 'running'].includes(image?.status))
-  const waiting = Boolean(busy || serverAction || remoteBusy || assetBusy)
+  const waiting = Boolean(deleting || busy || serverAction || remoteBusy || assetBusy)
   const hasText = Boolean(draft.value.text.trim())
   const candidates = workspace.editCandidates || []
   const pending = candidates.filter(candidate => candidate.status === 'pending')
@@ -129,6 +130,7 @@ export function ArticleWorkflow({ item, onDirty = NOOP, onBusy = NOOP, controlle
   }, [item.id, controllerRef, onSelectionChange])
 
   const updateDraft = patch => {
+    if (deleting) return
     if (!editBase.current) editBase.current = { revision: workspace.revision, text: serverText }
     editVersion.current += 1
     const next = { ...liveDraft.current, ...patch }
@@ -181,6 +183,7 @@ export function ArticleWorkflow({ item, onDirty = NOOP, onBusy = NOOP, controlle
     } finally { lock.current = false; if (alive.current) setBusy('') }
   }
   const send = async (instruction, { mentions = [] } = {}) => {
+    if (deleting) return false
     const commands = mentions.filter(mention => mention.id?.startsWith('cmd:'))
     const otherCommand = commands.some(command => command.id !== 'cmd:produce')
     const rawCommand = /^\/(?!produce(?:\s|$)|成稿(?:\s|$))/i.test(instruction.trim())
@@ -214,11 +217,11 @@ export function ArticleWorkflow({ item, onDirty = NOOP, onBusy = NOOP, controlle
     </div></header>
     {failed ? <p className="md-aw-error" role="alert">{t('本次操作未完成，输入已保留，可重试。')}</p> : null}
     {conflict ? <p className="md-aw-error" role="alert">{t('其他窗口已修改正文。本地输入已保留，请复制后与最新内容合并。')}</p> : null}
-    {waiting ? <p className="md-aw-notice" role="status">{t('正在生成建议，你可以继续编辑正文。')}</p> : null}
+    {waiting ? <p className="md-aw-notice" role="status">{deleting ? t('正在删除……') : t('正在生成建议，你可以继续编辑正文。')}</p> : null}
     {draft.dirty ? <p className="md-aw-dirty" role="status">{t('有未保存的修改')}</p> : null}
     <div className="md-aw-panel md-document-paper" ref={editor}>
-      <Field label="文章标题" value={draft.value.title} onChange={value => updateDraft({ title: value })} />
-      {preview ? <div className="md-prose md-aw-preview" dangerouslySetInnerHTML={{ __html: renderMarkdown(draft.value.text) }} /> : <label className="md-aw-field md-document-body"><span>{t('文章正文')}</span><textarea ref={input} aria-label={t('文章正文')} rows={22} value={draft.value.text} placeholder={t('在这里写下或粘贴你的文章……')} onChange={event => updateDraft({ text: event.target.value })} onSelect={captureSelection} onMouseUp={captureSelection} onKeyUp={captureSelection} onCompositionStart={() => { composing.current = true; clearSelection() }} onCompositionEnd={event => { composing.current = false; captureSelection(event) }} /></label>}
+      <Field label="文章标题" value={draft.value.title} disabled={deleting} onChange={value => updateDraft({ title: value })} />
+      {preview ? <div className="md-prose md-aw-preview" dangerouslySetInnerHTML={{ __html: renderMarkdown(draft.value.text) }} /> : <label className="md-aw-field md-document-body"><span>{t('文章正文')}</span><textarea ref={input} aria-label={t('文章正文')} rows={22} value={draft.value.text} disabled={deleting} placeholder={t('在这里写下或粘贴你的文章……')} onChange={event => updateDraft({ text: event.target.value })} onSelect={captureSelection} onMouseUp={captureSelection} onKeyUp={captureSelection} onCompositionStart={() => { composing.current = true; clearSelection() }} onCompositionEnd={event => { composing.current = false; captureSelection(event) }} /></label>}
       {selection && !preview ? <div className="md-selection-tools" role="toolbar" aria-label={t('选中文字操作')} style={{ left: position.x, top: position.y }} onMouseDown={event => event.preventDefault()}>
         <button type="button" disabled={waiting} onClick={() => onAsk()}>{t('让 AI 修改')}</button><button type="button" disabled={waiting} onClick={() => onAsk(t('简化这段文字'))}>{t('简化')}</button><button type="button" disabled={waiting} onClick={() => onAsk(t('扩写这段文字'))}>{t('扩写')}</button><button type="button" disabled={waiting} onClick={() => onAsk(t('润色这段文字'))}>{t('润色')}</button><button type="button" aria-label={t('清除选区')} onClick={clearSelection}>×</button>
       </div> : null}

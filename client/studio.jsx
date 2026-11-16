@@ -2,6 +2,7 @@
 import React from 'react'
 import { creationFormat } from '../src/workflow.js'
 import { ArticleWorkflow } from './article-workflow.jsx'
+import { DeleteContentButton } from './item-actions.jsx'
 import { ChatPanel } from './chat.jsx'
 import { downloadCover } from './cover.js'
 import { cancelProduce, closeItem, dispatchOps, regenAsset, revealSaved, runProduce, saveProduced, setDesk, toast, useDesk, watchProduction } from './desk.js'
@@ -232,10 +233,6 @@ function HeroTile({ item, live, onView }) {
         {production?.savedAt ? <IconButton icon="folder" label={t('打开保存的文件夹')} onClick={() => revealSaved(item.id)} /> : null}
         {done ? <IconButton icon="refresh" label={t('重新成稿')} onClick={again} /> : null}
         <IconButton icon="gear" label={t('设置')} onClick={() => setDesk({ settingsOpen: true })} />
-        <IconButton icon="trash" label={t('删除这条灵感')} onClick={() => {
-          dispatchOps([{ op: 'delete_item', id: item.id }], { label: t('删除《{title}》', { title: item.title.slice(0, 10) }) })
-          closeItem()
-        }} />
       </div>
     </section>
   )
@@ -550,6 +547,7 @@ export function Studio() {
   const settings = useDesk(s => s.settings)
   const draftFormat = useDesk(s => s.state?.draftFormat)
   const articleBusy = useDesk(s => s.articleBusy?.[s.focusId])
+  const deleting = useDesk(s => Boolean(s.deletingItems?.[s.focusId]))
   const chatOpen = useDesk(s => s.studioDock)
   const [articleDirty, setArticleDirty] = React.useState(false)
   const [articleRemoteBusy, setArticleRemoteBusy] = React.useState(false)
@@ -618,13 +616,13 @@ export function Studio() {
           contextQuote={format === 'article' ? (articleSelection ? { label: t('选中文字'), text: articleSelection.text } : null) : undefined}
           onCancelQuote={format === 'article' ? () => { articleController.current?.clearSelection(); setArticleSelection(null) } : undefined}
           composerRef={format === 'article' ? articleComposer : undefined}
-          disabled={running || Boolean(articleBusy) || articleRemoteBusy}
+          disabled={deleting || running || Boolean(articleBusy) || articleRemoteBusy}
           intro={false}
         />
       </div>
       <button type="button" className="md-chat-toggle" aria-label={t('打开对话')} onClick={() => setDesk(s => ({ studioDock: !s.studioDock }))}><Icon name="chat" size={16} /></button>
       <div className="md-studio-main">
-        <WorkflowSwitch item={item} format={format} busy={running || Boolean(articleBusy) || articleRemoteBusy} dirty={format === 'article' && articleDirty} />
+        <div className="md-studio-actions"><WorkflowSwitch item={item} format={format} busy={deleting || running || Boolean(articleBusy) || articleRemoteBusy} dirty={format === 'article' && articleDirty} /><DeleteContentButton item={item} busy={Boolean(articleBusy) || articleRemoteBusy} dirty={format === 'article' && articleDirty} /></div>
         {format === 'article' ? <ArticleWorkflow key={`article-${item.id}`} item={item} onDirty={setArticleDirty} onBusy={setArticleRemoteBusy} controllerRef={articleController} onSelectionChange={setArticleSelection} onAsk={askArticle} /> : <Sheet key={item.id} item={item} live={live} />}
       </div>
     </div>

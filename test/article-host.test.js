@@ -222,3 +222,25 @@ test('busy generation blocks mode switches while late results become stale candi
     assert.equal((await request('state')).body.state.items.find(item => item.id === 'article').production.article, 'Newest user text.')
   }, { writeResult: () => { entered(); return pendingResult } })
 })
+
+test('a live article request cannot be deleted through either direct ops or a chat instruction', async () => {
+  let release, entered
+  const delayed = new Promise(resolve => { release = resolve })
+  const started = new Promise(resolve => { entered = resolve })
+  await sandbox(async ({ request }) => {
+    const pending = request('article-workflow', { id: 'article', action: 'generate_draft', revision: 0, data: { instruction: 'Write a draft.' } })
+    await started
+    try {
+      const direct = await request('ops', { ops: [{ op: 'delete_item', id: 'article' }] })
+      assert.equal(direct.status, 409)
+      const chat = await request('chat', { message: 'Delete this content.', focusId: 'article' })
+      assert.equal(chat.status, 200)
+      assert.ok(chat.body.state.items.some(row => row.id === 'article'))
+      assert.match(chat.body.answer.text, /完成后再删除/)
+      assert.equal(chat.body.answer.receipts.length, 0)
+    } finally { release('A preserved article suggestion.') }
+    assert.equal((await pending).status, 200)
+    const result = await request('state')
+    assert.ok(result.body.state.items.some(row => row.id === 'article'))
+  }, { writeResult: () => { entered(); return delayed }, chatPlan: () => ({ reply: 'Deleted.', ops: [{ op: 'delete_item', id: 'article' }] }) })
+})

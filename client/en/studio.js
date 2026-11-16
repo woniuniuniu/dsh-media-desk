@@ -1,5 +1,11 @@
 // 英文词典（studio）。key 是中文原文，value 是英文。
 export const STUDIO = {
+  '删除内容': 'Delete content',
+  '删除内容：{title}': 'Delete content: {title}',
+  '内容正在生成，完成后才能删除': 'Content is being generated. Wait until it finishes before deleting.',
+  '请先保存修改，再删除内容。': 'Save your changes before deleting this content.',
+  '正在删除……': 'Deleting…',
+  '无标题': 'Untitled',
   '文章编辑器': 'Article editor',
   '文章助手': 'Writing assistant',
   '选中文字': 'Selected text',

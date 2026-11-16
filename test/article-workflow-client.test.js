@@ -242,6 +242,38 @@ test('编辑器：失败保留人工输入；生成期间继续键入不会被�
   assert.deepEqual(ui.actions.map(value => value[1]), ['save_draft'])
 })
 
+test('编辑器：删除 pending 禁止改标题、正文和发送；删除失败恢复后仍可编辑', async () => {
+  const ui = uiFixture({ item: existing('不能丢的正文') })
+  await ui.settle()
+  ui.snapshot.deletingItems = { 'article-a': true }
+  ui.render()
+  assert.equal(ui.field('文章标题').props.disabled, true)
+  assert.equal(ui.field('文章正文').props.disabled, true)
+  assert.match(ui.text(), /正在删除……/)
+  assert.doesNotMatch(ui.text(), /你可以继续编辑正文/)
+  ui.change('文章标题', '删除途中输入的标题')
+  ui.change('文章正文', '删除途中输入的正文')
+  assert.equal(ui.field('文章标题').props.value, '原标题')
+  assert.equal(ui.field('文章正文').props.value, '不能丢的正文')
+  assert.equal(ui.isDirty, false)
+  assert.equal(await ui.controller.current.send('生成文章'), false)
+  assert.equal(await ui.controller.current.send('/复盘'), false)
+  assert.equal(ui.actions.length, 0)
+  assert.equal(ui.chatCalls.length, 0)
+  ui.snapshot.deletingItems['article-a'] = false
+  ui.render()
+  assert.equal(ui.field('文章标题').props.disabled, false)
+  assert.equal(ui.field('文章正文').props.disabled, false)
+  ui.change('文章正文', '失败后继续编辑的正文')
+  assert.equal(ui.field('文章正文').props.value, '失败后继续编辑的正文')
+  assert.equal(ui.isDirty, true)
+  const studio = uiFixture({ component: 'Studio' })
+  studio.snapshot.deletingItems = { 'article-a': true }
+  studio.render()
+  assert.equal(studio.nodes(node => node.type?.name === 'ChatPanel')[0].props.disabled, true)
+  assert.equal(studio.nodes(node => node.type?.name === 'WorkflowSwitch')[0].props.busy, true)
+})
+
 test('编辑器：dirty绑定开始编辑版本，远端改稿后保存和flush不能借新revision覆盖远端', async () => {
   const ui = uiFixture({ item: existing('原正文', 1) })
   await ui.settle()

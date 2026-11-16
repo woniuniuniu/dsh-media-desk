@@ -153,6 +153,7 @@ const handlers = {
   },
   delete_item(state, op) {
     const item = findById(state.items, op.id)
+    if (productionRunning(item.production)) throw new Error(tr('这条内容正在生成，请完成后再删除'))
     state.items = state.items.filter(row => row.id !== op.id)
     for (const child of state.items) if (child.parentId === op.id) child.parentId = item.parentId ?? null
     state.metrics = state.metrics.filter(row => row.itemId !== op.id)

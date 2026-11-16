@@ -1,5 +1,6 @@
 // Host 英文词典：key 是中文原文，{name} 是占位符。
 export const EN = {
+  '这条内容正在生成，请完成后再删除': 'Wait for generation to finish before deleting this content',
   // Direct article editing and reviewable selection changes
   '请先写入文章正文': 'Write or paste article text first',
   '请先根据当前正文规划配图': 'Plan illustrations for the current article text first',

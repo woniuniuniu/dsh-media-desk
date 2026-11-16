@@ -22,6 +22,7 @@ import { listMentions, normalizeMentions, resolveMentions } from './mentions.js'
 import { currentLang, platformName, tr, withLang } from './i18n.js'
 import { localizeSamples, samplesNeedLocale } from './seed.js'
 import { createVersionCheck } from './version.js'
+import { importWechat, wechatAction, wechatQr, wechatState } from './wechat.js'
 import { ArticleWorkflow } from './article-workflow.js'
 import { articleWorkspace, creationFormat, productionFor } from './workflow.js'
 
@@ -116,9 +117,9 @@ function articleAssetsBusy(desk, item) {
     || [item.production?.cover, ...item.production?.images || []].some(asset => asset?.status === 'running')
 }
 
-function assertFormatIdle(desk, id) {
+function assertContentIdle(desk, id, message = '这条内容正在生成，请完成或取消后再切换流程') {
   if (desk.articles.isBusy(id) || desk.producer.isRunning(id) || desk.producer.anyAssetActive(id)) {
-    throw Object.assign(new Error(tr('这条内容正在生成，请完成或取消后再切换流程')), { status: 409 })
+    throw Object.assign(new Error(tr(message)), { status: 409 })
   }
 }
 
@@ -181,10 +182,17 @@ async function chatTurn(ctx, store, desk, body) {
     // 本地规则只会改灵感标题；有成稿时要改的是成稿标题
     const article = target && creationFormat(target, draft.draftFormat) === 'article'
     let blockedArticleWrite = false
+    let blockedDeletion = false
     const ops = (Array.isArray(plan.ops) ? plan.ops : []).filter(op => {
       // Article edits are reviewable candidates in the editor; chat cannot overwrite them.
       if (op?.op === 'set_creation_format') return false
       const item = draft.items.find(row => row.id === op?.id)
+      if (op?.op === 'delete_item' && item) {
+        const p = item.production
+        const active = desk.articles.isBusy(item.id) || desk.producer.isRunning(item.id) || desk.producer.anyAssetActive(item.id)
+          || p?.status === 'running' || [p?.cover, ...(p?.images || []), ...(p?.shots || [])].some(asset => asset?.status === 'running')
+        if (active) { blockedDeletion = true; return false }
+      }
       if (item && op?.op === 'save_draft' && op.format !== 'script') {
         blockedArticleWrite = true
         return false
@@ -214,6 +222,10 @@ async function chatTurn(ctx, store, desk, body) {
         : tr('请在文章编辑器输入要求，或选中文字后修改；建议由你选择是否采用。')
       errors.push(plan.reply)
       if (target) plan.actions = [...(Array.isArray(plan.actions) ? plan.actions : []), { type: 'open', id: target.id, workflow: 'article' }]
+    }
+    if (blockedDeletion) {
+      plan.reply = tr('这条内容正在生成，请完成后再删除')
+      errors.push(plan.reply)
     }
     return { receipts, errors, targets, done: Boolean(production) }
   })
@@ -375,6 +387,8 @@ async function route(ctx, store, desk, req, res) {
     return sendFile(req, res, join(store.filesDir, name))
   }
   if (method === 'GET') {
+    if (path === 'wechat/state') return json(res, 200, await wechatState(ctx, store, { limit: url.searchParams.get('limit') ?? 200 }))
+    if (path === 'wechat/qrcode') return json(res, 200, await wechatQr(ctx))
     if (path === 'state') {
       if (!desk.settled) { desk.settled = true; await desk.producer.settleAll().catch(() => {}) }
       let state = await store.read()
@@ -425,12 +439,20 @@ async function route(ctx, store, desk, req, res) {
   if (path === 'upload') return handleUpload(req, store, res)
   const body = await readJson(req)
   switch (path) {
+    case 'wechat/action': return json(res, 200, await wechatAction(ctx, store, body))
+    case 'wechat/import': return json(res, 200, await importWechat(ctx, store, body))
     case 'ops': {
-      for (const op of Array.isArray(body.ops) ? body.ops : []) {
-        if (op?.op === 'set_creation_format') assertFormatIdle(desk, op.id)
+      const assertIdle = () => {
+        for (const op of Array.isArray(body.ops) ? body.ops : []) {
+          if (op?.op === 'set_creation_format') assertContentIdle(desk, op.id)
+          if (op?.op === 'delete_item') assertContentIdle(desk, op.id, '这条内容正在生成，请完成后再删除')
+        }
       }
+      assertIdle()
       const label = typeof body.label === 'string' ? body.label : tr('操作')
       const result = await store.mutate(label, (draft) => {
+        // Recheck live jobs inside the store queue before any operation mutates data.
+        assertIdle()
         const applied = applyOps(draft, body.ops)
         return { ...applied, state: draft }
       }, { undoable: body.undoable !== false })
