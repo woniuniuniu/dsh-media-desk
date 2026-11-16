@@ -1,12 +1,12 @@
-// Article creation is a sequence of explicit, saved decisions; video production stays separate.
-import { randomUUID } from 'node:crypto'
-import { articleImagesPrompts, articleOutlinePrompts, articlePointPrompts, articleWritePrompts, extractJson } from './ai.js'
+// Article edits produce a reviewable candidate; only accepting it changes the document.
+import { createHash, randomUUID } from 'node:crypto'
+import { articleImagesPrompts, articleOutlinePrompts, articlePointPrompts, articleSelectionPrompts, articleWritePrompts, extractJson } from './ai.js'
 import { normalizeMentions } from './mentions.js'
 import { articleWorkspace, creationFormat, markArticleDraftChanged, productionFor } from './workflow.js'
 import { tr } from './i18n.js'
 
-const AI_ACTIONS = new Set(['suggest_point', 'suggest_outline', 'write', 'plan_images'])
-const ACTIONS = new Set(['save_sources', 'confirm_sources', 'save_point', 'suggest_point', 'confirm_point', 'save_outline', 'suggest_outline', 'confirm_outline', 'write', 'save_draft', 'finalize', 'plan_images', 'generate_images'])
+const AI_ACTIONS = new Set(['suggest_point', 'suggest_outline', 'generate_draft', 'rewrite_selection', 'plan_images'])
+const ACTIONS = new Set(['save_sources', 'confirm_sources', 'save_point', 'suggest_point', 'confirm_point', 'save_outline', 'suggest_outline', 'confirm_outline', 'write', 'generate_draft', 'rewrite_selection', 'accept_candidate', 'discard_candidate', 'save_draft', 'finalize', 'plan_images', 'generate_images'])
 const clone = value => structuredClone(value)
 const failure = (message, status = 400) => Object.assign(new Error(tr(message)), { status })
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b)
@@ -39,14 +39,21 @@ function assertAvailable(item) {
 
 function assertGate(action, workspace, item) {
   if (['confirm_sources'].includes(action) && !workspace.sources.some(row => row.text?.trim())) throw failure('先保存至少一条资料摘录或亲身经历')
-  if (['suggest_point', 'confirm_point'].includes(action) && !workspace.sourcesConfirmed) throw failure('请先确认资料与出处')
   if (action === 'confirm_point' && !workspace.point.thesis.trim()) throw failure('请先明确本篇观点')
-  if (['suggest_outline', 'confirm_outline'].includes(action) && !workspace.pointConfirmed) throw failure('请先确认观点')
   if (action === 'confirm_outline' && (!workspace.outline.title.trim() || !workspace.outline.text.trim())) throw failure('请先保存标题和提纲')
-  if (action === 'write' && !(workspace.sourcesConfirmed && workspace.pointConfirmed && workspace.outlineConfirmed)) throw failure('请先依次确认资料、观点和提纲，再写全文')
-  if (action === 'finalize' && (!item.production?.article?.trim() || workspace.draftStale)) throw failure('请先修改并保存正文，再确认定稿')
-  if (['plan_images', 'generate_images'].includes(action) && (!workspace.draftFinalized || workspace.draftStale || !item.production?.article?.trim())) throw failure('请先确认正文定稿，再规划或生成配图')
-  if (action === 'generate_images' && (!workspace.imagesPlanned || workspace.imagesStale)) throw failure('请先根据当前定稿规划配图')
+  if (['finalize', 'plan_images', 'generate_images'].includes(action) && !productionFor(item, 'article')?.article?.trim()) throw failure('请先写入文章正文')
+  if (action === 'generate_images' && (!workspace.imagesPlanned || workspace.imagesStale || workspace.imagePlanTextHash !== documentHash(item))) throw failure('请先根据当前正文规划配图')
+}
+
+const documentText = item => productionFor(item, 'article')?.article || ''
+const documentHash = item => createHash('sha256').update(documentText(item)).digest('hex')
+
+function selectionFrom(item, value) {
+  const body = documentText(item), start = value?.start, end = value?.end
+  const boundary = position => !(position > 0 && position < body.length && /[\uD800-\uDBFF]/.test(body[position - 1]) && /[\uDC00-\uDFFF]/.test(body[position]))
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end <= start || end > body.length || !boundary(start) || !boundary(end)) throw failure('请选择正文中有效的文本范围')
+  if (typeof value?.text !== 'string' || !value.text.trim() || body.slice(start, end) !== value.text) throw failure('选中文本与当前正文不一致，请重新选择', 409)
+  return { start, end, text: value.text }
 }
 
 function invalidate(workspace, item, from) {
@@ -67,14 +74,14 @@ function saveDraftHistory(workspace, production, extra = {}) {
 }
 
 function writeDraft(item, workspace, value, title, { ai = false, mentions = [] } = {}) {
-  const body = String(value ?? '').trim()
-  if (!body) throw failure('正文不能为空')
+  if (typeof value !== 'string') throw failure('正文必须是文本')
+  const body = value
   if (body.length > 200000) throw failure('正文超过长度限制')
   const previous = productionFor(item, 'article')
   if (previous?.article !== body || previous?.title !== title) saveDraftHistory(workspace, previous)
   workspace.draftStale = false
   const references = normalizeMentions(mentions)
-  item.production = { ...item.production, format: 'article', status: 'done', stage: 'done', title: title || item.production?.title || item.title, article: body, ...(ai ? { aiArticle: body, engine: 'model' } : {}), mentions: references.length ? references : normalizeMentions(item.production?.mentions) }
+  item.production = { ...previous, ...item.production, format: 'article', status: 'done', stage: 'done', title, article: body, ...(ai ? { aiArticle: body, engine: 'model' } : {}), mentions: references.length ? references : normalizeMentions(previous?.mentions) }
   item.articleWorkflow = workspace
   markArticleDraftChanged(item)
   if (['idea', 'outline'].includes(item.status)) item.status = 'draft'
@@ -119,6 +126,7 @@ export class ArticleWorkflow {
 
   async act(id, action, { data = {}, expectedRevision, context = '', mentions = [] } = {}) {
     if (!ACTIONS.has(action)) throw failure('文章步骤无效')
+    if (action === 'write') action = 'generate_draft'
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw failure('请提供当前文章版本')
     const snapshot = clone(await this.store.read())
     const item = snapshot.items.find(row => row.id === id)
@@ -145,16 +153,34 @@ export class ArticleWorkflow {
         return { state: await this.store.read(), workflow: result.workflow, started: targets }
       }
       const options = { context, voice: settings.voice, imageCount: settings.imageCount }
+      if (action === 'generate_draft' || action === 'rewrite_selection') {
+        if (data.instruction !== undefined && typeof data.instruction !== 'string') throw failure('写作要求必须是文本')
+        if (typeof data.instruction === 'string' && data.instruction.length > 12000) throw failure('写作要求超过长度限制')
+        const instruction = text(data.instruction, 12000) || (action === 'rewrite_selection' ? '改进选中的这段文字。' : `根据选题「${item.title || ''}」写一篇文章。`)
+        const selection = action === 'rewrite_selection' ? selectionFrom(item, data.selection) : undefined
+        const prompts = selection
+          ? articleSelectionPrompts(snapshot, item, { ...options, instruction, selection })
+          : articleWritePrompts(snapshot, item, workspace, { ...options, instruction, title: data.title })
+        const result = await this.model({ ...prompts, maxTokens: 6000 }, 240000)
+        if (typeof result?.text !== 'string' || !selection && !result.text.trim()) throw failure('模型没有返回正文', 502)
+        let body = result.text, title
+        if (!selection) {
+          const heading = /^\s*#\s+([^\n]+)\n?/.exec(body)
+          title = text(data.title, 160) || text(heading?.[1], 160) || productionFor(item, 'article')?.title || item.title
+          body = (heading ? body.slice(heading[0].length) : body).trim()
+          if (!body) throw failure('模型没有返回正文', 502)
+        }
+        if (body.length > 200000) throw failure('模型返回的正文超过长度限制', 502)
+        if (selection && documentText(item).length - (selection.end - selection.start) + body.length > 200000) throw failure('修改后的正文超过长度限制', 502)
+        const candidate = { id: randomUUID(), kind: selection ? 'selection' : 'draft', text: body, ...(title !== undefined ? { title } : {}), instruction, baseRevision: expectedRevision, baseTextHash: documentHash(item), ...(selection ? { selection } : {}), mentions: normalizeMentions(mentions), at: new Date().toISOString(), status: 'pending' }
+        return await this.saveCandidate(id, candidate, result.model)
+      }
       const prompts = action === 'suggest_point' ? articlePointPrompts(snapshot, item, workspace, options)
         : action === 'suggest_outline' ? articleOutlinePrompts(snapshot, item, workspace, options)
-          : action === 'write' ? articleWritePrompts(snapshot, item, workspace, options)
-            : articleImagesPrompts(snapshot, item, workspace, options)
-      const result = await this.model({ ...prompts, maxTokens: action === 'write' ? 6000 : 2400, light: action !== 'write' }, action === 'write' ? 240000 : 90000)
+          : articleImagesPrompts(snapshot, item, workspace, options)
+      const result = await this.model({ ...prompts, maxTokens: 2400, light: true }, 90000)
       let value
-      if (action === 'write') {
-        if (typeof result.text !== 'string' || !result.text.trim()) throw failure('模型没有返回正文', 502)
-        value = { text: result.text.replace(/^\s*#\s+.*\n?/, '').trim(), title: workspace.outline.title, model: result.model }
-      } else {
+      {
         let parsed
         try { parsed = extractJson(result.text) } catch { throw failure('模型返回的步骤内容无效，原内容保持不变', 502) }
         value = action === 'suggest_point' ? { point: pointFrom(parsed.point || parsed) }
@@ -165,6 +191,26 @@ export class ArticleWorkflow {
       }
       return await this.commit(id, action, expectedRevision, value, mentions, { candidate: value })
     } finally { this.jobs.delete(id) }
+  }
+
+  async saveCandidate(id, candidate, engine) {
+    const result = await this.store.mutate('保存文章修改建议', state => {
+      const index = state.items.findIndex(row => row.id === id)
+      if (index < 0) throw failure('找不到这条内容', 404)
+      const item = clone(state.items[index]), workspace = articleWorkspace(item)
+      const stale = workspace.revision !== candidate.baseRevision || creationFormat(item, state.draftFormat) !== 'article' || documentHash(item) !== candidate.baseTextHash
+      if (stale) candidate = { ...candidate, stale: true }
+      workspace.editCandidates = [...workspace.editCandidates || [], clone(candidate)].slice(-8)
+      item.articleWorkflow = workspace
+      state.items[index] = item
+      state.chat = [...state.chat || [],
+        { id: randomUUID(), at: candidate.at, role: 'user', text: candidate.instruction, itemId: id, ...(candidate.mentions.length ? { mentions: candidate.mentions } : {}) },
+        { id: randomUUID(), at: candidate.at, role: 'assistant', text: tr(stale ? '基于旧版正文的建议已保存，现稿保持不变。' : '修改建议已就绪，尚未替换正文。'), engine: engine || 'model', itemId: id },
+      ].slice(-300)
+      return { state, workflow: clone(workspace), candidate: clone(candidate), ...(stale ? { stale: true } : {}) }
+    }, { undoable: false })
+    if (result.stale) throw Object.assign(failure('生成期间正文已有修改，建议已保留，请重新生成', 409), result)
+    return result
   }
 
   async commit(id, action, revision, data, mentions, { candidate } = {}) {
@@ -178,7 +224,6 @@ export class ArticleWorkflow {
         // Preserve a late model result as a candidate, never as the current user's draft.
         const record = { id: randomUUID(), at: new Date().toISOString(), action, data: candidate, sourceRevision: revision }
         workspace.candidateHistory = [...workspace.candidateHistory || [], record].slice(-4)
-        if (action === 'write') saveDraftHistory(workspace, { title: candidate.title, article: candidate.text }, { candidate: true, sourceRevision: revision })
         workspace.revision += 1
         item.articleWorkflow = workspace
         state.items[index] = item
@@ -187,7 +232,28 @@ export class ArticleWorkflow {
       assertAvailable(item)
       assertGate(action, workspace, item)
       item.creationFormat = 'article'
-      if (action === 'save_sources') {
+      if (action === 'accept_candidate' || action === 'discard_candidate') {
+        const candidate = workspace.editCandidates.find(row => row.id === data.candidateId)
+        if (!candidate) throw failure('找不到这条修改建议', 404)
+        if (candidate.status !== 'pending') throw failure('这条修改建议已经处理过', 409)
+        if (action === 'discard_candidate') {
+          candidate.status = 'discarded'
+          item.articleWorkflow = workspace
+          state.items[index] = item
+          return { state, workflow: clone(workspace), candidate: clone(candidate) }
+        }
+        if (candidate.stale || candidate.baseRevision !== workspace.revision || candidate.baseTextHash !== documentHash(item)) throw failure('正文已经变化，请重新生成修改建议', 409)
+        let body = candidate.text
+        if (candidate.kind === 'selection') {
+          const selection = selectionFrom(item, candidate.selection), current = documentText(item)
+          body = current.slice(0, selection.start) + candidate.text + current.slice(selection.end)
+        }
+        const title = candidate.kind === 'draft' ? candidate.title : productionFor(item, 'article')?.title || item.title
+        candidate.status = 'accepted'
+        writeDraft(item, workspace, body, title ?? item.title, { ai: true, mentions: candidate.mentions })
+        state.items[index] = item
+        return { state, workflow: articleWorkspace(item), candidate: clone(candidate) }
+      } else if (action === 'save_sources') {
         const sources = sourcesFrom(data.sources)
         if (!equal(sources, workspace.sources)) { workspace.sources = sources; invalidate(workspace, item, 'sources') }
       } else if (action === 'confirm_sources') {
@@ -205,20 +271,24 @@ export class ArticleWorkflow {
       } else if (action === 'confirm_outline') {
         workspace.outlineConfirmed = true
         workspace.stage = 'writing'
-      } else if (action === 'write' || action === 'save_draft') {
-        const title = text(data.title, 160) || item.production?.title || workspace.outline.title || item.title
-        writeDraft(item, workspace, data.text, title, { ai: action === 'write', mentions })
-        if (action === 'write') item.production.engine = data.model || 'model'
+      } else if (action === 'save_draft') {
+        if (typeof data.title === 'string' && data.title.length > 200) throw failure('文章标题超过长度限制')
+        const title = typeof data.title === 'string' ? data.title : productionFor(item, 'article')?.title || item.title
+        const previous = productionFor(item, 'article')
+        if (item.production && previous?.article === data.text && previous?.title === title) return { state, workflow: clone(workspace) }
+        writeDraft(item, workspace, data.text, title, { mentions })
         state.items[index] = item
         return { state, workflow: articleWorkspace(item) }
       } else if (action === 'finalize') {
         workspace.draftFinalized = true
         workspace.stage = 'images'
       } else if (action === 'plan_images') {
+        if (!item.production) item.production = clone(productionFor(item, 'article'))
         if (item.production.cover || item.production.images?.length) workspace.imageHistory = [...workspace.imageHistory || [], { id: randomUUID(), at: new Date().toISOString(), revision, cover: clone(item.production.cover), images: clone(item.production.images || []) }].slice(-5)
         item.production.cover = data.cover
         item.production.images = data.images
         workspace.imagesPlanned = true
+        workspace.imagePlanTextHash = documentHash(item)
         workspace.imagesStale = false
         workspace.stage = 'images'
       } else if (action === 'generate_images') {

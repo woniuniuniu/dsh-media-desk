@@ -13,7 +13,7 @@ const KEY = /^[\w.-]{1,200}$/
 const AGGREGATES = new Set(['insights', 'schedule', 'drafts', 'rules', 'accounts'])
 
 const COMMANDS = [
-  { id: 'cmd:produce', name: ['成稿', 'Produce'], hint: ['打开文章步骤或生成视频脚本和画面', 'Open article steps or produce a video script and visuals'], prompt: '用户选择「成稿」：文章条目使用 actions: open 打开五步流程，不替用户确认资料、观点或提纲；视频条目使用 actions: produce。不要把正文塞进 reply。' },
+  { id: 'cmd:produce', name: ['成稿', 'Produce'], hint: ['撰写文章或生成视频脚本和画面', 'Write an article or produce a video script and visuals'], prompt: '用户选择「成稿」：文章条目使用 actions: open 打开正文编辑器；可直接输入写作要求并用 @ 引用素材，无观点或提纲确认关卡。视频条目使用 actions: produce。不要把正文塞进 reply。' },
   { id: 'cmd:schedule', name: ['排期', 'Schedule'], hint: ['安排内容的时间和平台', 'Schedule content on a platform'], prompt: '用户选择「排期」：使用 schedule_item；时间或平台不明确时先询问。' },
   { id: 'cmd:insights', name: ['复盘', 'Review'], hint: ['附带统计，区分真实与示例', 'Review attached real and sample statistics'], prompt: '用户选择「复盘」：依据附带的统计先说明真实/示例样本构成；真实已发布或真实指标为 0 时，不给平均阅读量、爆款率、最佳发布时间等真实效果结论。' },
   { id: 'cmd:rules', name: ['提炼规则', 'Propose rules'], hint: ['从真实成稿修改痕迹提出规则', 'Propose rules from actual draft edits'], prompt: '用户选择「提炼规则」：只基于附带的真实草稿修改依据提出待确认规则，说明依据，不直接生效；没有修改依据时明确说明，不拿示例数据或已有规则充当依据。' },

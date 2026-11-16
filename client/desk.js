@@ -41,7 +41,11 @@ async function request(path, body, { signal } = {}) {
     return {}
   })
   if (signal?.aborted) throw new Error('Request aborted')
-  if (!res.ok) throw new Error(data.error || t('请求失败（{status}）', { status: res.status }))
+  if (!res.ok) {
+    const error = new Error(data.error || t('请求失败（{status}）', { status: res.status }))
+    error.status = res.status
+    throw error
+  }
   return data
 }
 
@@ -109,16 +113,19 @@ export async function runProduce(id, { withImages, mentions } = {}) {
   }
 }
 
-/** 文章的逐步操作，不经过视频的一键成稿入口。失败时由表单保留本地输入。 */
+/** 文章编辑与候选操作；失败保留输入，冲突时同步可查看的候选与最新版本。 */
 export async function articleAction(id, action, data = {}, revision, mentions) {
   if (snapshot.articleBusy[id]) return false
   setDesk(s => ({ articleBusy: { ...s.articleBusy, [id]: action } }))
   try {
     const result = await request('article-workflow', { id, action, data, revision, ...(Array.isArray(mentions) ? { mentions } : {}) })
-    if (result.state) setDesk({ state: result.state })
+    if (result.state) setDesk({ state: result.state, canUndo: true })
     return result
   } catch (err) {
     report(err)
+    if (err.status === 409) {
+      try { const latest = await request('state'); if (latest.state) setDesk({ state: latest.state, ...(typeof latest.canUndo === 'boolean' ? { canUndo: latest.canUndo } : {}) }) } catch { /* 用户输入保持不变，下一次操作仍会校验版本。 */ }
+    }
     return false
   } finally {
     setDesk(s => ({ articleBusy: { ...s.articleBusy, [id]: false } }))

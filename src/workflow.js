@@ -55,7 +55,7 @@ export function articleWorkspace(item) {
     sourcesConfirmed: false,
     pointConfirmed: false, outlineConfirmed: false,
     draftFinalized: false, draftStale: false, imagesStale: false,
-    legacy, draftHistory: [], imageHistory: [], imagesPlanned: false,
+    legacy, draftHistory: [], imageHistory: [], editCandidates: [], imagesPlanned: false,
     ...saved,
     point: { thesis: '', audience: '', boundary: '', ...saved.point },
     outline: { title: '', text: '', ...saved.outline },
@@ -68,7 +68,7 @@ export function markArticleDraftChanged(item) {
   const workspace = articleWorkspace(item)
   item.articleWorkflow = {
     ...workspace, revision: workspace.revision + 1, stage: 'writing', draftFinalized: false,
-    draftStale: Boolean(workspace.draftStale && !(workspace.sourcesConfirmed && workspace.pointConfirmed && workspace.outlineConfirmed)), imagesPlanned: false,
+    draftStale: false, imagesPlanned: false,
     imagesStale: Boolean(workspace.imagesStale || item.production?.cover || item.production?.images?.length),
   }
   return item.articleWorkflow

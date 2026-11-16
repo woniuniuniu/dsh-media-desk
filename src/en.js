@@ -1,5 +1,26 @@
 // Host 英文词典：key 是中文原文，{name} 是占位符。
 export const EN = {
+  // Direct article editing and reviewable selection changes
+  '请先写入文章正文': 'Write or paste article text first',
+  '请先根据当前正文规划配图': 'Plan illustrations for the current article text first',
+  '请选择正文中有效的文本范围': 'Select a valid range in the article text',
+  '选中文本与当前正文不一致，请重新选择': 'The selected text no longer matches the article. Select it again',
+  '正文必须是文本': 'The article body must be text',
+  '写作要求超过长度限制': 'The writing instruction exceeds the length limit',
+  '写作要求必须是文本': 'Writing instructions must be text',
+  '文章标题超过长度限制': 'The article title is too long',
+  '模型返回的正文超过长度限制': 'The model returned text exceeding the length limit',
+  '修改后的正文超过长度限制': 'The revised article would exceed the length limit',
+  '生成期间正文已有修改，建议已保留，请重新生成': 'The article changed during generation. The suggestion was preserved; generate a new one',
+  '找不到这条修改建议': 'Suggestion not found',
+  '这条修改建议已经处理过': 'This suggestion has already been handled',
+  '正文已经变化，请重新生成修改建议': 'The article has changed. Generate a new suggestion',
+  '请在文章编辑器输入要求，或选中文字后修改；建议由你选择是否采用。': 'Enter a request in the article editor or select text to revise. You choose whether to accept each suggestion.',
+  '这条内容正在生成图片，请完成后再修改正文': 'Wait for image generation to finish before editing the article',
+  '请先保存正文并规划文章配图': 'Save the article and plan its illustrations first',
+  '文章请在正文编辑器中写作或选段修改': 'Write or revise selected text in the article editor',
+  '基于旧版正文的建议已保存，现稿保持不变。': 'The suggestion for an earlier version was saved. The current article is unchanged.',
+  '修改建议已就绪，尚未替换正文。': 'The suggestion is ready. The article has not been replaced.',
   // Article workflow and per-item creation formats
   '资料最多保存 20 条': 'Save up to 20 sources',
   '资料链接无效': 'Invalid source URL',

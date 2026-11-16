@@ -1,19 +1,13 @@
-// 文章是先核对资料、确认观点和提纲，再写作的独立工作区。
+// 一份正文：直接编辑、引用素材，并选择接受或放弃 AI 建议。
 import React from 'react'
 import { articleWorkspace, productionFor } from '../src/workflow.js'
-import { articleAction, fetchArticleWorkflow, loadDesk, saveProduced, setDesk, toast, useDesk } from './desk.js'
+import { articleAction, fetchArticleWorkflow, loadDesk, saveProduced, sendChat, setDesk, toast, useDesk } from './desk.js'
 import { t } from './i18n.js'
 import { Icon } from './ui.jsx'
 import { renderMarkdown } from './util.js'
 
-const STEPS = [
-  { id: 'sources', label: '资料与出处' },
-  { id: 'point', label: '明确观点' },
-  { id: 'outline', label: '确认提纲' },
-  { id: 'writing', label: '写作修改' },
-  { id: 'images', label: '配图' },
-]
 const clone = value => JSON.parse(JSON.stringify(value))
+const NOOP = () => {}
 
 /** 背景状态刷新只更新未编辑的字段，不覆盖用户正在改的正文或表单。 */
 function useEditable(incoming) {
@@ -73,44 +67,53 @@ function VersionHistory({ workspace, images = false }) {
   </section>
 }
 
-export function ArticleWorkflow({ item, onDirty = () => {}, onBusy = () => {} }) {
+export function ArticleWorkflow({ item, onDirty = NOOP, onBusy = NOOP, controllerRef, onSelectionChange = NOOP, onAsk = NOOP }) {
   const workspace = articleWorkspace(item)
   const production = productionFor(item, 'article')
   const settings = useDesk(state => state.settings)
-  const items = useDesk(state => state.state.items)
   const serverAction = useDesk(state => state.articleBusy?.[item.id])
-  const sources = useEditable(workspace.sources || [])
-  const point = useEditable(workspace.point || { thesis: '', audience: '', boundary: '' })
-  const outline = useEditable(workspace.outline || { title: '', text: '' })
-  const draft = useEditable({ title: production?.title || item.title || '', text: production?.article || '' })
-  const [active, setActive] = React.useState(workspace.stage || 'sources')
+  const draft = useEditable({ title: production?.title ?? item.title ?? '', text: production?.article ?? '' })
   const [busy, setBusy] = React.useState('')
   const [remoteBusy, setRemoteBusy] = React.useState(false)
   const [failed, setFailed] = React.useState(false)
   const [preview, setPreview] = React.useState(false)
-  const [reference, setReference] = React.useState('')
+  const [selection, setSelection] = React.useState(null)
+  const [position, setPosition] = React.useState({ x: 12, y: 12 })
   const lock = React.useRef(false)
   const alive = React.useRef(true)
-  const previousStage = React.useRef(workspace.stage)
-  const dirty = sources.dirty || point.dirty || outline.dirty || draft.dirty
+  const input = React.useRef(null)
+  const editor = React.useRef(null)
+  const composing = React.useRef(false)
+  const editVersion = React.useRef(0)
+  const editBase = React.useRef(null)
+  const liveDraft = React.useRef(draft.value)
+  liveDraft.current = draft.value
+  const api = React.useRef(null)
+  const candidatesRef = React.useRef(null)
   const assetBusy = [production?.cover, ...(production?.images || [])].some(image => ['pending', 'running'].includes(image?.status))
   const waiting = Boolean(busy || serverAction || remoteBusy || assetBusy)
-  const sourcesReady = workspace.sourcesConfirmed && !sources.dirty
-  const pointReady = sourcesReady && workspace.pointConfirmed && !point.dirty
-  const outlineReady = pointReady && workspace.outlineConfirmed && !outline.dirty
-  const hasDraft = Boolean(draft.value.text.trim())
-  const hasImages = Boolean(production?.cover || production?.images?.length)
-  const canPlan = workspace.draftFinalized && !workspace.draftStale && !dirty
-  const canGenerate = canPlan && workspace.imagesPlanned && !workspace.imagesStale
+  const hasText = Boolean(draft.value.text.trim())
+  const candidates = workspace.editCandidates || []
+  const pending = candidates.filter(candidate => candidate.status === 'pending')
+  const handled = candidates.filter(candidate => candidate.status !== 'pending')
+  const earlier = item.articleWorkflow
+  const hasEarlier = earlier && (earlier.sources?.some(source => source.text || source.title || source.url) || earlier.point?.thesis || earlier.point?.audience || earlier.point?.boundary || earlier.outline?.title || earlier.outline?.text)
+  const serverText = JSON.stringify({ title: production?.title ?? item.title ?? '', text: production?.article ?? '' })
+  const conflict = draft.dirty && editBase.current && workspace.revision !== editBase.current.revision && serverText !== editBase.current.text
+  const clearSelection = () => {
+    setSelection(null)
+    onSelectionChange(null)
+    const element = input.current
+    if (element && element.selectionStart !== element.selectionEnd) element.setSelectionRange(element.selectionEnd, element.selectionEnd)
+  }
 
-  React.useEffect(() => { onDirty(dirty); return () => onDirty(false) }, [dirty, onDirty])
+  React.useEffect(() => { onDirty(draft.dirty); return () => onDirty(false) }, [draft.dirty, onDirty])
   React.useEffect(() => { onBusy(waiting); return () => onBusy(false) }, [waiting, onBusy])
-  React.useEffect(() => {
-    if (workspace.stage !== previousStage.current) setActive(workspace.stage)
-    previousStage.current = workspace.stage
-  }, [workspace.stage])
+  React.useEffect(() => { onSelectionChange(selection) }, [selection, onSelectionChange])
+  React.useEffect(() => { if (pending.length) candidatesRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }) }, [pending.at(-1)?.id])
   React.useEffect(() => {
     alive.current = true
+    if (controllerRef) controllerRef.current = api.current
     let stopped = false, timer = null, wasBusy = false
     const read = async () => {
       try {
@@ -122,94 +125,112 @@ export function ArticleWorkflow({ item, onDirty = () => {}, onBusy = () => {} })
       } catch { if (!stopped && wasBusy) timer = setTimeout(read, 2500) }
     }
     read()
-    return () => { stopped = true; alive.current = false; clearTimeout(timer) }
-  }, [item.id])
+    return () => { stopped = true; alive.current = false; clearTimeout(timer); onSelectionChange(null); if (controllerRef) controllerRef.current = null }
+  }, [item.id, controllerRef, onSelectionChange])
 
-  const perform = async steps => {
+  const updateDraft = patch => {
+    if (!editBase.current) editBase.current = { revision: workspace.revision, text: serverText }
+    editVersion.current += 1
+    const next = { ...liveDraft.current, ...patch }
+    liveDraft.current = next
+    draft.change(next)
+    if ('text' in patch) clearSelection()
+  }
+  const captureSelection = event => {
+    if (composing.current) return
+    const element = event.currentTarget || event.target
+    const start = element.selectionStart, end = element.selectionEnd
+    const text = element.value.slice(start, end)
+    if (start === end || !text.trim()) { clearSelection(); return }
+    setSelection(previous => previous?.start === start && previous?.end === end && previous?.text === text ? previous : { start, end, text })
+    const box = editor.current?.getBoundingClientRect()
+    if (box && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)) setPosition({ x: Math.max(8, Math.min(event.clientX - box.left, box.width - 260)), y: Math.max(8, event.clientY - box.top - 44) })
+  }
+  const run = async (action, { data = {}, mentions, flush = false } = {}) => {
     if (lock.current || waiting) return false
     lock.current = true
-    setBusy(steps.at(-1).action)
+    setBusy(action)
     setFailed(false)
-    let revision = workspace.revision
+    let revision = draft.dirty && (flush || action === 'save_draft') ? (editBase.current?.revision ?? workspace.revision) : workspace.revision
     try {
-      let last = null
-      for (const step of steps) {
-        const result = await articleAction(item.id, step.action, step.data || {}, revision)
-        if (!result) { if (alive.current) setFailed(true); return false }
-        last = result
-        revision = result.workflow.revision
-        if (!alive.current) continue
-        const row = result.state?.items?.find(entry => entry.id === item.id)
-        if (step.action === 'save_sources') sources.accept(result.workflow.sources)
-        if (step.action === 'save_point' || step.action === 'suggest_point') point.accept(result.workflow.point)
-        if (step.action === 'save_outline' || step.action === 'suggest_outline') outline.accept(result.workflow.outline)
-        if (step.action === 'save_draft' || step.action === 'write') draft.accept({ title: row?.production?.title || draft.value.title, text: row?.production?.article ?? step.data?.text ?? draft.value.text })
+      if (flush && (draft.dirty || !item.production || item.production.format !== 'article' || production?.legacyFromDraft)) {
+        const version = editVersion.current
+        const value = { ...liveDraft.current }
+        const saved = await articleAction(item.id, 'save_draft', value, revision)
+        if (!saved) { if (alive.current) setFailed(true); return false }
+        revision = saved.workflow.revision
+        if (alive.current) {
+          if (editVersion.current === version) { editBase.current = null; draft.accept(value) }
+          else editBase.current = { revision, text: JSON.stringify(value) }
+        }
       }
-      if (alive.current && last?.workflow.stage) setActive(last.workflow.stage)
-      return last
+      const version = editVersion.current
+      const result = await articleAction(item.id, action, data, revision, mentions)
+      if (!result) { if (alive.current) setFailed(true); return false }
+      if (!alive.current) return result
+      if (action === 'save_draft' || action === 'accept_candidate') {
+        const row = result.state?.items?.find(entry => entry.id === item.id)
+        const accepted = productionFor(row, 'article')
+        const value = { title: accepted?.title ?? data.title ?? liveDraft.current.title, text: accepted?.article ?? data.text ?? liveDraft.current.text }
+        if (editVersion.current === version) { editBase.current = null; draft.accept(value) }
+        else if (action === 'save_draft') editBase.current = { revision: result.workflow.revision, text: JSON.stringify(value) }
+        if (action === 'accept_candidate') clearSelection()
+      }
+      if (action === 'discard_candidate') clearSelection()
+      return result
     } finally { lock.current = false; if (alive.current) setBusy('') }
   }
-  const saveSources = { action: 'save_sources', data: { sources: sources.value } }
-  const savePoint = { action: 'save_point', data: point.value }
-  const saveOutline = { action: 'save_outline', data: outline.value }
-  const saveDraft = { action: 'save_draft', data: draft.value }
-  const saveAll = () => {
-    const steps = [sources.dirty && saveSources, point.dirty && savePoint, outline.dirty && saveOutline, draft.dirty && saveDraft].filter(Boolean)
-    if (steps.length) perform(steps)
+  const send = async (instruction, { mentions = [] } = {}) => {
+    const commands = mentions.filter(mention => mention.id?.startsWith('cmd:'))
+    const otherCommand = commands.some(command => command.id !== 'cmd:produce')
+    const rawCommand = /^\/(?!produce(?:\s|$)|成稿(?:\s|$))/i.test(instruction.trim())
+    if (otherCommand || rawCommand) {
+      const result = await sendChat(instruction, { mentions })
+      if (result) clearSelection()
+      return result
+    }
+    const material = mentions.filter(mention => !mention.id?.startsWith('cmd:'))
+    const selected = selection && liveDraft.current.text.slice(selection.start, selection.end) === selection.text ? selection : null
+    const result = await run(selected ? 'rewrite_selection' : 'generate_draft', { flush: true, mentions: material, data: { instruction, ...(selected ? { selection: { ...selected } } : { title: liveDraft.current.title }) } })
+    return Boolean(result)
   }
-  const changeSource = (id, patch) => sources.change(sources.value.map(source => source.id === id ? { ...source, ...patch, ...('verified' in patch ? {} : { verified: false }) } : source))
-  const addSource = (row = {}) => sources.change([...sources.value, { id: `source_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, title: '', url: '', text: '', kind: 'reference', verified: false, ...row }])
-  const allowed = { sources: true, point: sourcesReady, outline: pointReady, writing: outlineReady || hasDraft, images: canPlan || hasImages }
+  api.current = { send, clearSelection }
+  if (controllerRef) controllerRef.current = api.current
+
   const copy = async () => { try { await navigator.clipboard.writeText(`# ${draft.value.title}\n\n${draft.value.text}`); toast(t('文章已复制')) } catch (error) { toast(error.message, { error: true }) } }
+  const acceptable = candidate => !waiting && !draft.dirty && !candidate.stale && candidate.baseRevision === workspace.revision && (candidate.kind !== 'selection' || production?.article?.slice(candidate.selection?.start, candidate.selection?.end) === candidate.selection?.text)
+  const candidateCard = (candidate, history = false) => <article className="md-ai-candidate" key={candidate.id} data-candidate-id={candidate.id}>
+    <header><b>{candidate.kind === 'selection' ? t('选中文字的修改建议') : t('文章草稿建议')}</b><span>{candidate.instruction}</span></header>
+    <div className="md-ai-comparison"><div><span>{t('原文')}</span><pre>{candidate.selection?.text ?? production?.article ?? ''}</pre></div><div><span>{t('建议')}</span>{candidate.title ? <h3>{candidate.title}</h3> : null}<pre>{candidate.text}</pre></div></div>
+    {!history ? <footer><button type="button" className="md-pill is-primary" disabled={!acceptable(candidate)} onClick={() => { if (acceptable(candidate)) run('accept_candidate', { data: { candidateId: candidate.id } }) }}>{t('接受建议')}</button><button type="button" className="md-pill" disabled={waiting} onClick={() => run('discard_candidate', { data: { candidateId: candidate.id } })}>{t('放弃建议')}</button>{draft.dirty || candidate.stale || candidate.baseRevision !== workspace.revision ? <span>{t('正文已有改动，这条建议不会自动覆盖。')}</span> : null}</footer> : <p className="md-aw-notice">{candidate.status === 'accepted' ? t('已接受') : t('已放弃')}</p>}
+  </article>
 
-  return <section className="md-article-workflow" aria-label={t('文章流程')} aria-busy={waiting}>
-    <header className="md-aw-heading"><div><span className="md-idea-label">{t('文章流程')}</span><h1>{item.title || t('文章')}</h1></div><div className="md-aw-actions"><button type="button" className="md-pill" onClick={saveAll} disabled={!dirty || waiting}>{t('保存修改')}</button>{hasDraft ? <button type="button" className="md-pill" onClick={copy} disabled={waiting}>{t('复制文章')}</button> : null}{hasDraft && !dirty ? <button type="button" className="md-pill" disabled={waiting} onClick={async () => { if (lock.current) return; lock.current = true; setBusy('export'); try { await saveProduced(item.id) } finally { lock.current = false; if (alive.current) setBusy('') } }}>{t('保存到文件夹')}</button> : null}</div></header>
-    <nav className="md-aw-steps" aria-label={t('文章步骤')}>{STEPS.map((step, index) => <button type="button" key={step.id} aria-current={active === step.id ? 'step' : undefined} disabled={waiting || !allowed[step.id]} onClick={() => setActive(step.id)}><span>{index + 1}</span>{t(step.label)}</button>)}</nav>
-    {workspace.legacy ? <p className="md-aw-notice">{t('旧文章已保留，可直接修改正文或确认后配图。资料、观点和提纲仍需分别确认。')}</p> : null}
-    {workspace.draftStale ? <p className="md-aw-notice">{t('上游内容已改动，旧正文与图片仍保留。请重新确认后生成新稿，或保存当前正文并定稿。')}</p> : null}
+  return <section className="md-article-workflow md-inline-editor" aria-label={t('文章编辑器')} aria-busy={waiting}>
+    <header className="md-aw-heading"><div><span className="md-idea-label">{t('文章')}</span><p className="md-aw-description">{t('直接写或粘贴正文；在助手中 @ 引用素材，选中文字就能提出修改。')}</p></div><div className="md-aw-actions">
+      <button type="button" className="md-pill" disabled={!draft.dirty || waiting} onClick={() => run('save_draft', { data: { ...liveDraft.current } })}>{t('保存正文')}</button>
+      <button type="button" className="md-pill" disabled={!hasText} onClick={copy}>{t('复制文章')}</button>
+      <button type="button" className="md-pill" disabled={!hasText || draft.dirty || waiting} onClick={async () => { if (lock.current) return; lock.current = true; setBusy('export'); try { await saveProduced(item.id) } finally { lock.current = false; if (alive.current) setBusy('') } }}>{t('保存到文件夹')}</button>
+      <button type="button" className="md-pill" onClick={() => { setPreview(value => !value); clearSelection() }}>{preview ? t('编辑正文') : t('预览正文')}</button>
+    </div></header>
     {failed ? <p className="md-aw-error" role="alert">{t('本次操作未完成，输入已保留，可重试。')}</p> : null}
-    {waiting ? <p className="md-aw-notice" role="status">{t('正在处理，请稍候……')}</p> : null}
-    {dirty ? <p className="md-aw-dirty" role="status">{t('有未保存的修改')}</p> : null}
-
-    {active === 'sources' ? <div className="md-aw-panel">
-      <h2>{t('资料与出处')}</h2><p className="md-aw-description">{t('贴入可追溯的原文、来源链接或亲身经验；标明哪些已经人工核对。')}</p>
-      {sources.value.map((source, index) => <fieldset key={source.id} className="md-aw-source" disabled={waiting}><legend>{t('资料 {n}', { n: index + 1 })}</legend>
-        <div className="md-aw-two"><Field label="资料名称" value={source.title} onChange={value => changeSource(source.id, { title: value })} /><label className="md-aw-field"><span>{t('资料类型')}</span><select aria-label={t('资料类型')} value={source.kind} onChange={event => changeSource(source.id, { kind: event.target.value })}><option value="reference">{t('参考资料')}</option><option value="personal">{t('本人经验')}</option></select></label></div>
-        <Field label="来源链接" type="url" value={source.url} onChange={value => changeSource(source.id, { url: value })} placeholder="https://" />
-        <Field label="原文或经验记录" multiline rows={5} value={source.text} onChange={value => changeSource(source.id, { text: value })} />
-        <div className="md-aw-actions"><label className="md-check"><input type="checkbox" checked={Boolean(source.verified)} onChange={event => changeSource(source.id, { verified: event.target.checked })} />{t('我已人工核对这条资料')}</label><button type="button" className="md-link-btn" onClick={() => sources.change(sources.value.filter(row => row.id !== source.id))}>{t('移除资料')}</button></div>
-      </fieldset>)}
-      <div className="md-aw-actions"><button type="button" className="md-pill" disabled={waiting} onClick={() => addSource()}>{t('添加资料')}</button><label className="md-aw-reference"><span>{t('从灵感引用')}</span><select aria-label={t('从灵感引用')} disabled={waiting} value={reference} onChange={event => setReference(event.target.value)}><option value="">{t('选择已有灵感')}</option>{items.filter(row => row.id !== item.id).map(row => <option key={row.id} value={row.id}>{row.title || row.id}</option>)}</select></label><button type="button" className="md-pill" disabled={!reference || waiting} onClick={() => { const row = items.find(entry => entry.id === reference); if (row) addSource({ title: row.title || '', text: row.body || '', url: row.url || '' }); setReference('') }}>{t('加入资料')}</button></div>
-      <footer className="md-aw-actions"><button type="button" className="md-pill" disabled={waiting} onClick={() => perform([saveSources])}>{t('保存资料')}</button><button type="button" className="md-pill is-primary" disabled={waiting || !sources.value.some(row => row.text?.trim())} onClick={() => perform([saveSources, { action: 'confirm_sources' }])}>{t('确认资料，进入观点')}</button></footer>
-    </div> : null}
-
-    {active === 'point' ? <div className="md-aw-panel"><h2>{t('明确观点')}</h2><p className="md-aw-description">{t('先确定这篇文章要表达什么、写给谁，以及哪些话不该说过头。')}</p>
-      <Field label="核心观点" multiline rows={4} value={point.value.thesis} disabled={waiting} onChange={value => point.change({ ...point.value, thesis: value })} />
-      <Field label="目标读者" value={point.value.audience} disabled={waiting} onChange={value => point.change({ ...point.value, audience: value })} />
-      <Field label="适用边界" multiline rows={3} value={point.value.boundary} disabled={waiting} onChange={value => point.change({ ...point.value, boundary: value })} />
-      <footer className="md-aw-actions"><button type="button" className="md-pill" disabled={waiting} onClick={() => perform([savePoint])}>{t('保存观点')}</button><button type="button" className="md-pill" disabled={waiting || !sourcesReady} onClick={() => perform([...(point.dirty ? [savePoint] : []), { action: 'suggest_point' }])}>{t('请 AI 建议观点')}</button><button type="button" className="md-pill is-primary" disabled={waiting || !sourcesReady || !point.value.thesis?.trim()} onClick={() => perform([savePoint, { action: 'confirm_point' }])}>{t('确认观点，进入提纲')}</button></footer>
-    </div> : null}
-
-    {active === 'outline' ? <div className="md-aw-panel"><h2>{t('确认提纲')}</h2><p className="md-aw-description">{t('检查各段要解决的问题、使用的证据和论述顺序，再开始写全文。')}</p>
-      <Field label="文章标题" value={outline.value.title} disabled={waiting} onChange={value => outline.change({ ...outline.value, title: value })} />
-      <Field label="文章提纲" multiline rows={12} value={outline.value.text} disabled={waiting} onChange={value => outline.change({ ...outline.value, text: value })} />
-      <footer className="md-aw-actions"><button type="button" className="md-pill" disabled={waiting} onClick={() => perform([saveOutline])}>{t('保存提纲')}</button><button type="button" className="md-pill" disabled={waiting || !pointReady} onClick={() => perform([...(outline.dirty ? [saveOutline] : []), { action: 'suggest_outline' }])}>{t('请 AI 建议提纲')}</button><button type="button" className="md-pill is-primary" disabled={waiting || !pointReady || !outline.value.title?.trim() || !outline.value.text?.trim()} onClick={() => perform([saveOutline, { action: 'confirm_outline' }])}>{t('确认提纲，进入写作')}</button></footer>
-    </div> : null}
-
-    {active === 'writing' ? <div className="md-aw-panel"><div className="md-aw-panel-head"><h2>{t('写作修改')}</h2><button type="button" className="md-pill" onClick={() => setPreview(value => !value)}>{preview ? t('编辑正文') : t('预览正文')}</button></div>
-      <p className="md-aw-description">{outlineReady ? t('提纲已确认，可以生成初稿，再按你的判断修改。') : t('已有正文可以继续修改；新的 AI 全文需先确认资料、观点和提纲。')}</p>
-      <Field label="文章标题" value={draft.value.title} disabled={waiting} onChange={value => draft.change({ ...draft.value, title: value })} />
-      {preview ? <div className="md-prose md-aw-preview" dangerouslySetInnerHTML={{ __html: renderMarkdown(draft.value.text) }} /> : <Field label="文章正文" multiline rows={20} value={draft.value.text} disabled={waiting} onChange={value => draft.change({ ...draft.value, text: value })} />}
-      <footer className="md-aw-actions"><button type="button" className="md-pill" disabled={waiting || !outlineReady || draft.dirty} onClick={() => perform([{ action: 'write' }])}>{hasDraft ? t('按确认提纲重新写作') : t('按确认提纲生成初稿')}</button><button type="button" className="md-pill" disabled={waiting || !hasDraft} onClick={() => perform([saveDraft])}>{t('保存正文')}</button><button type="button" className="md-pill is-primary" disabled={waiting || !hasDraft || sources.dirty || point.dirty || outline.dirty} onClick={() => perform([saveDraft, { action: 'finalize' }])}>{t('确认正文，进入配图')}</button></footer>
-      {hasImages ? <details className="md-aw-retained"><summary>{t('保留的配图')}</summary><ImageList production={production} /></details> : null}
-    </div> : null}
-
-    {active === 'images' ? <div className="md-aw-panel"><h2>{t('配图')}</h2><p className="md-aw-description">{t('只按已确认的正文规划文章封面和配图，再由你明确点击生成。文字稿可以单独完成。')}</p>
-      {!canPlan ? <p className="md-aw-notice">{t('正文尚未定稿或已经改动，请先保存并确认正文。原有图片仍然保留。')}</p> : null}
+    {conflict ? <p className="md-aw-error" role="alert">{t('其他窗口已修改正文。本地输入已保留，请复制后与最新内容合并。')}</p> : null}
+    {waiting ? <p className="md-aw-notice" role="status">{t('正在生成建议，你可以继续编辑正文。')}</p> : null}
+    {draft.dirty ? <p className="md-aw-dirty" role="status">{t('有未保存的修改')}</p> : null}
+    <div className="md-aw-panel md-document-paper" ref={editor}>
+      <Field label="文章标题" value={draft.value.title} onChange={value => updateDraft({ title: value })} />
+      {preview ? <div className="md-prose md-aw-preview" dangerouslySetInnerHTML={{ __html: renderMarkdown(draft.value.text) }} /> : <label className="md-aw-field md-document-body"><span>{t('文章正文')}</span><textarea ref={input} aria-label={t('文章正文')} rows={22} value={draft.value.text} placeholder={t('在这里写下或粘贴你的文章……')} onChange={event => updateDraft({ text: event.target.value })} onSelect={captureSelection} onMouseUp={captureSelection} onKeyUp={captureSelection} onCompositionStart={() => { composing.current = true; clearSelection() }} onCompositionEnd={event => { composing.current = false; captureSelection(event) }} /></label>}
+      {selection && !preview ? <div className="md-selection-tools" role="toolbar" aria-label={t('选中文字操作')} style={{ left: position.x, top: position.y }} onMouseDown={event => event.preventDefault()}>
+        <button type="button" disabled={waiting} onClick={() => onAsk()}>{t('让 AI 修改')}</button><button type="button" disabled={waiting} onClick={() => onAsk(t('简化这段文字'))}>{t('简化')}</button><button type="button" disabled={waiting} onClick={() => onAsk(t('扩写这段文字'))}>{t('扩写')}</button><button type="button" disabled={waiting} onClick={() => onAsk(t('润色这段文字'))}>{t('润色')}</button><button type="button" aria-label={t('清除选区')} onClick={clearSelection}>×</button>
+      </div> : null}
+    </div>
+    {pending.length ? <section ref={candidatesRef} className="md-ai-candidates" aria-label={t('待处理建议')}>{pending.map(candidate => candidateCard(candidate))}</section> : null}
+    {handled.length ? <details className="md-inline-details"><summary>{t('已处理的建议（{n}）', { n: handled.length })}</summary>{handled.map(candidate => candidateCard(candidate, true))}</details> : null}
+    <details className="md-inline-details"><summary>{t('文章配图')}</summary><p className="md-aw-description">{t('配图可选。先按当前正文规划，再明确点击生成；已有文字和图片会保留。')}</p>
       {!settings?.imageReady ? <p className="md-aw-notice">{t('尚未配置生图，文字稿仍可复制或保存。')}<button type="button" className="md-link-btn" onClick={() => setDesk({ settingsOpen: true })}>{t('去接入')}</button></p> : null}
-      <div className="md-aw-actions"><button type="button" className="md-pill" disabled={waiting || !canPlan} onClick={() => perform([{ action: 'plan_images' }])}>{t('按定稿规划配图')}</button><button type="button" className="md-pill is-primary" disabled={waiting || !canGenerate || !settings?.imageReady} onClick={() => perform([{ action: 'generate_images' }])}>{t('生成文章配图')}</button><button type="button" className="md-pill" disabled={waiting || !hasDraft || dirty} onClick={copy}>{t('完成文字稿')}</button></div>
-      <ImageList production={production} />
-    </div> : null}
-    <VersionHistory workspace={workspace} images={active === 'images'} />
+      <div className="md-aw-actions"><button type="button" className="md-pill" disabled={waiting || !hasText} onClick={() => run('plan_images', { flush: true })}>{t('按正文规划配图')}</button><button type="button" className="md-pill is-primary" disabled={waiting || !hasText || draft.dirty || !workspace.imagesPlanned || workspace.imagesStale || !settings?.imageReady} onClick={() => run('generate_images')}>{t('生成文章配图')}</button></div>
+      <ImageList production={production} /><VersionHistory workspace={{ ...workspace, candidateHistory: [] }} images />
+    </details>
+    <VersionHistory workspace={workspace} />
+    {hasEarlier ? <details className="md-inline-details"><summary>{t('此前整理的资料与提纲')}</summary>{(earlier.sources || []).map((source, index) => <article className="md-earlier-note" key={source.id || index}><b>{source.title || t('参考资料')}</b>{/^https?:\/\//i.test(source.url || '') ? <a href={source.url} target="_blank" rel="noreferrer">{source.url}</a> : source.url ? <span>{source.url}</span> : null}<pre>{source.text}</pre></article>)}{earlier.point && [earlier.point.thesis, earlier.point.audience, earlier.point.boundary].some(Boolean) ? <article className="md-earlier-note"><b>{t('此前的观点')}</b><pre>{[earlier.point.thesis, earlier.point.audience, earlier.point.boundary].filter(Boolean).join('\n\n')}</pre></article> : null}{earlier.outline?.title || earlier.outline?.text ? <article className="md-earlier-note"><b>{earlier.outline.title || t('文章提纲')}</b><pre>{earlier.outline.text}</pre></article> : null}</details> : null}
   </section>
 }

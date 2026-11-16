@@ -1,6 +1,7 @@
 // dsh-media-desk host 半片：/media-desk/* 接口、文件服务和模型调用。
 import { createReadStream } from 'node:fs'
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { stat, writeFile } from 'node:fs/promises'
 import { dirname, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -22,7 +23,7 @@ import { currentLang, platformName, tr, withLang } from './i18n.js'
 import { localizeSamples, samplesNeedLocale } from './seed.js'
 import { createVersionCheck } from './version.js'
 import { ArticleWorkflow } from './article-workflow.js'
-import { articleWorkspace, creationFormat, markArticleDraftChanged, productionFor } from './workflow.js'
+import { articleWorkspace, creationFormat, productionFor } from './workflow.js'
 
 const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets')
 const MAX_JSON = 4_000_000
@@ -103,19 +104,11 @@ function outageNotice(ctx, wasDown, fallback) {
   return modelInfo(ctx) ? tr('模型暂时用不了，{fallback}。可以到设置里检查账号或密钥。', { fallback }) : tr('当前没有连接模型，{fallback}。', { fallback })
 }
 
-function articleCanRevise(item) {
-  const workflow = articleWorkspace(item)
-  return (workflow.legacy && !workflow.draftStale) || articleCanWrite(item)
-}
-
-function articleCanWrite(item) {
-  const workflow = articleWorkspace(item)
-  return workflow.sourcesConfirmed && workflow.pointConfirmed && workflow.outlineConfirmed
-}
-
 function articleAssetsReady(item) {
   const workflow = articleWorkspace(item)
-  return workflow.draftFinalized && !workflow.draftStale && workflow.imagesPlanned && !workflow.imagesStale
+  const body = item.production?.article || ''
+  return Boolean(body.trim()) && workflow.imagesPlanned && !workflow.imagesStale
+    && workflow.imagePlanTextHash === createHash('sha256').update(body).digest('hex')
 }
 
 function articleAssetsBusy(desk, item) {
@@ -189,46 +182,38 @@ async function chatTurn(ctx, store, desk, body) {
     const article = target && creationFormat(target, draft.draftFormat) === 'article'
     let blockedArticleWrite = false
     const ops = (Array.isArray(plan.ops) ? plan.ops : []).filter(op => {
-      // AI 不能替用户确认文章阶段或在后台切换产物。
+      // Article edits are reviewable candidates in the editor; chat cannot overwrite them.
       if (op?.op === 'set_creation_format') return false
       const item = draft.items.find(row => row.id === op?.id)
-      if (item && op?.op === 'save_draft' && op.format !== 'script' && !articleCanWrite(item)) {
+      if (item && op?.op === 'save_draft' && op.format !== 'script') {
         blockedArticleWrite = true
         return false
       }
       if (item && creationFormat(item, draft.draftFormat) === 'article' && ['update_production', 'save_draft'].includes(op?.op)) {
-        const wholeDraft = op.op === 'save_draft' || typeof op.article === 'string'
-        if ((wholeDraft && !articleCanWrite(item)) || !articleCanRevise(item) || articleAssetsBusy(desk, item)) {
-          blockedArticleWrite = true
-          return false
-        }
+        blockedArticleWrite = true
+        return false
       }
       return true
     }).map((op) => {
-      if (production && op?.op === 'update_item' && op.id === focusId && typeof op.title === 'string') return { op: 'update_production', id: focusId, title: op.title }
+      if (production && !article && op?.op === 'update_item' && op.id === focusId && typeof op.title === 'string') return { op: 'update_production', id: focusId, title: op.title }
       return op
     })
     const { receipts, errors } = applyOps(draft, ops)
     let targets = []
-    if (production && plan.revise && (!article || articleCanRevise(target) && !articleAssetsBusy(desk, target))) {
+    if (production && plan.revise && !article) {
       // 没接生图时，图不会重画，回执要说实话
-      const beforeText = production.article
-      const beforeTitle = production.title
-      // 文章的图像调整留在定稿后的配图步骤，不能经由聊天提前生图。
-      if (article && typeof plan.revise.article === 'string' && !articleCanWrite(target)) blockedArticleWrite = true
-      const revise = article ? { title: plan.revise.title, article: articleCanWrite(target) ? plan.revise.article : undefined, edits: plan.revise.edits } : plan.revise
-      const revision = applyRevision(production, revise, { canDraw: canDraw && !article })
-      if (article && (production.article !== beforeText || production.title !== beforeTitle)) markArticleDraftChanged(target)
+      const revision = applyRevision(production, plan.revise, { canDraw })
       receipts.push(...revision.receipts.map(text => ({ text })))
       errors.push(...revision.errors)
       targets = canDraw ? revision.targets : []
     }
-    if (article && plan.revise && (!articleCanRevise(target) || articleAssetsBusy(desk, target))) blockedArticleWrite = true
+    if (article && plan.revise) blockedArticleWrite = true
     if (blockedArticleWrite) {
       plan.reply = article && articleAssetsBusy(desk, target)
         ? tr('正在生成内容或图片，请等待完成后再修改')
-        : tr('请先依次确认资料、观点和提纲，再写全文；现有正文已保留。')
+        : tr('请在文章编辑器输入要求，或选中文字后修改；建议由你选择是否采用。')
       errors.push(plan.reply)
+      if (target) plan.actions = [...(Array.isArray(plan.actions) ? plan.actions : []), { type: 'open', id: target.id, workflow: 'article' }]
     }
     return { receipts, errors, targets, done: Boolean(production) }
   })
@@ -242,6 +227,14 @@ async function chatTurn(ctx, store, desk, body) {
       .map(a => a.type === 'produce' && creationFormat(draft.items.find(row => row.id === a.id), draft.draftFormat) === 'article' ? { type: 'open', id: a.id, workflow: 'article' } : a)
       .filter(a => !(a.type === 'produce' && (done && a.id === focusId || draft.items.find(row => row.id === a.id)?.production?.status === 'done')))
       .map(a => a.type === 'produce' ? { ...a, mentions: mentions.filter(row => !row.id.startsWith('cmd:')) } : a)
+    // A global @ + article command opens the document instead of producing it.
+    // Keep those explicitly selected references with that document across reloads.
+    if (!focusId && references.length) {
+      for (const action of actions) {
+        const item = draft.items.find(row => row.id === action.id)
+        if (action.type === 'open' && item && creationFormat(item, draft.draftFormat) === 'article') item.articleReferences = references
+      }
+    }
     draft.chat.push({ id: newId('c'), at, role: 'user', text: message, itemId, ...(mentions.length ? { mentions } : {}) })
     const answer = { id: newId('c'), at, role: 'assistant', text: plan.reply, receipts, errors, engine, notice, undoable: receipts.length > 0, itemId }
     draft.chat.push(answer)
@@ -451,7 +444,10 @@ async function route(ctx, store, desk, req, res) {
     case 'chat/clear': {
       const state = await store.mutate('清空对话', (draft) => {
         draft.chat = []
-        for (const item of draft.items) if (item.production) delete item.production.mentions
+        for (const item of draft.items) {
+          delete item.articleReferences
+          if (item.production) delete item.production.mentions
+        }
         return draft
       }, { undoable: false })
       return json(res, 200, { state })
@@ -476,10 +472,11 @@ async function route(ctx, store, desk, req, res) {
       const item = state.items.find(row => row.id === id)
       if (!item) return json(res, 404, { error: tr('找不到这条灵感') })
       if (desk.producer.isRunning(id) || desk.producer.anyAssetActive(id)) {
-        return json(res, 409, { error: tr('这条内容正在生成，请完成后再修改文章步骤') })
+        return json(res, 409, { error: tr('这条内容正在生成图片，请完成后再修改正文') })
       }
       const lastUser = state.chat.findLast(row => row.role === 'user' && row.itemId === id)
-      const mentions = normalizeMentions(body.mentions ?? lastUser?.mentions ?? item.production?.mentions).filter(row => !row.id.startsWith('cmd:'))
+      const selected = normalizeMentions(body.mentions).filter(row => !row.id.startsWith('cmd:'))
+      const mentions = selected.length ? selected : normalizeMentions(lastUser?.mentions ?? item.production?.mentions ?? item.articleReferences).filter(row => !row.id.startsWith('cmd:'))
       const context = await resolveMentions(state, mentions, dshHome())
       const result = await desk.articles.act(id, body.action, { data: body.data ?? {}, expectedRevision: body.revision, context, mentions })
       return json(res, 200, result)
@@ -489,7 +486,7 @@ async function route(ctx, store, desk, req, res) {
       const item = state.items.find(row => row.id === body.id)
       if (!item) return json(res, 404, { error: tr('找不到这条灵感') })
       if (creationFormat(item, state.draftFormat) === 'article' && (!articleAssetsReady(item) || !/^(cover|image:\d+)$/.test(String(body.target)))) {
-        return json(res, 409, { error: tr('请先确认文章正文并在配图步骤规划图片') })
+        return json(res, 409, { error: tr('请先保存正文并规划文章配图') })
       }
       if (desk.articles.isBusy(String(body.id))) return json(res, 409, { error: tr('这条内容正在处理，请完成后再重画') })
       await desk.producer.regenerate(String(body.id), body.target)

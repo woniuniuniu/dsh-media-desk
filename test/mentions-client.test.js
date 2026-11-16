@@ -176,7 +176,7 @@ const chatBundle = await build({
   } }],
 })
 
-function chatFixture() {
+function chatFixture(props = {}) {
   const fixture = {
     snapshot: { state: { chat: [], items: [] }, thinking: false, chatQuote: null },
     catalog: { contexts: [{ id: 'item:a', name: 'alpha' }], commands: [{ id: 'cmd:insights', name: '复盘' }] },
@@ -226,7 +226,7 @@ function chatFixture() {
       if (++rounds > 30) throw new Error('ChatPanel did not settle')
       dirty = false
       hook = 0
-      tree = sandbox.module.exports.ChatPanel({ head: 'Assistant' })
+      tree = sandbox.module.exports.ChatPanel({ head: 'Assistant', ...props })
       input().props.ref.current = element
       element.value = input().props.value
       for (const run of pending.splice(0)) run()
@@ -429,4 +429,38 @@ test('ChatPanel：StrictMode 挂载 effect 清理重放后仍能完成第一次�
   assert.equal(chat.nodes(node => node.props.role === 'option').length, 1)
   chat.press('Enter')
   assert.equal(chat.nodes(node => node.props.className === 'md-mention-chip').length, 1)
+})
+
+test('ChatPanel：文章复用 onSend 与 @picked；失败保留要求和引用，成功后清空', async () => {
+  const received = [], composerRef = { current: null }
+  let success = false
+  const chat = chatFixture({ composerRef, onSend: async (...args) => { received.push(args); return success } })
+  chat.change('@alpha')
+  await chat.settle()
+  chat.press('Enter')
+  chat.change('写一篇文章')
+  chat.press('Enter')
+  await chat.settle()
+  assert.equal(chat.calls.length, 0, '不绕回默认 sendChat')
+  assert.equal(received[0][0], '写一篇文章')
+  assert.equal(received[0][1].mentions[0].id, 'item:a')
+  assert.equal(chat.input().props.value, '写一篇文章')
+  assert.equal(chat.nodes(node => node.props.className === 'md-mention-chip').length, 1)
+  success = true
+  await composerRef.current.send('润色这段文字')
+  await chat.settle()
+  assert.equal(received[1][0], '润色这段文字')
+  assert.equal(received[1][1].mentions[0].id, 'item:a')
+  assert.equal(chat.input().props.value, '')
+  assert.equal(chat.nodes(node => node.props.className === 'md-mention-chip').length, 0)
+})
+
+test('ChatPanel：受控选区引用取消时通知文章编辑器，不留下幽灵选区', () => {
+  let cleared = 0
+  const props = { contextQuote: { label: '选中文字', text: '第二处相同文字' }, onCancelQuote: () => { cleared++; props.contextQuote = null } }
+  const chat = chatFixture(props)
+  chat.nodes(node => node.props['aria-label'] === '取消引用')[0].props.onClick()
+  chat.render()
+  assert.equal(cleared, 1)
+  assert.equal(chat.nodes(node => node.props.className === 'md-composer-ctx').length, 0)
 })

@@ -553,6 +553,9 @@ export function Studio() {
   const chatOpen = useDesk(s => s.studioDock)
   const [articleDirty, setArticleDirty] = React.useState(false)
   const [articleRemoteBusy, setArticleRemoteBusy] = React.useState(false)
+  const [articleSelection, setArticleSelection] = React.useState(null)
+  const articleController = React.useRef(null)
+  const articleComposer = React.useRef(null)
   const ref = React.useRef(null)
   const production = item?.production
   const format = creationFormat(item, draftFormat)
@@ -592,6 +595,11 @@ export function Studio() {
   // 打开的这条被删掉或撤销掉时，退回灵感墙，不留空白页
   React.useEffect(() => { if (id && !item) closeItem() }, [id, item])
   if (!item) return null
+  const askArticle = instruction => {
+    setDesk({ studioDock: true })
+    if (instruction) return articleComposer.current?.send(instruction)
+    articleComposer.current?.focus()
+  }
   return (
     <div className={`md-studio ${chatOpen ? 'chat-open' : ''}`} ref={ref} role="dialog" aria-label={t('灵感')}>
       <div className="md-studio-chat">
@@ -600,12 +608,16 @@ export function Studio() {
           head={(
             <>
               <IconButton icon="chevL" label={t('返回灵感')} onClick={closeItem} />
-              <h2>{t('成稿')}</h2>
+              <h2>{format === 'article' ? t('文章助手') : t('成稿')}</h2>
             </>
           )}
-          top={format === 'article' ? <div className="md-idea-card"><span className="md-idea-label">{t('文章流程')}</span><h3>{item.title}</h3><IdeaBody item={item} disabled={Boolean(articleBusy)} /><p className="md-idea-hint">{t('资料、观点、提纲和正文在右侧分别确认；也可以在这里引用资料、讨论修改。')}</p></div> : <IdeaCard item={item} live={live} settings={settings} />}
-          suggestions={format === 'script' && production?.status === 'done' ? DONE_SUGGESTIONS.map(row => t(row)) : []}
-          placeholder={running ? t('正在成稿，马上就好') : production?.status === 'done' ? t('想怎么改，直接说') : t('补充点想法，或者直接说要什么')}
+          top={format === 'article' ? <div className="md-idea-card"><span className="md-idea-label">{t('文章编辑器')}</span><h3>{item.title}</h3><p className="md-idea-hint">{t('在右侧直接写，或在这里 @ 引用素材。选中文字后，建议只修改选中的部分。')}</p></div> : <IdeaCard item={item} live={live} settings={settings} />}
+          suggestions={format === 'article' ? [t('基于引用的素材写一版草稿')] : production?.status === 'done' ? DONE_SUGGESTIONS.map(row => t(row)) : []}
+          placeholder={format === 'article' ? t('描述想写什么，或选中文字提出修改。') : running ? t('正在成稿，马上就好') : production?.status === 'done' ? t('想怎么改，直接说') : t('补充点想法，或者直接说要什么')}
+          onSend={format === 'article' ? (message, options) => articleController.current?.send(message, options) || false : undefined}
+          contextQuote={format === 'article' ? (articleSelection ? { label: t('选中文字'), text: articleSelection.text } : null) : undefined}
+          onCancelQuote={format === 'article' ? () => { articleController.current?.clearSelection(); setArticleSelection(null) } : undefined}
+          composerRef={format === 'article' ? articleComposer : undefined}
           disabled={running || Boolean(articleBusy) || articleRemoteBusy}
           intro={false}
         />
@@ -613,7 +625,7 @@ export function Studio() {
       <button type="button" className="md-chat-toggle" aria-label={t('打开对话')} onClick={() => setDesk(s => ({ studioDock: !s.studioDock }))}><Icon name="chat" size={16} /></button>
       <div className="md-studio-main">
         <WorkflowSwitch item={item} format={format} busy={running || Boolean(articleBusy) || articleRemoteBusy} dirty={format === 'article' && articleDirty} />
-        {format === 'article' ? <ArticleWorkflow key={`article-${item.id}`} item={item} onDirty={setArticleDirty} onBusy={setArticleRemoteBusy} /> : <Sheet key={item.id} item={item} live={live} />}
+        {format === 'article' ? <ArticleWorkflow key={`article-${item.id}`} item={item} onDirty={setArticleDirty} onBusy={setArticleRemoteBusy} controllerRef={articleController} onSelectionChange={setArticleSelection} onAsk={askArticle} /> : <Sheet key={item.id} item={item} live={live} />}
       </div>
     </div>
   )

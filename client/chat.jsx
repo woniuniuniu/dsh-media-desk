@@ -45,11 +45,15 @@ function Message({ message, canUndoThis }) {
 }
 
 /** 对话面板：首页的助手和成稿工作区共用。每条灵感有自己的对话。 */
-export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, disabled = false, intro = true }) {
+export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, disabled = false, intro = true, onSend, onCancelQuote, contextQuote, composerRef }) {
   const all = useDesk(s => s.state.chat)
   const chat = React.useMemo(() => all.filter(m => (m.itemId ?? null) === (itemId ?? null)), [all, itemId])
-  const thinking = useDesk(s => s.thinking)
-  const quote = useDesk(s => s.chatQuote)
+  const hostThinking = useDesk(s => s.thinking)
+  const storedQuote = useDesk(s => s.chatQuote)
+  const quote = contextQuote === undefined ? storedQuote : contextQuote
+  const [sending, setSending] = React.useState(false)
+  const thinking = hostThinking || sending
+  const sendLock = React.useRef(false)
   const language = useLang()
   const [text, setText] = React.useState('')
   const [picked, setPicked] = React.useState([])
@@ -80,8 +84,8 @@ export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, 
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`
   }, [text])
   React.useEffect(() => {
-    if (quote) input.current?.focus()
-  }, [quote])
+    if (quote && contextQuote === undefined) input.current?.focus()
+  }, [quote, contextQuote])
   React.useLayoutEffect(() => {
     if (selection.current === null || !input.current) return
     input.current.focus()
@@ -146,15 +150,23 @@ export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, 
 
   const send = async (value) => {
     const message = mentionMessage(value ?? text, picked)
-    if (!message || thinking || disabled) return
+    if (!message || thinking || disabled || sendLock.current) return false
+    sendLock.current = true
+    setSending(true)
     setPicker(null)
     setNotice('')
     // 请求失败保留正文和选择，用户可以原样重试。
-    if (await sendChat(message, { mentions: picked })) {
-      setText('')
-      setPicked([])
-    } else if (value !== undefined) setText(value)
+    try {
+      if (await (onSend || sendChat)(message, { mentions: picked })) {
+        setText('')
+        setPicked([])
+        return true
+      }
+      if (value !== undefined) setText(value)
+      return false
+    } finally { sendLock.current = false; setSending(false) }
   }
+  if (composerRef) composerRef.current = { focus: () => input.current?.focus(), send }
   const onKeyDown = (event) => {
     if (isComposing(event, composing.current)) return
     if (picker) {
@@ -200,7 +212,7 @@ export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, 
           <div className="md-composer-ctx">
             <Icon name="target" size={12} />
             <span>{quote.text ? t('{label}：{text}', { label: quote.label, text: quote.text }) : quote.label}</span>
-            <button type="button" aria-label={t('取消引用')} onClick={() => setDesk({ chatQuote: null })}><Icon name="close" size={11} /></button>
+            <button type="button" aria-label={t('取消引用')} onClick={() => { setDesk({ chatQuote: null }); onCancelQuote?.() }}><Icon name="close" size={11} /></button>
           </div>
         ) : null}
         {picked.length ? (

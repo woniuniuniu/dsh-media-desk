@@ -185,7 +185,7 @@ export class Producer {
     const state = await this.store.read()
     const item = state.items.find(row => row.id === id)
     if (!item) throw Object.assign(new Error(tr('找不到这条灵感')), { status: 404 })
-    if (creationFormat(item, state.draftFormat) === 'article') throw Object.assign(new Error(tr('文章请按资料、观点、提纲、写作和配图步骤创作')), { status: 409 })
+    if (creationFormat(item, state.draftFormat) === 'article') throw Object.assign(new Error(tr('文章请在正文编辑器中写作或选段修改')), { status: 409 })
     // 单次选择优先；没传就按设置里的默认值
     const settings = await this.settings.read()
     const draw = typeof withImages === 'boolean' ? withImages : settings.generateImages !== false
