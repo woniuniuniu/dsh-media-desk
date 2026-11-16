@@ -3,13 +3,14 @@ import React from 'react'
 import { coverDataUrl } from './cover.js'
 import { lang, plural, setLanguagePreference, t } from './i18n.js'
 import { mentionMessage } from './mentions.js'
+import { creationFormat } from '../src/workflow.js'
 
 const BASE = 'media-desk/'
 
 let snapshot = {
   state: null, model: null, modelOk: null, modelError: null, canUndo: false, error: null,
   view: 'home', mode: 'scatter', focusId: null, sheetOrigin: null, dockOpen: true, studioDock: false, chatQuote: null, query: '', kindFilter: 'all', related: null,
-  live: {}, settings: null, settingsOpen: false, modelPickOpen: false, thinking: false, toast: null, capture: null, dialog: null,
+  live: {}, articleBusy: {}, settings: null, settingsOpen: false, modelPickOpen: false, thinking: false, toast: null, capture: null, dialog: null,
 }
 const listeners = new Set()
 
@@ -108,6 +109,26 @@ export async function runProduce(id, { withImages, mentions } = {}) {
   }
 }
 
+/** 文章的逐步操作，不经过视频的一键成稿入口。失败时由表单保留本地输入。 */
+export async function articleAction(id, action, data = {}, revision, mentions) {
+  if (snapshot.articleBusy[id]) return false
+  setDesk(s => ({ articleBusy: { ...s.articleBusy, [id]: action } }))
+  try {
+    const result = await request('article-workflow', { id, action, data, revision, ...(Array.isArray(mentions) ? { mentions } : {}) })
+    if (result.state) setDesk({ state: result.state })
+    return result
+  } catch (err) {
+    report(err)
+    return false
+  } finally {
+    setDesk(s => ({ articleBusy: { ...s.articleBusy, [id]: false } }))
+  }
+}
+
+export async function fetchArticleWorkflow(id) {
+  return request(`article-workflow?id=${encodeURIComponent(id)}`)
+}
+
 export async function cancelProduce(id) {
   try {
     await request('produce/cancel', { id })
@@ -196,7 +217,8 @@ function runActions(actions) {
   for (const action of actions) {
     if (action.type === 'produce' && action.id) {
       openItem(action.id)
-      runProduce(action.id, { mentions: action.mentions })
+      const item = snapshot.state.items.find(row => row.id === action.id)
+      if (creationFormat(item, snapshot.state.draftFormat) !== 'article') runProduce(action.id, { mentions: action.mentions })
     }
     if (action.type === 'open' && action.id) openItem(action.id)
     if (action.type === 'nav' && action.view) setDesk({ view: action.view })
@@ -230,10 +252,12 @@ export async function sendChat(text, { mentions = [] } = {}) {
 
 export async function saveProduced(id) {
   try {
-    const production = snapshot.state.items.find(row => row.id === id)?.production
+    const item = snapshot.state.items.find(row => row.id === id)
+    const production = item?.production
     // 视频封面在浏览器里合成，一起存进文件夹
-    const videoCover = await coverDataUrl({ src: production.cover?.src, text: production.coverText || production.title }).catch(() => undefined)
-    const data = await request('produce/save', { id, videoCover })
+    const article = creationFormat(item, snapshot.state.draftFormat) === 'article'
+    const videoCover = article ? undefined : await coverDataUrl({ src: production.cover?.src, text: production.coverText || production.title }).catch(() => undefined)
+    const data = await request('produce/save', { id, ...(article ? {} : { videoCover }) })
     setDesk({ state: data.state })
     toast(data.backups?.length ? t('已保存到 {path}。你在文件夹里改过的稿子另存成了 {names}', { path: data.path, names: data.backups.join(lang() === 'en' ? ', ' : '、') }) : t('已保存到 {path}', { path: data.path }))
   } catch (err) {

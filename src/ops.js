@@ -2,6 +2,7 @@
 // 模型输出也是不可信输入，所以这里只放行白名单字段。
 import { currentLang, platformName, tr } from './i18n.js'
 import { draftFormat } from './style.js'
+import { articleWorkspace, creationFormat, markArticleDraftChanged, productionFor, selectCreationFormat } from './workflow.js'
 
 export const STATUSES = ['idea', 'outline', 'draft', 'ready', 'published']
 export const STATUS_LABEL = { idea: '灵感', outline: '大纲', draft: '草稿', ready: '待发布', published: '已发布' }
@@ -79,6 +80,10 @@ function findById(list, id) {
   const entry = list.find(row => row.id === id)
   if (!entry) throw new Error(tr('找不到对象：{id}', { id }))
   return entry
+}
+
+function productionRunning(production) {
+  return production?.status === 'running' || [production?.cover, ...(production?.images ?? []), ...(production?.shots ?? [])].some(asset => asset?.status === 'running')
 }
 
 function short(text, n = 22) {
@@ -173,18 +178,50 @@ const handlers = {
     const item = findById(state.items, op.id)
     const format = op.format === 'script' ? 'script' : 'article'
     if (typeof op.text !== 'string') throw new Error(tr('草稿内容无效'))
+    const content = op.text.slice(0, 200000)
+    // Capture before writing the compatibility field: old drafts-only records
+    // are exposed by productionFor() without migrating their stored shape.
+    const oldArticle = format === 'article' ? productionFor(item, 'article') : null
+    if (format === 'article' && productionRunning(oldArticle)) throw new Error(tr('正在生成内容或图片，请完成后再修改正文'))
+    const activeArticle = creationFormat(item, state.draftFormat) === 'article'
+    const workspace = format === 'article' ? articleWorkspace(item) : null
     const previous = item.drafts?.[format]
-    item.drafts = { ...item.drafts, [format]: { text: op.text.slice(0, 200000), by: op.by === 'ai' ? 'ai' : 'user', engine: typeof op.engine === 'string' ? op.engine : undefined, at: now, aiText: op.by === 'ai' ? op.text : previous?.aiText } }
+    item.drafts = { ...item.drafts, [format]: { text: content, by: op.by === 'ai' ? 'ai' : 'user', engine: typeof op.engine === 'string' ? op.engine : undefined, at: now, aiText: op.by === 'ai' ? content : previous?.aiText } }
+    if (format === 'article') {
+      const production = { ...oldArticle, format: 'article', status: 'done', stage: 'done', title: oldArticle?.title || item.title, article: content, ...(op.by === 'ai' ? { aiArticle: content, ...(typeof op.engine === 'string' ? { engine: op.engine.slice(0, 200) } : {}) } : {}) }
+      if (activeArticle) item.production = production
+      else item.productions = { ...item.productions, article: production }
+      if (oldArticle?.article !== content) {
+        if (oldArticle?.article?.trim()) workspace.draftHistory = [...workspace.draftHistory, { id: newId('av'), at: now, title: oldArticle.title || item.title, text: oldArticle.article, revision: workspace.revision }].slice(-8)
+        workspace.draftStale = false // Explicitly saving a manual draft adopts this version.
+        item.articleWorkflow = workspace
+        // An inactive article has its own saved workflow. Invalidate that view,
+        // without letting the helper mutate the active video product.
+        const owner = activeArticle ? item : { ...item, creationFormat: 'article', production }
+        markArticleDraftChanged(owner)
+        item.articleWorkflow = owner.articleWorkflow
+      }
+    }
     if (['idea', 'outline'].includes(item.status)) item.status = 'draft'
     return { text: tr(format === 'script' ? '保存《{title}》的脚本' : '保存《{title}》的文章', { title: short(item.title) }), target: item.id, kind: 'item' }
   },
   update_production(state, op) {
     const item = findById(state.items, op.id)
     if (!item.production) throw new Error(tr('这条灵感还没有成稿'))
+    if (creationFormat(item, state.draftFormat) === 'article' && productionRunning(item.production)) throw new Error(tr('正在生成内容或图片，请完成后再修改正文'))
+    const before = { title: item.production.title, article: item.production.article }
     if (typeof op.title === 'string') item.production.title = op.title.slice(0, 200)
     if (typeof op.coverText === 'string') item.production.coverText = op.coverText.slice(0, 40)
     if (typeof op.article === 'string') item.production.article = op.article.slice(0, 200000)
+    if (creationFormat(item, state.draftFormat) === 'article' && (before.title !== item.production.title || before.article !== item.production.article)) markArticleDraftChanged(item)
     return { text: tr('修改《{title}》', { title: short(item.production.title) }), target: item.id, kind: 'item' }
+  },
+  set_creation_format(state, op) {
+    if (!['article', 'script'].includes(op.format)) throw new Error(tr('创作类型无效'))
+    const item = findById(state.items, op.id)
+    if (productionRunning(item.production)) throw new Error(tr('正在生成内容或图片，请完成或取消后再切换创作类型'))
+    selectCreationFormat(item, op.format)
+    return { text: tr(op.format === 'article' ? '已切换为文章创作' : '已切换为视频创作'), target: item.id, kind: 'item' }
   },
   add_person(state, op, now) {
     const person = { id: newId('p'), name: '', role: tr('目标读者'), note: '', traits: [], tone: Math.floor(Math.random() * 6), createdAt: now, ...pick(PERSON_FIELDS, op) }

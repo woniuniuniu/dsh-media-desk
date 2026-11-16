@@ -3,6 +3,7 @@ import { open, readdir, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'node:path'
 import { byLang } from './i18n.js'
 import { computeInsights } from './learn.js'
+import { productionFor } from './workflow.js'
 
 const MAX_MENTIONS = 8
 const MAX_TEXT = 12000
@@ -12,7 +13,7 @@ const KEY = /^[\w.-]{1,200}$/
 const AGGREGATES = new Set(['insights', 'schedule', 'drafts', 'rules', 'accounts'])
 
 const COMMANDS = [
-  { id: 'cmd:produce', name: ['成稿', 'Produce'], hint: ['把当前灵感做成文章、脚本和画面', 'Produce the current idea'], prompt: '用户选择「成稿」：对指定条目使用 actions: produce，不要把正文塞进 reply。' },
+  { id: 'cmd:produce', name: ['成稿', 'Produce'], hint: ['打开文章步骤或生成视频脚本和画面', 'Open article steps or produce a video script and visuals'], prompt: '用户选择「成稿」：文章条目使用 actions: open 打开五步流程，不替用户确认资料、观点或提纲；视频条目使用 actions: produce。不要把正文塞进 reply。' },
   { id: 'cmd:schedule', name: ['排期', 'Schedule'], hint: ['安排内容的时间和平台', 'Schedule content on a platform'], prompt: '用户选择「排期」：使用 schedule_item；时间或平台不明确时先询问。' },
   { id: 'cmd:insights', name: ['复盘', 'Review'], hint: ['附带统计，区分真实与示例', 'Review attached real and sample statistics'], prompt: '用户选择「复盘」：依据附带的统计先说明真实/示例样本构成；真实已发布或真实指标为 0 时，不给平均阅读量、爆款率、最佳发布时间等真实效果结论。' },
   { id: 'cmd:rules', name: ['提炼规则', 'Propose rules'], hint: ['从真实成稿修改痕迹提出规则', 'Propose rules from actual draft edits'], prompt: '用户选择「提炼规则」：只基于附带的真实草稿修改依据提出待确认规则，说明依据，不直接生效；没有修改依据时明确说明，不拿示例数据或已有规则充当依据。' },
@@ -191,7 +192,7 @@ export async function resolveMentions(state, mentions, home) {
       if (text !== null) envelope.instructions.push({ id: entry.id, name: key, text })
     } else if (kind === 'item') {
       const item = items.find(row => row.id === key)
-      if (item) addMaterial(entry, kind, { id: item.id, title: clip(item.title, 160), body: clip(item.body, 6000), status: item.status, platform: item.platform, scheduledAt: item.scheduledAt, tags: item.tags, sample: Boolean(item.sample), article: clip(item.drafts?.article?.text || item.production?.article, 6000), script: clip(item.drafts?.script?.text, 3000), media: item.media, url: item.url })
+      if (item) addMaterial(entry, kind, { id: item.id, title: clip(item.title, 160), body: clip(item.body, 6000), status: item.status, platform: item.platform, scheduledAt: item.scheduledAt, tags: item.tags, sample: Boolean(item.sample), article: clip(productionFor(item, 'article')?.article, 6000), script: clip(productionFor(item, 'script')?.article, 3000), media: item.media, url: item.url })
     } else if (kind === 'style' || kind === 'skill' || kind === 'account') {
       const rows = kind === 'style' ? state.styles : kind === 'skill' ? state.skills : state.accounts
       const row = (rows || []).find(value => String(value.id) === key)
@@ -206,7 +207,7 @@ export async function resolveMentions(state, mentions, home) {
     } else if (kind === 'agg') {
       if (key === 'insights') addMaterial(entry, key, insightData(state))
       if (key === 'schedule') addMaterial(entry, key, items.filter(row => row.scheduledAt).map(row => ({ id: row.id, title: row.title, status: row.status, platform: row.platform, scheduledAt: row.scheduledAt, sample: Boolean(row.sample) })))
-      if (key === 'drafts') addMaterial(entry, key, items.filter(row => row.drafts?.article?.text || row.drafts?.script?.text || row.production?.article).map(row => ({ id: row.id, title: row.title, sample: Boolean(row.sample), article: clip(row.drafts?.article?.text || row.production?.article, 6000), script: clip(row.drafts?.script?.text, 3000) })))
+      if (key === 'drafts') addMaterial(entry, key, items.filter(row => productionFor(row, 'article')?.article || productionFor(row, 'script')?.article).map(row => ({ id: row.id, title: row.title, sample: Boolean(row.sample), article: clip(productionFor(row, 'article')?.article, 6000), script: clip(productionFor(row, 'script')?.article, 3000) })))
       if (key === 'rules') addMaterial(entry, key, state.skills || [])
       if (key === 'accounts') addMaterial(entry, key, state.accounts || [])
     }

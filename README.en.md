@@ -50,14 +50,14 @@ It works with TikTok, Instagram, YouTube and X as well as Chinese platforms (Red
   </picture>
 </td>
 <td valign="top">
-<p><b>Everything fills in together.</b></p>
-<p>The layout appears as soon as you open an idea. The title, script, cover, images and six storyboard frames are generated in parallel and appear as each one is ready.</p>
-<p><b>Script or article, your call.</b></p>
-<p>A script puts one sentence per line in short blocks, ready to read aloud. An article is written in full paragraphs, ready to post. Both get a headline, and both stay close to the style and reference you chose.</p>
+<p><b>Articles: make the decisions before drafting.</b></p>
+<p>Sources → Main point → Outline → Writing and revision → Illustrations. Save excerpts and links and mark what you have checked yourself. AI can suggest a point or outline; you confirm each stage. A full draft requires all three confirmations. Finalize the text before planning illustrations, then explicitly choose to generate images.</p>
+<p><b>Video: keep one-click production.</b></p>
+<p>The title, spoken script, video cover, images, and six storyboard frames keep their existing workflow. Choose article or video per idea; switching preserves both products separately.</p>
 <p><b>Ask for a change.</b></p>
 <p>Try "make it clearer", "shoot frame 3 from above" or "bolder cover text". The draft updates as you watch, and every change can be undone.</p>
 <p><b>Take it with you.</b></p>
-<p>Edit the script in place, copy it, or save the whole piece (cover, images and frames) to one folder.</p>
+<p>Edit, copy, or export either product. Articles export the text, article cover, and illustrations; videos keep storyboard export. Existing articles remain directly editable. Prior drafts, illustrations, and late AI candidates are available in version history. Text-only work does not require an image provider.</p>
 </td>
 </tr>
 </table>

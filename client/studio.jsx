@@ -1,5 +1,7 @@
 // 点开灵感后的工作区：左边对话，右边是一张稿面。稿面的格子一开始就排好，同时开工，一点点长满。
 import React from 'react'
+import { creationFormat } from '../src/workflow.js'
+import { ArticleWorkflow } from './article-workflow.jsx'
 import { ChatPanel } from './chat.jsx'
 import { downloadCover } from './cover.js'
 import { cancelProduce, closeItem, dispatchOps, regenAsset, revealSaved, runProduce, saveProduced, setDesk, toast, useDesk, watchProduction } from './desk.js'
@@ -98,11 +100,6 @@ function IdeaBody({ item, disabled }) {
   )
 }
 
-const FORMAT_OPTIONS = [
-  { id: 'script', label: '脚本', hint: '口播脚本：一句话一行，一段一段' },
-  { id: 'article', label: '文章', hint: '文章：一个一个自然段' },
-]
-
 /** 对话栏顶部：这条灵感，以及唯一的入口。 */
 function IdeaCard({ item, live, settings }) {
   const production = item.production
@@ -114,24 +111,11 @@ function IdeaCard({ item, live, settings }) {
   // 单次选择优先，其次沿用这条成稿上次的选择，最后取设置里的默认值
   const withImages = draw ?? (production?.withImages !== undefined ? production.withImages : settings?.generateImages !== false)
   const canStart = !production || !['running', 'done'].includes(production.status)
-  const format = useDesk(s => s.state.draftFormat) === 'article' ? 'article' : 'script'
   return (
     <div className="md-idea-card">
       <span className="md-idea-label">{t('灵感')} · {fmtDate(item.createdAt)}</span>
       <AutoText className="md-idea-text" label={t('灵感')} value={item.title} disabled={running} onCommit={title => dispatchOps([{ op: 'update_item', id: item.id, title }], { label: t('修改灵感'), silent: true })} />
       <IdeaBody item={item} disabled={running} />
-      {!running ? (
-        <div className="md-style-pick" role="radiogroup" aria-label={t('体裁')}>
-          <span>{t('体裁')}</span>
-          <div className="md-format-seg">
-            {FORMAT_OPTIONS.map(option => (
-              <button type="button" key={option.id} role="radio" aria-checked={format === option.id} className={format === option.id ? 'is-on' : ''} title={t(option.hint)}
-                onClick={() => { if (format !== option.id) dispatchOps([{ op: 'set_format', format: option.id }], { label: t('切换体裁'), silent: true }) }}>{t(option.label)}</button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-      {!running && production?.status === 'done' && (production.format ?? 'script') !== format ? <p className="md-idea-hint">{t('这篇是按另一种体裁写的，重新成稿后生效。')}</p> : null}
       {!running ? (
         <label className="md-style-pick is-follow">
           <span>{t('风格')}</span>
@@ -541,22 +525,44 @@ function Sheet({ item, live }) {
 
 const DONE_SUGGESTIONS = ['标题再短一点', '语气轻松一点', '开场再抓人一点', '封面大字更有冲击力']
 
+/** 每条灵感各自选择流程；后端保存另一体裁的稿件与图片。 */
+export function WorkflowSwitch({ item, format, busy = false, dirty = false }) {
+  const [changing, setChanging] = React.useState(false)
+  const lock = React.useRef(false)
+  const select = async next => {
+    if (next === format || busy || dirty || lock.current) return
+    lock.current = true
+    setChanging(true)
+    try { await dispatchOps([{ op: 'set_creation_format', id: item.id, format: next }], { label: t('切换创作流程'), silent: true }) }
+    finally { lock.current = false; setChanging(false) }
+  }
+  return <div className="md-workflow-switch"><div role="radiogroup" aria-label={t('创作流程')}>
+    <button type="button" role="radio" aria-checked={format === 'article'} disabled={busy || changing || dirty} className={format === 'article' ? 'is-on' : ''} onClick={() => select('article')}><Icon name="pen" size={14} />{t('文章流程')}</button>
+    <button type="button" role="radio" aria-checked={format === 'script'} disabled={busy || changing || dirty} className={format === 'script' ? 'is-on' : ''} onClick={() => select('script')}><Icon name="film" size={14} />{t('视频流程')}</button>
+  </div>{dirty ? <span role="status">{t('请先保存修改，再切换流程。')}</span> : null}</div>
+}
+
 export function Studio() {
   const id = useDesk(s => s.focusId)
   const item = useDesk(s => s.state?.items.find(i => i.id === s.focusId))
   const origin = useDesk(s => s.sheetOrigin)
   const live = useDesk(s => s.live[s.focusId])
   const settings = useDesk(s => s.settings)
+  const draftFormat = useDesk(s => s.state?.draftFormat)
+  const articleBusy = useDesk(s => s.articleBusy?.[s.focusId])
   const chatOpen = useDesk(s => s.studioDock)
+  const [articleDirty, setArticleDirty] = React.useState(false)
+  const [articleRemoteBusy, setArticleRemoteBusy] = React.useState(false)
   const ref = React.useRef(null)
   const production = item?.production
+  const format = creationFormat(item, draftFormat)
   const running = production?.status === 'running'
-  const watching = running || [production?.cover, ...(production?.images ?? []), ...(production?.shots ?? [])].some(isBusy)
+  const watching = running || [production?.cover, ...(production?.images ?? []), ...(format === 'article' ? [] : production?.shots ?? [])].some(isBusy)
 
   React.useEffect(() => {
     if (id && watching) return watchProduction(id)
     return undefined
-  }, [id, watching])
+  }, [id, watching, format])
 
   // 从卡片的位置展开成整个工作区
   React.useLayoutEffect(() => {
@@ -597,15 +603,18 @@ export function Studio() {
               <h2>{t('成稿')}</h2>
             </>
           )}
-          top={<IdeaCard item={item} live={live} settings={settings} />}
-          suggestions={production?.status === 'done' ? DONE_SUGGESTIONS.map(row => t(row)) : []}
+          top={format === 'article' ? <div className="md-idea-card"><span className="md-idea-label">{t('文章流程')}</span><h3>{item.title}</h3><IdeaBody item={item} disabled={Boolean(articleBusy)} /><p className="md-idea-hint">{t('资料、观点、提纲和正文在右侧分别确认；也可以在这里引用资料、讨论修改。')}</p></div> : <IdeaCard item={item} live={live} settings={settings} />}
+          suggestions={format === 'script' && production?.status === 'done' ? DONE_SUGGESTIONS.map(row => t(row)) : []}
           placeholder={running ? t('正在成稿，马上就好') : production?.status === 'done' ? t('想怎么改，直接说') : t('补充点想法，或者直接说要什么')}
-          disabled={running}
+          disabled={running || Boolean(articleBusy) || articleRemoteBusy}
           intro={false}
         />
       </div>
       <button type="button" className="md-chat-toggle" aria-label={t('打开对话')} onClick={() => setDesk(s => ({ studioDock: !s.studioDock }))}><Icon name="chat" size={16} /></button>
-      <Sheet key={item.id} item={item} live={live} />
+      <div className="md-studio-main">
+        <WorkflowSwitch item={item} format={format} busy={running || Boolean(articleBusy) || articleRemoteBusy} dirty={format === 'article' && articleDirty} />
+        {format === 'article' ? <ArticleWorkflow key={`article-${item.id}`} item={item} onDirty={setArticleDirty} onBusy={setArticleRemoteBusy} /> : <Sheet key={item.id} item={item} live={live} />}
+      </div>
     </div>
   )
 }

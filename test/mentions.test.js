@@ -82,6 +82,40 @@ test('catalog includes older items and account references use stable IDs after a
   assert.equal(await resolveMentions(state, ['account:first'], '/nonexistent'), '')
 })
 
+test('item references and all-draft references use the current products instead of stale compatibility drafts', async () => {
+  const state = fixture()
+  state.items = [
+    { id: 'article', title: 'Article mode', creationFormat: 'article', drafts: { article: { text: 'STALE_ARTICLE' }, script: { text: 'STALE_SCRIPT' } }, production: { format: 'article', article: 'CURRENT_ARTICLE' }, productions: { script: { format: 'script', article: 'ARCHIVED_SCRIPT' } } },
+    { id: 'script', title: 'Video mode', creationFormat: 'script', drafts: { article: { text: 'OLDER_ARTICLE' }, script: { text: 'OLDER_SCRIPT' } }, production: { format: 'script', article: 'CURRENT_SCRIPT' }, productions: { article: { format: 'article', article: 'ARCHIVED_ARTICLE' } } },
+  ]
+  const before = structuredClone(state)
+  const envelope = JSON.parse(await resolveMentions(state, ['item:article', 'item:script', 'agg:drafts'], '/nonexistent'))
+  const article = JSON.parse(envelope.materials[0].content), script = JSON.parse(envelope.materials[1].content)
+  assert.equal(article.article, 'CURRENT_ARTICLE')
+  assert.equal(article.script, 'ARCHIVED_SCRIPT')
+  assert.equal(script.article, 'ARCHIVED_ARTICLE')
+  assert.equal(script.script, 'CURRENT_SCRIPT')
+  const all = JSON.parse(envelope.materials[2].content)
+  assert.deepEqual(all.map(row => [row.article, row.script]), [['CURRENT_ARTICLE', 'ARCHIVED_SCRIPT'], ['ARCHIVED_ARTICLE', 'CURRENT_SCRIPT']])
+  assert.doesNotMatch(JSON.stringify(envelope), /STALE_|OLDER_/)
+  assert.deepEqual(state, before, 'resolving references must not migrate the store')
+})
+
+test('references keep legacy scripts out of the article field and read drafts-only articles', async () => {
+  const state = fixture()
+  state.items = [
+    { id: 'legacy', title: 'No-format legacy video', production: { article: 'LEGACY_SCRIPT' }, drafts: { article: { text: 'LEGACY_ARTICLE' } } },
+    { id: 'drafts-only', title: 'Draft-only article', drafts: { article: { text: 'DRAFTS_ONLY_ARTICLE' } } },
+  ]
+  const envelope = JSON.parse(await resolveMentions(state, ['item:legacy', 'item:drafts-only', 'agg:drafts'], '/nonexistent'))
+  const legacy = JSON.parse(envelope.materials[0].content), article = JSON.parse(envelope.materials[1].content)
+  assert.equal(legacy.article, 'LEGACY_ARTICLE')
+  assert.equal(legacy.script, 'LEGACY_SCRIPT')
+  assert.equal(article.article, 'DRAFTS_ONLY_ARTICLE')
+  assert.equal(article.script, '')
+  assert.equal(JSON.parse(envelope.materials[2].content)[1].article, 'DRAFTS_ONLY_ARTICLE')
+})
+
 test('directory and flat skills resolve, but symlinks outside the skill root and arbitrary paths do not', async () => {
   const home = await mkdtemp(join(tmpdir(), 'media-desk-mentions-'))
   try {
@@ -117,6 +151,7 @@ test('chat, planning, and article prompts all receive the same explicit referenc
 
 test('Producer carries the selected context into both model calls without persisting source contents', async () => {
   const state = fixture(), context = await resolveMentions(state, ['item:reference'], '/nonexistent')
+  state.draftFormat = 'script' // Articles use the separate, confirmed-step workflow.
   const calls = []
   let finish
   const finished = new Promise(resolve => { finish = resolve })
