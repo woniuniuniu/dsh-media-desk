@@ -50,14 +50,15 @@ export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, 
   const chat = React.useMemo(() => all.filter(m => (m.itemId ?? null) === (itemId ?? null)), [all, itemId])
   const thinking = useDesk(s => s.thinking)
   const quote = useDesk(s => s.chatQuote)
-  const state = useDesk(s => s.state)
   const language = useLang()
   const [text, setText] = React.useState('')
   const [picked, setPicked] = React.useState([])
   const [picker, setPicker] = React.useState(null)
   const [catalog, setCatalog] = React.useState({ contexts: [], commands: [] })
+  const [catalogReady, setCatalogReady] = React.useState(false)
   const [loading, setLoading] = React.useState(false)
   const [catalogError, setCatalogError] = React.useState(false)
+  const [catalogRetry, setCatalogRetry] = React.useState(0)
   const [notice, setNotice] = React.useState('')
   const scroller = React.useRef(null)
   const input = React.useRef(null)
@@ -93,21 +94,31 @@ export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, 
     setPicker(null)
     setNotice('')
   }, [itemId])
-  // 每次打开候选都读取最新资料；打开期间有写回或切换语言时也刷新。
+  // 每次打开都读最新资料；成稿轮询等背景 state 更新不能取消或重排这个请求。
   React.useEffect(() => {
     if (!open) return
     let alive = true
+    const controller = new AbortController()
     setLoading(true)
     setCatalogError(false)
-    fetchMentions().then(data => {
-      if (alive) setCatalog(data)
+    // 请求可能在浏览器连接池里排队；超时覆盖 fetch 和读取 body，而不永久显示读取中。
+    const timeout = setTimeout(() => {
+      if (!alive) return
+      alive = false
+      controller.abort()
+      setCatalogError('timeout')
+      setLoading(false)
+    }, 10000)
+    fetchMentions({ signal: controller.signal }).then(data => {
+      if (alive) { setCatalog(data); setCatalogReady(true) }
     }).catch(() => {
       if (alive) setCatalogError(true)
     }).finally(() => {
+      clearTimeout(timeout)
       if (alive) setLoading(false)
     })
-    return () => { alive = false }
-  }, [open, state, language])
+    return () => { alive = false; clearTimeout(timeout); controller.abort() }
+  }, [open, language, catalogRetry])
   React.useEffect(() => {
     if (picker && options.length) document.getElementById(`${listId}-${Math.min(picker.index, options.length - 1)}`)?.scrollIntoView({ block: 'nearest' })
   }, [picker?.index, options.length, listId])
@@ -119,7 +130,7 @@ export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, 
   }
   const choose = (option) => {
     const el = input.current
-    if (!option || !picker || loading || catalogError) return
+    if (!option || !picker || !catalogReady) return
     // 鼠标或方向键把光标移出原位置后，旧浮层不可继续修改正文。
     if (!el || el.selectionStart !== picker.caret || el.selectionEnd !== picker.caret) { setPicker(null); return }
     const next = addMention(picked, option, picker.trigger, maxMentions)
@@ -199,10 +210,11 @@ export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, 
         ) : null}
         {picker ? (
           <div className="md-mention-picker">
-            <div className="md-mention-help" role="status">{loading ? t('正在读取引用……') : catalogError ? t('读取引用失败，请重新输入 @ 或 / 重试') : picked.length >= maxMentions ? t('最多选择 {max} 个引用或指令', { max: maxMentions }) : t('↑↓ 选择，Enter 或 Tab 确认，Esc 关闭')}</div>
+            <div className="md-mention-help" role="status">{loading ? (catalogReady ? t('正在刷新引用，已有引用仍可选择') : t('正在读取引用……')) : catalogError === 'timeout' ? t('读取引用超时，请重试') : catalogError ? t('读取引用失败，请重试') : picked.length >= maxMentions ? t('最多选择 {max} 个引用或指令', { max: maxMentions }) : t('↑↓ 选择，Enter 或 Tab 确认，Esc 关闭')}</div>
+            {catalogError ? <button type="button" aria-label={t('重试读取引用')} onMouseDown={event => event.preventDefault()} onClick={() => setCatalogRetry(value => value + 1)}>{t('重试读取引用')}</button> : null}
             <div id={listId} role="listbox" aria-label={picker.trigger === '@' ? t('可引用的资料') : t('可用的指令')}>
               {!loading && !catalogError && !options.length ? <p className="md-mention-help">{t('没有匹配项')}</p> : null}
-              {!catalogError && options.map((option, index) => (
+              {options.map((option, index) => (
                 <button
                   key={option.id}
                   id={`${listId}-${index}`}
@@ -210,7 +222,7 @@ export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, 
                   role="option"
                   tabIndex={-1}
                   aria-selected={index === Math.min(picker.index, options.length - 1)}
-                  disabled={loading || picked.length >= maxMentions}
+                  disabled={!catalogReady || picked.length >= maxMentions}
                   onMouseDown={event => event.preventDefault()}
                   onClick={() => choose(option)}
                   onMouseEnter={() => setPicker(current => current && ({ ...current, index }))}
@@ -231,7 +243,7 @@ export function ChatPanel({ itemId, head, top = null, suggestions, placeholder, 
           aria-expanded={open}
           aria-haspopup="listbox"
           aria-controls={open ? listId : undefined}
-          aria-activedescendant={open && options.length && !catalogError ? `${listId}-${Math.min(picker.index, options.length - 1)}` : undefined}
+          aria-activedescendant={open && options.length ? `${listId}-${Math.min(picker.index, options.length - 1)}` : undefined}
           aria-describedby={helpId}
           value={text}
           disabled={disabled || thinking}

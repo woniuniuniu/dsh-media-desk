@@ -31,11 +31,15 @@ export function useDesk(selector) {
   return React.useSyncExternalStore(subscribe, () => selector(snapshot))
 }
 
-async function request(path, body) {
-  const res = await fetch(BASE + path, body === undefined ? { headers: { 'x-media-desk-lang': lang() } } : {
-    method: 'POST', headers: { 'content-type': 'application/json', 'x-media-desk-lang': lang() }, body: JSON.stringify(body),
+async function request(path, body, { signal } = {}) {
+  const res = await fetch(BASE + path, body === undefined ? { headers: { 'x-media-desk-lang': lang() }, ...(signal ? { signal } : {}) } : {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-media-desk-lang': lang() }, body: JSON.stringify(body), ...(signal ? { signal } : {}),
   })
-  const data = await res.json().catch(() => ({}))
+  const data = await res.json().catch(error => {
+    if (signal?.aborted) throw error
+    return {}
+  })
+  if (signal?.aborted) throw new Error('Request aborted')
   if (!res.ok) throw new Error(data.error || t('请求失败（{status}）', { status: res.status }))
   return data
 }
@@ -358,7 +362,7 @@ export function fetchInsights() {
   return request('insights')
 }
 
-export function fetchMentions() {
-  return request('mentions')
+export function fetchMentions({ signal } = {}) {
+  return request('mentions', undefined, { signal })
 }
 

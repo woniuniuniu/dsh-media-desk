@@ -61,7 +61,7 @@ test('提及：输入法 Enter 的 composing 和 keyCode 229 都不能触发候�
 })
 
 test('提及：帮助、错误、数量和移除引用的辅助标签均有英文翻译', () => {
-  for (const key of ['消息引用', '输入 @ 引用资料，输入 / 选择指令或 DSH Skill。', '已选择的引用与指令', '移除引用 {name}', '最多选择 {max} 个引用或指令', '正在读取引用……', '读取引用失败，请重新输入 @ 或 / 重试', '↑↓ 选择，Enter 或 Tab 确认，Esc 关闭', '可引用的资料', '可用的指令', '没有匹配项', '已选择 {n}/{max} 个引用或指令']) {
+  for (const key of ['消息引用', '输入 @ 引用资料，输入 / 选择指令或 DSH Skill。', '已选择的引用与指令', '移除引用 {name}', '最多选择 {max} 个引用或指令', '正在读取引用……', '读取引用失败，请重新输入 @ 或 / 重试', '正在刷新引用，已有引用仍可选择', '读取引用超时，请重试', '读取引用失败，请重试', '重试读取引用', '↑↓ 选择，Enter 或 Tab 确认，Esc 关闭', '可引用的资料', '可用的指令', '没有匹配项', '已选择 {n}/{max} 个引用或指令']) {
     assert.equal(typeof STUDIO[key], 'string', key)
     assert.doesNotMatch(STUDIO[key], /[一-鿿]/u)
     assert.deepEqual(STUDIO[key].match(/\{\w+\}/g), key.match(/\{\w+\}/g))
@@ -76,6 +76,7 @@ const deskBundle = await build({
 
 function deskFixture(respond) {
   const requests = []
+  const signals = []
   const state = { chat: [], items: [] }
   const sandbox = {
     module: { exports: {} }, require: name => { assert.equal(name, 'react'); return {} },
@@ -83,14 +84,15 @@ function deskFixture(respond) {
     fetch: async (url, options) => {
       const body = options.body ? JSON.parse(options.body) : undefined
       requests.push({ url, body })
+      signals.push(options.signal)
       const response = respond?.(url, body) || { state }
-      return { ok: response.httpOk !== false, status: 503, json: async () => response }
+      return { ok: response.httpOk !== false, status: 503, json: async () => response.jsonPromise || response }
     },
   }
   vm.runInNewContext(deskBundle.outputFiles[0].text, sandbox)
   const desk = sandbox.module.exports
   desk.setDesk({ state })
-  return { desk, requests, state }
+  return { desk, requests, state, signals }
 }
 
 test('客户端接线：纯 / 指令请求携带 descriptor，乐观消息也带引用且由服务端状态替换', async () => {
@@ -141,6 +143,24 @@ test('客户端接线：每次读取引用都请求当前清单，不缓存过�
   assert.equal((await desk.fetchMentions()).contexts[0].id, '2')
 })
 
+test('客户端接线：mentions signal 传到 fetch，读取 body 期间的 abort 不会被当成成功空清单', async () => {
+  const body = deferred()
+  const { desk, signals } = deskFixture(() => ({ jsonPromise: body.promise }))
+  const controller = new AbortController()
+  const loading = desk.fetchMentions({ signal: controller.signal })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(signals[0], controller.signal)
+  controller.abort()
+  body.reject(new Error('body aborted'))
+  await assert.rejects(loading, /body aborted/)
+})
+
+function deferred() {
+  let resolve, reject
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
+
 // 渲染真实 ChatPanel，替换宿主 hooks/网络；直接调用 JSX 上的事件处理器。
 const chatBundle = await build({
   entryPoints: [fileURLToPath(new URL('../client/chat.jsx', import.meta.url))],
@@ -152,7 +172,7 @@ const chatBundle = await build({
     builder.onLoad({ filter: /.*/, namespace: 'chat-host' }, ({ path }) => ({ contents: path === 'react'
       ? 'export default globalThis.fixture.React'
       : path === 'ui' ? 'export function Icon(){}; export function IconButton(){}'
-        : `const f=globalThis.fixture; export const useDesk=s=>s(f.snapshot); export const fetchMentions=()=>f.fetchMentions(); export const sendChat=(...args)=>f.sendChat(...args); export function clearChat(){}; export function openItem(){}; export function setDesk(){}; export function undo(){}`, loader: 'js' }))
+        : `const f=globalThis.fixture; export const useDesk=s=>s(f.snapshot); export const fetchMentions=(...args)=>f.fetchMentions(...args); export const sendChat=(...args)=>f.sendChat(...args); export function clearChat(){}; export function openItem(){}; export function setDesk(){}; export function undo(){}`, loader: 'js' }))
   } }],
 })
 
@@ -160,13 +180,15 @@ function chatFixture() {
   const fixture = {
     snapshot: { state: { chat: [], items: [] }, thinking: false, chatQuote: null },
     catalog: { contexts: [{ id: 'item:a', name: 'alpha' }], commands: [{ id: 'cmd:insights', name: '复盘' }] },
-    calls: [], reads: 0, sendResult: async () => true,
+    calls: [], reads: 0, signals: [], sendResult: async () => true,
   }
-  const slots = [], dependencies = new Map(), cleanups = new Map()
+  const slots = [], dependencies = new Map(), cleanups = new Map(), callbacks = new Map(), timers = new Map()
+  let time = 0, timerId = 0
   let hook = 0, pending = [], dirty = true, tree
   const element = { value: '', selectionStart: 0, selectionEnd: 0, style: {}, scrollHeight: 32, focus() {}, setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end } }
   const effect = (callback, deps) => {
     const index = hook++, before = dependencies.get(index)
+    callbacks.set(index, callback)
     if (!deps || !before || deps.some((value, i) => !Object.is(value, before[i]))) {
       dependencies.set(index, deps)
       pending.push(() => { cleanups.get(index)?.(); cleanups.set(index, callback()) })
@@ -180,14 +202,19 @@ function chatFixture() {
     useSyncExternalStore: (_, getter) => getter(),
     createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
   }
-  fixture.fetchMentions = async () => { fixture.reads++; return fixture.catalog }
+  fixture.catalogResult = async () => fixture.catalog
+  fixture.fetchMentions = async (options) => { fixture.reads++; fixture.signals.push(options.signal); return fixture.catalogResult(options) }
   fixture.sendChat = async (...args) => {
     fixture.calls.push(args)
     fixture.snapshot.thinking = true
     dirty = true
     try { return await fixture.sendResult(...args) } finally { fixture.snapshot.thinking = false; dirty = true }
   }
-  const sandbox = { fixture, module: { exports: {} }, document: { documentElement: { lang: 'zh' }, getElementById: () => null }, navigator: { language: 'zh' } }
+  const sandbox = {
+    fixture, module: { exports: {} }, document: { documentElement: { lang: 'zh' }, getElementById: () => null }, navigator: { language: 'zh' }, AbortController,
+    setTimeout: (callback, delay) => { const id = ++timerId; timers.set(id, { callback, at: time + delay }); return id },
+    clearTimeout: id => timers.delete(id),
+  }
   vm.runInNewContext(chatBundle.outputFiles[0].text, sandbox)
   const walk = node => node && typeof node === 'object' ? [node, ...node.children.flatMap(walk)] : []
   const nodes = predicate => walk(tree).filter(predicate)
@@ -207,6 +234,8 @@ function chatFixture() {
     return tree
   }
   fixture.settle = async () => { await new Promise(resolve => setImmediate(resolve)); fixture.render() }
+  fixture.advance = milliseconds => { time += milliseconds; for (const [id, timer] of timers) if (timer.at <= time) { timers.delete(id); timer.callback() } fixture.render() }
+  fixture.replayEffects = () => { for (const cleanup of cleanups.values()) cleanup?.(); for (const [index, callback] of callbacks) cleanups.set(index, callback()); fixture.render() }
   fixture.change = (value, caret = value.length) => { element.value = value; element.selectionStart = element.selectionEnd = caret; input().props.onChange({ target: element }); fixture.render() }
   fixture.press = key => { input().props.onKeyDown({ key, nativeEvent: {}, preventDefault() {} }); fixture.render() }
   fixture.input = input
@@ -295,4 +324,109 @@ test('ChatPanel：输入法 Enter 不选候选、不发送，组合结束后可�
   chat.render()
   assert.equal(chat.nodes(node => node.props.className === 'md-mention-chip').length, 1)
   assert.equal(chat.calls.length, 0)
+})
+
+test('ChatPanel：延迟加载期间连续背景 state 更新不重排请求，响应正常显示且普通刷新不重读', async () => {
+  const chat = chatFixture()
+  const response = deferred()
+  chat.catalogResult = () => response.promise
+  chat.change('@')
+  for (let index = 0; index < 20; index++) {
+    chat.snapshot.state = { ...chat.snapshot.state, items: [{ id: 'a', production: { article: String(index) } }] }
+    chat.render()
+  }
+  assert.equal(chat.reads, 1)
+  assert.equal(chat.signals[0].aborted, false)
+  response.resolve(chat.catalog)
+  await chat.settle()
+  assert.equal(chat.nodes(node => node.props.role === 'option').length, 1)
+  chat.snapshot.state = { ...chat.snapshot.state, items: [{ id: 'new', title: 'new' }] }
+  chat.render()
+  assert.equal(chat.reads, 1, '新资料在下次打开候选时刷新，不随生产轮询重读')
+})
+
+test('ChatPanel：关闭取消在途请求，重开只留一个活跃请求，旧响应不能覆盖最新结果', async () => {
+  const chat = chatFixture()
+  const first = deferred(), second = deferred()
+  chat.catalogResult = () => first.promise
+  chat.change('@')
+  chat.press('Escape')
+  assert.equal(chat.signals[0].aborted, true)
+  chat.catalogResult = () => second.promise
+  chat.change('@')
+  assert.equal(chat.reads, 2)
+  assert.equal(chat.signals.filter(signal => !signal.aborted).length, 1)
+  first.resolve({ contexts: [{ id: 'old', name: 'old' }], commands: [] })
+  await chat.settle()
+  assert.equal(chat.nodes(node => node.props.role === 'option').length, 0)
+  second.resolve({ contexts: [{ id: 'new', name: 'new' }], commands: [] })
+  await chat.settle()
+  assert.equal(chat.nodes(node => node.type === 'b')[0].children[0], 'new')
+})
+
+test('ChatPanel：已有候选在后台刷新期间仍可选择，不必等待排队请求', async () => {
+  const chat = chatFixture()
+  chat.change('@alpha')
+  await chat.settle()
+  chat.press('Escape')
+  const response = deferred()
+  chat.catalogResult = () => response.promise
+  chat.change('@alpha')
+  assert.equal(chat.nodes(node => node.props.role === 'option')[0].props.disabled, false)
+  chat.press('Enter')
+  assert.equal(chat.nodes(node => node.props.className === 'md-mention-chip').length, 1)
+  assert.equal(chat.signals[1].aborted, true)
+  response.resolve(chat.catalog)
+  await chat.settle()
+})
+
+test('ChatPanel：后台刷新失败保留旧候选与选择能力，并给出显式重试入口', async () => {
+  const chat = chatFixture()
+  chat.change('@alpha')
+  await chat.settle()
+  chat.press('Escape')
+  chat.catalogResult = async () => { throw new Error('offline') }
+  chat.change('@alpha')
+  await chat.settle()
+  assert.equal(chat.nodes(node => node.props.role === 'option')[0].props.disabled, false)
+  assert.equal(chat.nodes(node => node.props['aria-label'] === '重试读取引用').length, 1)
+  chat.press('Enter')
+  assert.equal(chat.nodes(node => node.props.className === 'md-mention-chip').length, 1)
+})
+
+test('ChatPanel：首次请求或 body 卡住 10 秒后停止读取并可重试，超时旧响应不能覆盖重试', async () => {
+  const chat = chatFixture()
+  const first = deferred(), second = deferred()
+  chat.catalogResult = () => first.promise
+  chat.change('@')
+  chat.advance(9999)
+  assert.equal(chat.nodes(node => node.props['aria-label'] === '重试读取引用').length, 0)
+  chat.advance(1)
+  assert.equal(chat.signals[0].aborted, true)
+  assert.equal(chat.nodes(node => node.props.role === 'status').some(node => node.children.includes('读取引用超时，请重试')), true)
+  chat.catalogResult = () => second.promise
+  chat.nodes(node => node.props['aria-label'] === '重试读取引用')[0].props.onClick()
+  chat.render()
+  assert.equal(chat.reads, 2)
+  assert.equal(chat.signals.filter(signal => !signal.aborted).length, 1)
+  first.resolve({ contexts: [{ id: 'late', name: 'late' }], commands: [] })
+  await chat.settle()
+  assert.equal(chat.nodes(node => node.props.role === 'option').length, 0)
+  second.resolve(chat.catalog)
+  await chat.settle()
+  assert.equal(chat.nodes(node => node.props.role === 'option').length, 1)
+  assert.equal(chat.nodes(node => node.props['aria-label'] === '重试读取引用').length, 0)
+  chat.advance(10000)
+  assert.equal(chat.nodes(node => node.props['aria-label'] === '重试读取引用').length, 0, '成功后已清理超时计时器')
+})
+
+test('ChatPanel：StrictMode 挂载 effect 清理重放后仍能完成第一次候选加载', async () => {
+  const chat = chatFixture()
+  chat.replayEffects()
+  chat.change('/复盘')
+  await chat.settle()
+  assert.equal(chat.reads, 1)
+  assert.equal(chat.nodes(node => node.props.role === 'option').length, 1)
+  chat.press('Enter')
+  assert.equal(chat.nodes(node => node.props.className === 'md-mention-chip').length, 1)
 })
