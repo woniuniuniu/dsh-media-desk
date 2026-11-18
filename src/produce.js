@@ -7,7 +7,7 @@ import { tr } from './i18n.js'
 import { coverPrompt, figurePrompt, shotPrompt } from './images.js'
 import { newId } from './ops.js'
 import { imageReady } from './settings.js'
-import { draftFormat } from './style.js'
+import { creationFormat } from './workflow.js'
 
 const CONCURRENCY = 3
 // 模型卡住不出字时，到点改用草稿，不让进度条一直转
@@ -55,6 +55,11 @@ function assetAt(production, target) {
 
 function fullPrompt(production, target, asset) {
   const { kind } = parseTarget(target)
+  if (production.format === 'article') {
+    // Article illustrations follow the confirmed image plan, without video cover
+    // typography, portrait framing or storyboard instructions.
+    return `${String(asset.prompt || asset.visual || '').trim()}\nEditorial illustration for a written article. Follow the planned composition and visual purpose. No overlaid headlines, captions or watermarks.`
+  }
   if (kind === 'cover') return coverPrompt(asset.prompt)
   if (kind === 'image') return figurePrompt(asset.prompt)
   return shotPrompt(asset.prompt || asset.visual, production.characters)
@@ -175,21 +180,23 @@ export class Producer {
     }, { undoable: false })
   }
 
-  async start(id, { withImages } = {}) {
+  async start(id, { withImages, context = '', mentions = [] } = {}) {
     if (this.jobs.has(id)) return false
     const state = await this.store.read()
     const item = state.items.find(row => row.id === id)
     if (!item) throw Object.assign(new Error(tr('找不到这条灵感')), { status: 404 })
+    if (creationFormat(item, state.draftFormat) === 'article') throw Object.assign(new Error(tr('文章请在正文编辑器中写作或选段修改')), { status: 409 })
     // 单次选择优先；没传就按设置里的默认值
     const settings = await this.settings.read()
     const draw = typeof withImages === 'boolean' ? withImages : settings.generateImages !== false
-    const job = { stage: 'brief', text: '', planText: '', controller: new AbortController(), withImages: draw }
+    const job = { stage: 'brief', text: '', planText: '', controller: new AbortController(), withImages: draw, context }
     this.jobs.set(id, job)
     await this.store.mutate('开始成稿', (draft) => {
       const target = draft.items.find(row => row.id === id)
       // 重新成稿后还存回原来的文件夹，不会每做一次多出一个
       const { savedPath, savedHashes } = target.production ?? {}
-      target.production = { status: 'running', stage: 'brief', withImages: draw, startedAt: new Date().toISOString(), format: draftFormat(draft.draftFormat), title: target.title, article: '', cover: null, images: [], shots: [], ...(savedPath ? { savedPath, savedHashes } : {}) }
+      target.creationFormat = 'script'
+      target.production = { status: 'running', stage: 'brief', withImages: draw, startedAt: new Date().toISOString(), format: 'script', title: target.title, article: '', cover: null, images: [], shots: [], ...(mentions.length ? { mentions } : {}), ...(savedPath ? { savedPath, savedHashes } : {}) }
       return draft
     }, { undoable: false })
     // 不等待：浏览器靠轮询拿进度
@@ -214,7 +221,7 @@ export class Producer {
 
       let plan
       try {
-        const prompts = planPrompts(snapshot, item, settings)
+        const prompts = planPrompts(snapshot, item, settings, { context: job.context })
         const { text } = await this.callText({ ...prompts, maxTokens: 3000, light: true, signal: AbortSignal.any([signal, AbortSignal.timeout(TEXT_TIMEOUT_MS)]), onText: (delta) => { job.planText += delta } })
         plan = normalizePlan(extractJson(text), settings, item.title)
       } catch (err) {
@@ -250,7 +257,7 @@ export class Producer {
         let notice = null
         let markdown = ''
         try {
-          const prompts = articlePrompts(snapshot, item, settings.voice, plan)
+          const prompts = articlePrompts(snapshot, item, settings.voice, plan, { context: job.context })
           const result = await this.callText({ ...prompts, maxTokens: 6000, signal: AbortSignal.any([signal, AbortSignal.timeout(TEXT_TIMEOUT_MS)]), onText: (delta) => { job.text += delta } })
           markdown = result.text
           engine = result.model
@@ -325,6 +332,19 @@ export class Producer {
   }
 
   async renderAsset(id, target, settings, signal) {
+    // ArticleWorkflow also calls this directly. Track these calls so polling
+    // cannot mistake an active illustration for an interrupted video job.
+    const key = `${id}:${target}`
+    const ownsKey = !this.assets.has(key)
+    if (ownsKey) this.assets.add(key)
+    try {
+      return await this.renderAssetTask(id, target, settings, signal)
+    } finally {
+      if (ownsKey) this.assets.delete(key)
+    }
+  }
+
+  async renderAssetTask(id, target, settings, signal) {
     let prompt = null
     await this.patch(id, (production) => {
       const asset = assetAt(production, target)
@@ -365,6 +385,7 @@ export class Producer {
     const state = await this.store.read()
     const production = state.items.find(row => row.id === id)?.production
     if (!production || !assetAt(production, target)) throw Object.assign(new Error(tr('找不到这张图')), { status: 404 })
+    if (production.format === 'article' && parseTarget(target).kind === 'shot') throw Object.assign(new Error(tr('文章配图不使用视频分镜')), { status: 400 })
     this.assets.add(key)
     await this.patch(id, (next) => { assetAt(next, target).status = 'running' })
     this.renderAsset(id, target, settings).catch(() => {}).finally(() => this.assets.delete(key))

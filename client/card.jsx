@@ -1,6 +1,6 @@
 // 灵感卡片：散落、瀑布流复用同一张卡。
 import React from 'react'
-import { setDesk } from './desk.js'
+import { setDesk, useDesk } from './desk.js'
 import { t } from './i18n.js'
 import { Icon } from './ui.jsx'
 import { KIND_LABEL, STATUS_LABEL, displayItem, hash, relativeDay } from './util.js'
@@ -8,21 +8,35 @@ import { KIND_LABEL, STATUS_LABEL, displayItem, hash, relativeDay } from './util
 export function Media({ item, autoPlay = false, controls = false, onFirstFrame }) {
   const ref = React.useRef(null)
   const [broken, setBroken] = React.useState(false)
+  const videoKind = item.kind === 'video'
+  // 浏览器可在 DOM 移除后继续加载媒体；清理捕获的节点，主动释放后台连接。
+  React.useEffect(() => {
+    const media = ref.current
+    if (!media) return
+    // StrictMode 会清理后重放 setup；恢复刚才主动移除的 src。
+    const src = !videoKind || autoPlay || controls ? item.media?.src : undefined
+    if (src && media.getAttribute('src') !== src) media.setAttribute('src', src)
+    return () => {
+      if (videoKind) media.pause()
+      media.removeAttribute('srcset')
+      media.removeAttribute('src')
+      if (videoKind) media.load()
+    }
+  }, [videoKind])
   React.useEffect(() => {
     const video = ref.current
     if (!video || item.kind !== 'video') return
     if (autoPlay) video.play().catch(() => {})
     else {
       video.pause()
-      video.currentTime = 0
     }
-  }, [autoPlay, item.kind])
+  }, [autoPlay, controls, item.kind, item.media?.src])
   if (!item.media || broken) return <div className="md-media-fallback"><span>{item.title.slice(0, 1)}</span></div>
   const ratio = item.media.w && item.media.h ? { aspectRatio: `${item.media.w} / ${item.media.h}` } : undefined
   if (item.kind === 'video') {
-    return <video ref={ref} className="md-media" style={ratio} src={item.media.src} poster={item.media.poster} muted={!controls} loop playsInline controls={controls} preload="metadata" onError={() => setBroken(true)} />
+    return <video ref={ref} className="md-media" style={ratio} src={autoPlay || controls ? item.media.src : undefined} poster={item.media.poster} muted={!controls} loop playsInline controls={controls} preload="none" onError={() => setBroken(true)} />
   }
-  return <img className="md-media" style={ratio} src={item.media.src} alt="" loading="lazy" draggable={false} referrerPolicy="no-referrer" onError={() => setBroken(true)} onLoad={onFirstFrame} />
+  return <img ref={ref} className="md-media" style={ratio} src={item.media.src} alt="" loading="lazy" draggable={false} referrerPolicy="no-referrer" onError={() => setBroken(true)} onLoad={onFirstFrame} />
 }
 
 function hostOf(url) {
@@ -38,6 +52,8 @@ export function Card({ item: raw, onOpen }) {
   const inverted = item.pinned
   const running = item.production?.status === 'running'
   const [hover, setHover] = React.useState(false)
+  const focused = useDesk(s => Boolean(s.focusId))
+  React.useEffect(() => { if (focused) setHover(false) }, [focused])
   const hasMedia = Boolean(item.media) && ['image', 'video', 'web'].includes(item.kind)
   const lines = hash(item.id) % 2 === 0
 
@@ -60,7 +76,7 @@ export function Card({ item: raw, onOpen }) {
     >
       {hasMedia ? (
         <div className="md-card-media" data-media={item.id}>
-          <Media item={item} autoPlay={hover} />
+          {focused ? <div className="md-media-fallback" aria-hidden="true"><span>{item.title.slice(0, 1)}</span></div> : <Media item={item} autoPlay={hover} />}
           {item.kind === 'video' ? <span className="md-card-play"><Icon name="play" size={12} fill /></span> : null}
         </div>
       ) : null}

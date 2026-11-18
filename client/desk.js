@@ -2,13 +2,15 @@
 import React from 'react'
 import { coverDataUrl } from './cover.js'
 import { lang, plural, setLanguagePreference, t } from './i18n.js'
+import { mentionMessage } from './mentions.js'
+import { creationFormat } from '../src/workflow.js'
 
 const BASE = 'media-desk/'
 
 let snapshot = {
   state: null, model: null, modelOk: null, modelError: null, canUndo: false, error: null,
   view: 'home', mode: 'scatter', focusId: null, sheetOrigin: null, dockOpen: true, studioDock: false, chatQuote: null, query: '', kindFilter: 'all', related: null,
-  live: {}, settings: null, settingsOpen: false, modelPickOpen: false, thinking: false, toast: null, capture: null, dialog: null,
+  live: {}, articleBusy: {}, settings: null, settingsOpen: false, modelPickOpen: false, thinking: false, toast: null, capture: null, dialog: null,
 }
 const listeners = new Set()
 
@@ -30,12 +32,20 @@ export function useDesk(selector) {
   return React.useSyncExternalStore(subscribe, () => selector(snapshot))
 }
 
-async function request(path, body) {
-  const res = await fetch(BASE + path, body === undefined ? { headers: { 'x-media-desk-lang': lang() } } : {
-    method: 'POST', headers: { 'content-type': 'application/json', 'x-media-desk-lang': lang() }, body: JSON.stringify(body),
+async function request(path, body, { signal } = {}) {
+  const res = await fetch(BASE + path, body === undefined ? { headers: { 'x-media-desk-lang': lang() }, ...(signal ? { signal } : {}) } : {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-media-desk-lang': lang() }, body: JSON.stringify(body), ...(signal ? { signal } : {}),
   })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || t('请求失败（{status}）', { status: res.status }))
+  const data = await res.json().catch(error => {
+    if (signal?.aborted) throw error
+    return {}
+  })
+  if (signal?.aborted) throw new Error('Request aborted')
+  if (!res.ok) {
+    const error = new Error(data.error || t('请求失败（{status}）', { status: res.status }))
+    error.status = res.status
+    throw error
+  }
   return data
 }
 
@@ -94,13 +104,36 @@ export function closeItem() {
 }
 
 /** 一键成稿。任务在 Host 里跑，这里只负责启动和看进度。 */
-export async function runProduce(id, { withImages } = {}) {
+export async function runProduce(id, { withImages, mentions } = {}) {
   try {
-    const data = await request('produce', { id, ...(typeof withImages === 'boolean' ? { withImages } : {}) })
+    const data = await request('produce', { id, ...(typeof withImages === 'boolean' ? { withImages } : {}), ...(Array.isArray(mentions) ? { mentions } : {}) })
     setDesk({ state: data.state })
   } catch (err) {
     report(err)
   }
+}
+
+/** 文章编辑与候选操作；失败保留输入，冲突时同步可查看的候选与最新版本。 */
+export async function articleAction(id, action, data = {}, revision, mentions) {
+  if (snapshot.articleBusy[id]) return false
+  setDesk(s => ({ articleBusy: { ...s.articleBusy, [id]: action } }))
+  try {
+    const result = await request('article-workflow', { id, action, data, revision, ...(Array.isArray(mentions) ? { mentions } : {}) })
+    if (result.state) setDesk({ state: result.state, canUndo: true })
+    return result
+  } catch (err) {
+    report(err)
+    if (err.status === 409) {
+      try { const latest = await request('state'); if (latest.state) setDesk({ state: latest.state, ...(typeof latest.canUndo === 'boolean' ? { canUndo: latest.canUndo } : {}) }) } catch { /* 用户输入保持不变，下一次操作仍会校验版本。 */ }
+    }
+    return false
+  } finally {
+    setDesk(s => ({ articleBusy: { ...s.articleBusy, [id]: false } }))
+  }
+}
+
+export async function fetchArticleWorkflow(id) {
+  return request(`article-workflow?id=${encodeURIComponent(id)}`)
 }
 
 export async function cancelProduce(id) {
@@ -191,29 +224,34 @@ function runActions(actions) {
   for (const action of actions) {
     if (action.type === 'produce' && action.id) {
       openItem(action.id)
-      runProduce(action.id)
+      const item = snapshot.state.items.find(row => row.id === action.id)
+      if (creationFormat(item, snapshot.state.draftFormat) !== 'article') runProduce(action.id, { mentions: action.mentions })
     }
     if (action.type === 'open' && action.id) openItem(action.id)
     if (action.type === 'nav' && action.view) setDesk({ view: action.view })
   }
 }
 
-export async function sendChat(text) {
+export async function sendChat(text, { mentions = [] } = {}) {
+  text = mentionMessage(text, mentions)
+  if (!text || snapshot.thinking) return false
   const { chatQuote: quote, focusId } = snapshot
   // 选中的段落或某一镜，随消息一起交给模型
   const message = quote ? (quote.text ? t('关于{label}「{quote}」：{text}', { label: quote.label, quote: quote.text, text }) : t('关于{label}：{text}', { label: quote.label, text })) : text
   setDesk(s => ({
     thinking: true,
     chatQuote: null,
-    state: { ...s.state, chat: [...s.state.chat, { id: `tmp_${Date.now()}`, role: 'user', text: message, itemId: focusId ?? undefined }] },
+    state: { ...s.state, chat: [...s.state.chat, { id: `tmp_${Date.now()}`, role: 'user', text: message, itemId: focusId ?? undefined, ...(mentions.length ? { mentions } : {}) }] },
   }))
   try {
-    const data = await request('chat', { message, focusId: focusId ?? undefined })
+    const data = await request('chat', { message, focusId: focusId ?? undefined, mentions })
     setDesk({ state: data.state, canUndo: true, modelOk: data.modelOk, modelError: data.modelError })
     runActions(data.actions || [])
+    return true
   } catch (err) {
     report(err)
     await loadDesk()
+    return false
   } finally {
     setDesk({ thinking: false })
   }
@@ -221,10 +259,12 @@ export async function sendChat(text) {
 
 export async function saveProduced(id) {
   try {
-    const production = snapshot.state.items.find(row => row.id === id)?.production
+    const item = snapshot.state.items.find(row => row.id === id)
+    const production = item?.production
     // 视频封面在浏览器里合成，一起存进文件夹
-    const videoCover = await coverDataUrl({ src: production.cover?.src, text: production.coverText || production.title }).catch(() => undefined)
-    const data = await request('produce/save', { id, videoCover })
+    const article = creationFormat(item, snapshot.state.draftFormat) === 'article'
+    const videoCover = article ? undefined : await coverDataUrl({ src: production.cover?.src, text: production.coverText || production.title }).catch(() => undefined)
+    const data = await request('produce/save', { id, ...(article ? {} : { videoCover }) })
     setDesk({ state: data.state })
     toast(data.backups?.length ? t('已保存到 {path}。你在文件夹里改过的稿子另存成了 {names}', { path: data.path, names: data.backups.join(lang() === 'en' ? ', ' : '、') }) : t('已保存到 {path}', { path: data.path }))
   } catch (err) {
@@ -351,5 +391,9 @@ export async function exportSkills() {
 
 export function fetchInsights() {
   return request('insights')
+}
+
+export function fetchMentions({ signal } = {}) {
+  return request('mentions', undefined, { signal })
 }
 

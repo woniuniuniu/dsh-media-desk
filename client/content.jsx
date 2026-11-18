@@ -2,6 +2,7 @@
 import React from 'react'
 import { dispatchOps, openItem, setDesk, useDesk } from './desk.js'
 import { Empty, Icon, Segmented } from './ui.jsx'
+import { DeleteContentButton } from './item-actions.jsx'
 import { plural, t, useLang } from './i18n.js'
 import { KIND_LABEL, STATUSES, STATUS_LABEL, displayItem, fmtWhen, posterOf, relativeDay } from './util.js'
 
@@ -19,9 +20,10 @@ function BoardCard({ item: raw }) {
   const item = displayItem(raw)
   const poster = posterOf(item)
   return (
+    <div className="md-board-card">
     <button
       type="button"
-      className="md-board-card"
+      className="md-board-card-open"
       draggable
       onDragStart={(event) => {
         event.dataTransfer.setData('text/media-desk-item', item.id)
@@ -41,6 +43,8 @@ function BoardCard({ item: raw }) {
         {item.drafts?.script ? <Icon name="film" size={12} /> : null}
       </span>
     </button>
+    <div className="md-board-card-actions"><DeleteContentButton item={raw} compact /></div>
+    </div>
   )
 }
 
@@ -117,13 +121,14 @@ function Table({ items }) {
                 </button>
               </th>
             ))}
+            <th>{t('操作')}</th>
           </tr>
         </thead>
         <tbody>
           {sorted.map((item) => {
             const poster = posterOf(item)
             return (
-              <tr key={item.id} onClick={() => openItem(item.id)} tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter') openItem(item.id) }}>
+              <tr key={item.id} onClick={() => openItem(item.id)} tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter' && event.target === event.currentTarget) openItem(item.id) }}>
                 <td className="md-table-title">
                   <span className="md-thumb">{poster ? <img src={poster} alt="" loading="lazy" /> : <span>{item.title.slice(0, 1)}</span>}</span>
                   <span><strong>{item.title}</strong><small>{item.parentId ? `${t('分支')} · ` : ''}{t(KIND_LABEL[item.kind])}{item.source ? ` · ${item.source}` : ''}</small></span>
@@ -132,6 +137,7 @@ function Table({ items }) {
                 <td>{item.platform ? t(item.platform) : '—'}</td>
                 <td className="md-nowrap">{item.scheduledAt ? fmtWhen(item.scheduledAt) : '—'}</td>
                 <td className="md-nowrap">{relativeDay(item.createdAt)}</td>
+                <td className="md-table-actions" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}><DeleteContentButton item={item} compact /></td>
               </tr>
             )
           })}

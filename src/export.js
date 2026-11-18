@@ -54,9 +54,10 @@ function cell(text) {
 export async function saveProduction(production, { filesDir, exportDir, videoCover }) {
   // 英文界面用纯 ASCII 文件名，方便在别的系统和工具里打开
   const en = currentLang() === 'en'
+  const articleMode = production.format === 'article'
   const names = en
-    ? { cover: 'cover-original', videoCover: 'video-cover.jpg', figure: i => `figure-${i}`, shot: n => `shot-${n}`, script: 'script.md', board: 'storyboard.md' }
-    : { cover: '封面原图', videoCover: '视频封面.jpg', figure: i => `配图${i}`, shot: n => `分镜${n}`, script: '脚本.md', board: '分镜脚本.md' }
+    ? { cover: articleMode ? 'article-cover' : 'cover-original', videoCover: 'video-cover.jpg', figure: i => `figure-${i}`, shot: n => `${articleMode ? 'legacy-shot' : 'shot'}-${n}`, script: articleMode ? 'article.md' : 'script.md', board: articleMode ? 'legacy-storyboard.md' : 'storyboard.md' }
+    : { cover: articleMode ? '文章封面' : '封面原图', videoCover: '视频封面.jpg', figure: i => `配图${i}`, shot: n => `${articleMode ? '旧分镜' : '分镜'}${n}`, script: articleMode ? '文章.md' : '脚本.md', board: articleMode ? '旧分镜素材.md' : '分镜脚本.md' }
   const target = production.savedPath || freeFolder(exportDir, production.title)
   await mkdir(target, { recursive: true })
   const files = []
@@ -87,7 +88,7 @@ export async function saveProduction(production, { filesDir, exportDir, videoCov
   }
 
   const cover = await copy(production.cover, names.cover)
-  if (videoCover) {
+  if (videoCover && !articleMode) {
     await writeFile(join(target, names.videoCover), videoCover)
     files.push(names.videoCover)
   }
@@ -110,13 +111,16 @@ export async function saveProduction(production, { filesDir, exportDir, videoCov
     if (at >= 0) sections[at] = `${sections[at].trimEnd()}${line}\n`
     else unplaced.push(line)
   }
-  const article = `# ${production.title}\n\n${sections.join('\n')}${unplaced.join('')}\n`
+  const coverAlt = String(production.cover?.alt || production.title || '').replace(/[\]\r\n]/g, ' ')
+  const articleCover = articleMode && cover ? `![${coverAlt}](${cover})\n\n` : ''
+  const article = `# ${production.title}\n\n${articleCover}${sections.join('\n')}${unplaced.join('')}\n`
   await writeText(names.script, article)
 
   if (shots.length) {
     const seconds = value => (value === undefined || value === null ? '' : en ? `${value}s` : `${value} 秒`)
     const rows = shots.map(({ shot, file }, i) => `| ${i + 1} | ${cell(shot.shot)} | ${seconds(shot.seconds)} | ${cell(shot.visual)} | ${cell(shot.voice)} | ${file ? `![](${file})` : ''} |`)
-    const heading = en ? `# ${production.title}: storyboard\n\n| Shot | Size | Length | Visual | Voice-over | Frame |` : `# ${production.title}：分镜头脚本\n\n| 镜号 | 景别 | 时长 | 画面 | 口播 | 分镜图 |`
+    const legacy = articleMode ? (en ? 'Legacy assets retained from an earlier article draft; these are not part of the article workflow.\n\n' : '保留旧版文章附带的分镜素材，不属于当前文章创作步骤。\n\n') : ''
+    const heading = en ? `# ${production.title}: ${articleMode ? 'legacy assets' : 'storyboard'}\n\n${legacy}| Shot | Size | Length | Visual | Voice-over | Frame |` : `# ${production.title}：${articleMode ? '旧分镜素材' : '分镜头脚本'}\n\n${legacy}| 镜号 | 景别 | 时长 | 画面 | 口播 | 分镜图 |`
     await writeText(names.board, `${heading}\n| --- | --- | --- | --- | --- | --- |\n${rows.join('\n')}\n`)
   }
   return { path: target, files, hashes, backups }

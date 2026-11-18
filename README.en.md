@@ -33,6 +33,8 @@ Media Desk is a page in the [DeepSeek Harness](https://github.com/deepseek-ai/de
 
 There are five pages: **Ideas · Content · Schedule · Insights · Styles**. The interface is available in English and Chinese. By default it follows the DeepSeek Harness language, and you can lock it to either one in the plugin settings. When the interface is in English, scripts, titles and storyboards are written in English. The web version also works in a phone browser.
 
+In the assistant, type `@` to reference content, drafts, styles, rules, accounts or performance data. Type `/` to choose a command such as Produce, Schedule or Review, or use a local Skill from `$DSH_HOME/skills` as written instructions. Use the arrow keys to select, Enter/Tab to confirm and Escape to dismiss. Choose up to eight references; a command can be sent on its own. References remain visible on messages and carry into follow-ups in the same conversation until you clear it. When chat starts a draft, its planning and writing steps receive the references too. Uploaded files provide metadata only, without image/video analysis; selecting a Skill does not grant extra tool permissions.
+
 It works with TikTok, Instagram, YouTube and X as well as Chinese platforms (RedNote, Douyin, Bilibili, WeChat).
 
 <br>
@@ -48,14 +50,14 @@ It works with TikTok, Instagram, YouTube and X as well as Chinese platforms (Red
   </picture>
 </td>
 <td valign="top">
-<p><b>Everything fills in together.</b></p>
-<p>The layout appears as soon as you open an idea. The title, script, cover, images and six storyboard frames are generated in parallel and appear as each one is ready.</p>
-<p><b>Script or article, your call.</b></p>
-<p>A script puts one sentence per line in short blocks, ready to read aloud. An article is written in full paragraphs, ready to post. Both get a headline, and both stay close to the style and reference you chose.</p>
+<p><b>Articles: keep working on one editable draft.</b></p>
+<p>Write, paste an existing draft, or ask AI for a first draft. Add optional sources with @ in the assistant. Select a sentence or paragraph and describe the change. Review the original and the suggestion, then accept to replace only that exact selection, or discard to keep the original. Sources, viewpoints, and outlines can help without mandatory confirmation steps.</p>
+<p><b>Video: keep one-click production.</b></p>
+<p>The title, spoken script, video cover, images, and six storyboard frames keep their existing workflow. Choose article or video per idea; switching preserves both products separately.</p>
 <p><b>Ask for a change.</b></p>
 <p>Try "make it clearer", "shoot frame 3 from above" or "bolder cover text". The draft updates as you watch, and every change can be undone.</p>
 <p><b>Take it with you.</b></p>
-<p>Edit the script in place, copy it, or save the whole piece (cover, images and frames) to one folder.</p>
+<p>Edit, copy, or export either product. Articles export the text, article cover, and illustrations; videos keep storyboard export. Existing articles remain directly editable. Prior drafts, illustrations, and late AI candidates are available in version history. Plan and generate illustrations separately from the current text. Text-only work does not require an image provider.</p>
 </td>
 </tr>
 </table>
