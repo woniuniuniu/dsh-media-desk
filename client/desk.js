@@ -2,6 +2,7 @@
 import React from 'react'
 import { coverDataUrl } from './cover.js'
 import { lang, plural, setLanguagePreference, t } from './i18n.js'
+import { mentionMessage } from './mentions.js'
 
 const BASE = 'media-desk/'
 
@@ -30,11 +31,15 @@ export function useDesk(selector) {
   return React.useSyncExternalStore(subscribe, () => selector(snapshot))
 }
 
-async function request(path, body) {
-  const res = await fetch(BASE + path, body === undefined ? { headers: { 'x-media-desk-lang': lang() } } : {
-    method: 'POST', headers: { 'content-type': 'application/json', 'x-media-desk-lang': lang() }, body: JSON.stringify(body),
+async function request(path, body, { signal } = {}) {
+  const res = await fetch(BASE + path, body === undefined ? { headers: { 'x-media-desk-lang': lang() }, ...(signal ? { signal } : {}) } : {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-media-desk-lang': lang() }, body: JSON.stringify(body), ...(signal ? { signal } : {}),
   })
-  const data = await res.json().catch(() => ({}))
+  const data = await res.json().catch(error => {
+    if (signal?.aborted) throw error
+    return {}
+  })
+  if (signal?.aborted) throw new Error('Request aborted')
   if (!res.ok) throw new Error(data.error || t('请求失败（{status}）', { status: res.status }))
   return data
 }
@@ -94,9 +99,9 @@ export function closeItem() {
 }
 
 /** 一键成稿。任务在 Host 里跑，这里只负责启动和看进度。 */
-export async function runProduce(id, { withImages } = {}) {
+export async function runProduce(id, { withImages, mentions } = {}) {
   try {
-    const data = await request('produce', { id, ...(typeof withImages === 'boolean' ? { withImages } : {}) })
+    const data = await request('produce', { id, ...(typeof withImages === 'boolean' ? { withImages } : {}), ...(Array.isArray(mentions) ? { mentions } : {}) })
     setDesk({ state: data.state })
   } catch (err) {
     report(err)
@@ -191,29 +196,33 @@ function runActions(actions) {
   for (const action of actions) {
     if (action.type === 'produce' && action.id) {
       openItem(action.id)
-      runProduce(action.id)
+      runProduce(action.id, { mentions: action.mentions })
     }
     if (action.type === 'open' && action.id) openItem(action.id)
     if (action.type === 'nav' && action.view) setDesk({ view: action.view })
   }
 }
 
-export async function sendChat(text) {
+export async function sendChat(text, { mentions = [] } = {}) {
+  text = mentionMessage(text, mentions)
+  if (!text || snapshot.thinking) return false
   const { chatQuote: quote, focusId } = snapshot
   // 选中的段落或某一镜，随消息一起交给模型
   const message = quote ? (quote.text ? t('关于{label}「{quote}」：{text}', { label: quote.label, quote: quote.text, text }) : t('关于{label}：{text}', { label: quote.label, text })) : text
   setDesk(s => ({
     thinking: true,
     chatQuote: null,
-    state: { ...s.state, chat: [...s.state.chat, { id: `tmp_${Date.now()}`, role: 'user', text: message, itemId: focusId ?? undefined }] },
+    state: { ...s.state, chat: [...s.state.chat, { id: `tmp_${Date.now()}`, role: 'user', text: message, itemId: focusId ?? undefined, ...(mentions.length ? { mentions } : {}) }] },
   }))
   try {
-    const data = await request('chat', { message, focusId: focusId ?? undefined })
+    const data = await request('chat', { message, focusId: focusId ?? undefined, mentions })
     setDesk({ state: data.state, canUndo: true, modelOk: data.modelOk, modelError: data.modelError })
     runActions(data.actions || [])
+    return true
   } catch (err) {
     report(err)
     await loadDesk()
+    return false
   } finally {
     setDesk({ thinking: false })
   }
@@ -351,5 +360,9 @@ export async function exportSkills() {
 
 export function fetchInsights() {
   return request('insights')
+}
+
+export function fetchMentions({ signal } = {}) {
+  return request('mentions', undefined, { signal })
 }
 

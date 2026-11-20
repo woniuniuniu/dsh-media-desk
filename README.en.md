@@ -33,6 +33,8 @@ Media Desk is a page in the [DeepSeek Harness](https://github.com/deepseek-ai/de
 
 There are five pages: **Ideas · Content · Schedule · Insights · Styles**. The interface is available in English and Chinese. By default it follows the DeepSeek Harness language, and you can lock it to either one in the plugin settings. When the interface is in English, scripts, titles and storyboards are written in English. The web version also works in a phone browser.
 
+In the assistant, type `@` to reference content, drafts, styles, rules, accounts or performance data. Type `/` to choose a command such as Produce, Schedule or Review, or use a local Skill from `$DSH_HOME/skills` as written instructions. Use the arrow keys to select, Enter/Tab to confirm and Escape to dismiss. Choose up to eight references; a command can be sent on its own. References remain visible on messages and carry into follow-ups in the same conversation until you clear it. When chat starts a draft, its planning and writing steps receive the references too. Uploaded files provide metadata only, without image/video analysis; selecting a Skill does not grant extra tool permissions.
+
 It works with TikTok, Instagram, YouTube and X as well as Chinese platforms (RedNote, Douyin, Bilibili, WeChat).
 
 <br>

@@ -17,6 +17,7 @@ import { applyRevision, Producer } from './produce.js'
 import { publicSettings, Settings, imageReady } from './settings.js'
 import { normalizeStyle, referenceExcerpt, stylePrompts } from './style.js'
 import { dshHome, Store } from './store.js'
+import { listMentions, normalizeMentions, resolveMentions } from './mentions.js'
 import { currentLang, platformName, tr, withLang } from './i18n.js'
 import { localizeSamples, samplesNeedLocale } from './seed.js'
 import { createVersionCheck } from './version.js'
@@ -106,13 +107,26 @@ async function chatTurn(ctx, store, desk, body) {
   const focusId = typeof body.focusId === 'string' ? body.focusId : undefined
   const state = await store.read()
   const snapshot = JSON.parse(JSON.stringify(state))
+  const history = snapshot.chat.filter(row => (row.itemId ?? null) === (focusId ?? null))
+  const selected = normalizeMentions(body.mentions)
+  // 指令只对本轮有效；资料与 Skill 在同一对话的追问中继续可用。
+  // 每轮从 ID 重新读取，避免复制整段私有资料进聊天记录。
+  const lastUser = history.findLast(row => row.role === 'user')
+  const production = snapshot.items.find(row => row.id === focusId)?.production
+  const previous = production && (!lastUser || Date.parse(production.startedAt) > (Date.parse(lastUser.at) || 0))
+    ? production.mentions : lastUser?.mentions
+  const references = selected.filter(row => !row.id.startsWith('cmd:'))
+  const mentions = normalizeMentions([
+    ...selected.filter(row => row.id.startsWith('cmd:')),
+    ...(references.length ? references : normalizeMentions(previous).filter(row => !row.id.startsWith('cmd:'))),
+  ])
+  const context = await resolveMentions(snapshot, mentions, dshHome())
   let plan
   let engine = 'local'
   let notice = null
   const wasDown = modelStatus.ok === false
   try {
-    const history = snapshot.chat.filter(row => (row.itemId ?? null) === (focusId ?? null))
-    const { system, user } = chatPrompts(snapshot, message, { focusId, history })
+    const { system, user } = chatPrompts(snapshot, message, { focusId, history, context })
     const editing = snapshot.items.find(row => row.id === focusId)?.production?.status === 'done'
     const { text, model } = await callModel(ctx, { system, user, maxTokens: editing ? 8000 : 2000, light: true, signal: AbortSignal.timeout(editing ? 240_000 : 90_000) })
     engine = model
@@ -124,8 +138,11 @@ async function chatTurn(ctx, store, desk, body) {
       plan = { reply: text.trim().slice(0, 1200) || tr('我没有听懂，可以换个说法吗？'), ops: [] }
     }
   } catch {
-    notice = outageNotice(ctx, wasDown, tr('先用本地规则处理'))
-    plan = localIntent(snapshot, message, { focusId })
+    notice = outageNotice(ctx, wasDown, mentions.length ? tr('已保留这次引用') : tr('先用本地规则处理'))
+    // 本地规则不理解上下文/Skill，不能把带引用的操作悄悄降级成另一件事。
+    plan = mentions.length
+      ? { reply: tr('这次引用需要文字模型，恢复模型后请重试；内容尚未修改。'), ops: [], actions: [] }
+      : localIntent(snapshot, message, { focusId })
   }
   const settings = await desk.settings.read()
   const canDraw = desk.producer.ready(settings)
@@ -157,7 +174,8 @@ async function chatTurn(ctx, store, desk, body) {
     const actions = (Array.isArray(plan.actions) ? plan.actions : [])
       .filter(a => a && ['produce', 'open', 'nav'].includes(a.type))
       .filter(a => !(a.type === 'produce' && (done && a.id === focusId || draft.items.find(row => row.id === a.id)?.production?.status === 'done')))
-    draft.chat.push({ id: newId('c'), at, role: 'user', text: message, itemId })
+      .map(a => a.type === 'produce' ? { ...a, mentions: mentions.filter(row => !row.id.startsWith('cmd:')) } : a)
+    draft.chat.push({ id: newId('c'), at, role: 'user', text: message, itemId, ...(mentions.length ? { mentions } : {}) })
     const answer = { id: newId('c'), at, role: 'assistant', text: plan.reply, receipts, errors, engine, notice, undoable: receipts.length > 0, itemId }
     draft.chat.push(answer)
     draft.chat = draft.chat.slice(-300)
@@ -327,6 +345,7 @@ async function route(ctx, store, desk, req, res) {
       })
     }
     if (path === 'insights') return json(res, 200, computeInsights(await store.read()))
+    if (path === 'mentions') return json(res, 200, await listMentions(await store.read(), dshHome()))
     if (path === 'monid/status') return json(res, 200, await monidStatus(desk.monid))
     if (path === 'version') return json(res, 200, await desk.versionCheck.read())
     return json(res, 404, { error: tr('接口不存在') })
@@ -354,11 +373,17 @@ async function route(ctx, store, desk, req, res) {
     }
     case 'chat': return json(res, 200, await chatTurn(ctx, store, desk, body))
     case 'chat/clear': {
-      const state = await store.mutate('清空对话', (draft) => { draft.chat = []; return draft }, { undoable: false })
+      const state = await store.mutate('清空对话', (draft) => {
+        draft.chat = []
+        for (const item of draft.items) if (item.production) delete item.production.mentions
+        return draft
+      }, { undoable: false })
       return json(res, 200, { state })
     }
     case 'produce': {
-      const started = await desk.producer.start(String(body.id), { withImages: body.withImages })
+      const mentions = normalizeMentions(body.mentions).filter(row => !row.id.startsWith('cmd:'))
+      const context = await resolveMentions(await store.read(), mentions, dshHome())
+      const started = await desk.producer.start(String(body.id), { withImages: body.withImages, context, mentions })
       return json(res, 200, { started, state: await store.read() })
     }
     case 'produce/cancel':

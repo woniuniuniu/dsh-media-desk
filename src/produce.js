@@ -175,7 +175,7 @@ export class Producer {
     }, { undoable: false })
   }
 
-  async start(id, { withImages } = {}) {
+  async start(id, { withImages, context = '', mentions = [] } = {}) {
     if (this.jobs.has(id)) return false
     const state = await this.store.read()
     const item = state.items.find(row => row.id === id)
@@ -183,13 +183,13 @@ export class Producer {
     // 单次选择优先；没传就按设置里的默认值
     const settings = await this.settings.read()
     const draw = typeof withImages === 'boolean' ? withImages : settings.generateImages !== false
-    const job = { stage: 'brief', text: '', planText: '', controller: new AbortController(), withImages: draw }
+    const job = { stage: 'brief', text: '', planText: '', controller: new AbortController(), withImages: draw, context }
     this.jobs.set(id, job)
     await this.store.mutate('开始成稿', (draft) => {
       const target = draft.items.find(row => row.id === id)
       // 重新成稿后还存回原来的文件夹，不会每做一次多出一个
       const { savedPath, savedHashes } = target.production ?? {}
-      target.production = { status: 'running', stage: 'brief', withImages: draw, startedAt: new Date().toISOString(), format: draftFormat(draft.draftFormat), title: target.title, article: '', cover: null, images: [], shots: [], ...(savedPath ? { savedPath, savedHashes } : {}) }
+      target.production = { status: 'running', stage: 'brief', withImages: draw, startedAt: new Date().toISOString(), format: draftFormat(draft.draftFormat), title: target.title, article: '', cover: null, images: [], shots: [], ...(mentions.length ? { mentions } : {}), ...(savedPath ? { savedPath, savedHashes } : {}) }
       return draft
     }, { undoable: false })
     // 不等待：浏览器靠轮询拿进度
@@ -214,7 +214,7 @@ export class Producer {
 
       let plan
       try {
-        const prompts = planPrompts(snapshot, item, settings)
+        const prompts = planPrompts(snapshot, item, settings, { context: job.context })
         const { text } = await this.callText({ ...prompts, maxTokens: 3000, light: true, signal: AbortSignal.any([signal, AbortSignal.timeout(TEXT_TIMEOUT_MS)]), onText: (delta) => { job.planText += delta } })
         plan = normalizePlan(extractJson(text), settings, item.title)
       } catch (err) {
@@ -250,7 +250,7 @@ export class Producer {
         let notice = null
         let markdown = ''
         try {
-          const prompts = articlePrompts(snapshot, item, settings.voice, plan)
+          const prompts = articlePrompts(snapshot, item, settings.voice, plan, { context: job.context })
           const result = await this.callText({ ...prompts, maxTokens: 6000, signal: AbortSignal.any([signal, AbortSignal.timeout(TEXT_TIMEOUT_MS)]), onText: (delta) => { job.text += delta } })
           markdown = result.text
           engine = result.model
