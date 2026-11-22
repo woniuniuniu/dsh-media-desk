@@ -122,6 +122,77 @@ async function downloadImage(entry, image, fetchImpl, signal) {
   throw last
 }
 
+/** Gemini 官方接口没有 OpenAI 的 /images/generations，生图请求改走原生 generateContent。 */
+function isGeminiEndpoint(baseUrl) {
+  try {
+    return /(^|\.)generativelanguage\.googleapis\.com$/i.test(new URL(baseUrl).hostname)
+  } catch {
+    return false
+  }
+}
+
+/** 用户可能贴域名、…/v1beta、…/v1beta/openai，甚至整条模型地址，统一归一成域名根。 */
+function geminiRoot(baseUrl) {
+  return String(baseUrl ?? '').trim().replace(/\/+$/, '')
+    .replace(/\/models\/[^/]+$/i, '')
+    .replace(/\/v1beta\/openai$/i, '')
+    .replace(/\/v1beta$/i, '')
+    .replace(/\/v1$/i, '')
+}
+
+/** 设置里的模型名去掉 models/ 前缀。 */
+function geminiModelName(model) {
+  return String(model ?? '').trim().replace(/^models\//i, '')
+}
+
+/** 把设置里的 宽x高 换成 Gemini 支持的画幅比例，取最接近的一个。 */
+function geminiAspectRatio(size) {
+  const match = /^(\d+)\s*[x×*]\s*(\d+)$/i.exec(String(size ?? '').trim())
+  if (!match) return ''
+  const want = Math.log(Number(match[1]) / Number(match[2]))
+  const options = [['1:1', 1], ['3:4', 0.75], ['4:3', 4 / 3], ['2:3', 2 / 3], ['3:2', 3 / 2], ['4:5', 0.8], ['5:4', 1.25], ['9:16', 9 / 16], ['16:9', 16 / 9], ['21:9', 21 / 9]]
+  let best = options[0]
+  for (const option of options) {
+    if (Math.abs(Math.log(option[1]) - want) < Math.abs(Math.log(best[1]) - want)) best = option
+  }
+  return best[0]
+}
+
+async function requestGemini(image, prompt, fetchImpl, signal) {
+  const model = geminiModelName(image.model)
+  if (!model) throw permanent(new Error(tr('先填好接口地址、模型和密钥')))
+  const extra = image.extra ? JSON.parse(image.extra) : {}
+  const config = { responseModalities: ['IMAGE'], ...(extra.generationConfig ?? {}) }
+  const aspect = extra.aspectRatio ?? extra.aspect_ratio ?? geminiAspectRatio(image.size)
+  if (aspect) config.imageConfig = { aspectRatio: String(aspect), ...(config.imageConfig ?? {}) }
+  const res = await fetchImpl(`${geminiRoot(image.baseUrl)}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: 'POST',
+    headers: { 'x-goog-api-key': image.apiKey, 'content-type': 'application/json' },
+    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: config }),
+    signal,
+  })
+  const raw = await res.text()
+  let data = null
+  try {
+    data = JSON.parse(raw)
+  } catch {
+    // 网关偶尔返回 HTML 错误页
+  }
+  if (!res.ok) {
+    const detail = redact(data?.error?.message ?? '', image.apiKey)
+    const error = new Error(res.status === 404 ? `${tr('接口地址或模型不对（404）')}：${detail}` : explain(res.status, detail))
+    error.retryable = res.status >= 500 || res.status === 429
+    throw error
+  }
+  const parts = data?.candidates?.[0]?.content?.parts ?? []
+  const inline = parts.find(part => part?.inlineData?.data)
+  if (!inline) {
+    const text = parts.map(part => part?.text).filter(Boolean).join(' ').slice(0, 120)
+    throw permanent(new Error(text ? `${tr('生图服务没有返回图片')}：${redact(text, image.apiKey)}` : tr('生图服务没有返回图片')))
+  }
+  return { buffer: Buffer.from(inline.inlineData.data, 'base64'), revisedPrompt: undefined }
+}
+
 async function requestOpenAI(image, prompt, fetchImpl, signal) {
   const extra = image.extra ? JSON.parse(image.extra) : {}
   const body = { model: image.model, prompt, n: 1, ...(image.size ? { size: image.size } : {}), ...(image.quality ? { quality: image.quality } : {}), ...extra }
@@ -341,6 +412,7 @@ async function requestWan(image, prompt, fetchImpl, signal, pollIntervalMs = 300
 }
 
 async function requestOnce(image, prompt, fetchImpl, signal, options) {
+  if (image.protocol === 'openai' && isGeminiEndpoint(image.baseUrl)) return requestGemini(image, prompt, fetchImpl, signal)
   if (image.protocol === 'bailian') return requestBailian(image, prompt, fetchImpl, signal)
   if (image.protocol === 'wan') return requestWan(image, prompt, fetchImpl, signal, options.pollIntervalMs)
   return requestOpenAI(image, prompt, fetchImpl, signal)

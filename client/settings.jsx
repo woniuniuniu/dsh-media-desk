@@ -9,6 +9,7 @@ import { Dialog, Icon } from './ui.jsx'
 const PRESETS = [
   { id: 'openai', label: 'OpenAI', protocol: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-image-1', size: '1536x1024', quality: 'medium', extra: '' },
   { id: 'xai', label: 'xAI', protocol: 'openai', baseUrl: 'https://api.x.ai/v1', model: 'grok-2-image', size: '', quality: '', extra: '' },
+  { id: 'gemini', label: 'Gemini', protocol: 'openai', baseUrl: 'https://generativelanguage.googleapis.com', model: 'gemini-3-pro-image', size: '1536x1024', quality: '', extra: '' },
   { id: 'ark', label: '火山方舟', protocol: 'openai', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: '', size: '1024x1024', quality: '', extra: '' },
   { id: 'zhipu', label: '智谱', protocol: 'openai', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'cogview-4', size: '1024x1024', quality: '', extra: '' },
   { id: 'silicon', label: '硅基流动', protocol: 'openai', baseUrl: 'https://api.siliconflow.cn/v1', model: '', size: '', quality: '', extra: '{"image_size":"1024x1024"}' },
@@ -88,7 +89,7 @@ export function SettingsDialog() {
               <button type="button" key={preset.id} className={activePreset === preset.id ? 'is-on' : ''} onClick={() => setForm(f => ({ ...f, protocol: preset.protocol ?? f.protocol, baseUrl: preset.baseUrl, model: preset.model, size: preset.size, quality: preset.quality, extra: preset.extra }))}>{t(preset.label)}</button>
             ))}
           </div>
-          <small>{t('支持 OpenAI 兼容图片接口（/images/generations），以及阿里云百炼的千问同步接口和万相异步接口。')}</small>
+          <small>{t('支持 OpenAI 兼容图片接口（/images/generations）、Gemini 原生接口和阿里云百炼。')}</small>
         </div>
         <label className="md-field">
           <span>{t('接口地址')}</span>
