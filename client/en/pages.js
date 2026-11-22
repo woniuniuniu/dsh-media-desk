@@ -239,7 +239,7 @@ export const PAGES = {
   语言: 'Language',
   成稿保存到: 'Save drafts to',
   生图模型: 'Image model',
-  '支持 OpenAI 兼容图片接口（/images/generations），以及阿里云百炼的千问同步接口和万相异步接口。': 'Works with OpenAI-compatible image APIs (/images/generations), plus Alibaba Bailian Qwen sync and Wan async endpoints.',
+  '支持 OpenAI 兼容图片接口（/images/generations）、Gemini 原生接口和阿里云百炼。': 'Works with OpenAI-compatible image APIs (/images/generations), the Gemini native API, and Alibaba Bailian.',
   接口地址: 'Endpoint',
   接口协议: 'API protocol',
   'OpenAI 兼容': 'OpenAI compatible',
