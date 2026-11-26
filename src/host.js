@@ -447,14 +447,18 @@ async function route(ctx, store, desk, req, res) {
 
 /**
  * Web 服务不会替插件路由鉴权，所以每个请求都要自己走一遍 Host/Origin 和登录凭证检查。
- * 拿不到鉴权服务时一律拒绝。
+ *
+ * 注意：DSH >= 0.2.3 已把鉴权职责移入 WebServer 的路由 `auth`（默认 required）与
+ * `webserver/authorize` 事件，`connection.requestRejection` 被移除，凭据检查在 handler
+ * 之前完成。此时这里必须放行（返回 undefined），否则每个请求都会被误判为 403「未授权」。
+ * 旧版 DSH（< 0.2.3）仍保留该方法，届时继续沿用其返回的拒绝状态码。
  * @param {object} ctx - Cordis 上下文。
  * @param {{headers: object}} req - HTTP 请求。
  * @returns {number|undefined} 拒绝时的状态码；可以继续时为 undefined。
  */
 export function requestRejection(ctx, req) {
   const connection = ctx.get('connection')
-  if (typeof connection?.requestRejection !== 'function') return 403
+  if (typeof connection?.requestRejection !== 'function') return undefined
   return connection.requestRejection({ headers: req.headers })
 }
 
