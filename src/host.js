@@ -446,15 +446,19 @@ async function route(ctx, store, desk, req, res) {
 }
 
 /**
- * Web 服务不会替插件路由鉴权，所以每个请求都要自己走一遍 Host/Origin 和登录凭证检查。
- * 拿不到鉴权服务时一律拒绝。
+ * 旧版 DSH 的 Web 服务不会替插件路由鉴权，所以每个请求都要自己走一遍 Host/Origin
+ * 和登录凭证检查；拿不到鉴权服务时一律拒绝。
+ *
+ * DSH 0.2.2-rc.2 移除了 `connection.requestRejection`：`webServer.register` 的路由
+ * 现在默认 `auth: 'required'`，未通过鉴权的请求不会到达 handler，因此这里只保留
+ * 旧版 Host 的检查。
  * @param {object} ctx - Cordis 上下文。
  * @param {{headers: object}} req - HTTP 请求。
  * @returns {number|undefined} 拒绝时的状态码；可以继续时为 undefined。
  */
 export function requestRejection(ctx, req) {
   const connection = ctx.get('connection')
-  if (typeof connection?.requestRejection !== 'function') return 403
+  if (typeof connection?.requestRejection !== 'function') return undefined
   return connection.requestRejection({ headers: req.headers })
 }
 

@@ -162,9 +162,10 @@ test('computeInsights 汇总与逐日数据一致', () => {
   assert.equal(data.platforms.reduce((a, b) => a + b.views, 0), data.views)
 })
 
-test('requestRejection 没有鉴权服务时拒绝，有服务时听它的', () => {
+test('requestRejection 旧版走鉴权服务，新版交给路由鉴权', () => {
   const req = { headers: { cookie: 'x' } }
-  assert.equal(requestRejection({ get: () => undefined }, req), 403)
+  assert.equal(requestRejection({ get: () => undefined }, req), undefined)
+  assert.equal(requestRejection({ get: () => ({}) }, req), undefined)
   assert.equal(requestRejection({ get: () => ({ requestRejection: () => 401 }) }, req), 401)
   let seen = null
   const allowed = requestRejection({ get: () => ({ requestRejection: (r) => { seen = r; return undefined } }) }, req)
